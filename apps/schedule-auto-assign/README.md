@@ -13,12 +13,22 @@ Beds24から出力されるExcelの予約データと、Googleカレンダー上
 - Google Apps Script（マッチングロジック・自動実行）
 - Google Calendar API（スタッフ予定の読み取り・割り当て結果の書き込み）
 
-## ドキュメント
+## ファイル構成
 
-- [要件定義](docs/requirements.md)
-- [設計判断ログ](docs/decisions.md)
-- [サンプルデータ](docs/sample-data/)
+```
+src/
+  Code.gs          ← Apps Script にコピーするコード本体
+docs/
+  setup-guide.md   ← セットアップ手順書（約30分で完了）
+  requirements.md  ← 要件定義
+  decisions.md     ← 設計判断ログ
+  sample-data/     ← Beds24出力のサンプルExcel
+```
+
+## セットアップ
+
+[セットアップガイド](docs/setup-guide.md) に沿って進めてください。
 
 ## ステータス
 
-要件定義・設計フェーズ（実装未着手）
+実装完了・テスト待ち
