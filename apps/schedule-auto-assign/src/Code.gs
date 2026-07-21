@@ -251,8 +251,8 @@ function readDatabase_() {
     if (cols >= 8) {
       db[bid] = {
         bookingId:       bid,
-        checkoutDateStr: String(data[i][1]).trim(),
-        cleaningDateStr: String(data[i][2]).trim(),
+        checkoutDateStr: normalizeDateStr_(data[i][1]),
+        cleaningDateStr: normalizeDateStr_(data[i][2]),
         unit:            String(data[i][3]).trim(),
         title:           String(data[i][4]).trim(),
         staff:           String(data[i][5]).trim(),
@@ -260,10 +260,11 @@ function readDatabase_() {
         lastSync:        data[i][7]
       };
     } else {
+      var dateVal = normalizeDateStr_(data[i][1]);
       db[bid] = {
         bookingId:       bid,
-        checkoutDateStr: String(data[i][1]).trim(),
-        cleaningDateStr: String(data[i][1]).trim(),
+        checkoutDateStr: dateVal,
+        cleaningDateStr: dateVal,
         unit:            String(data[i][2]).trim(),
         title:           String(data[i][3]).trim(),
         staff:           String(data[i][4]).trim(),
@@ -305,6 +306,8 @@ function writeDatabase_(records) {
     ]);
   }
 
+  sheet.getRange(2, 1, rows.length, 1).setNumberFormat('@');
+  sheet.getRange(2, 2, rows.length, 2).setNumberFormat('@');
   sheet.getRange(2, 1, rows.length, 8).setValues(rows);
 }
 
@@ -695,6 +698,8 @@ function writeResults_(assignments) {
     var a = assignments[i];
     rows.push([a.bookingId, a.dateStr, a.dayName, a.unit, a.title, a.staff, a.status]);
   }
+  sheet.getRange(2, 1, rows.length, 1).setNumberFormat('@');
+  sheet.getRange(2, 2, rows.length, 1).setNumberFormat('@');
   sheet.getRange(2, 1, rows.length, 7).setValues(rows);
 
   var colors = {
@@ -747,7 +752,7 @@ function doSyncToCalendar_() {
     var bid = String(resultData[i][0]).trim();
     if (!bid || !/^\d+$/.test(bid)) continue;
 
-    var cleaningDateStr = String(resultData[i][1]).trim();
+    var cleaningDateStr = normalizeDateStr_(resultData[i][1]);
     var checkoutDateStr = resLookup[bid] ? resLookup[bid].dateStr : cleaningDateStr;
 
     current[bid] = {
@@ -804,27 +809,34 @@ function doSyncToCalendar_() {
 
   // イベント削除
   var deleted = 0;
+  var errors = [];
   for (var del = 0; del < toDelete.length; del++) {
     try {
       var ev = cal.getEventById(toDelete[del].eventId);
       if (ev) { ev.deleteEvent(); deleted++; }
     } catch (err) {
-      Logger.log('イベント削除エラー (' + toDelete[del].eventId + '): ' + err.message);
+      errors.push('削除失敗(ID:' + toDelete[del].bookingId + '): ' + err.message);
     }
   }
 
   // イベント作成（清掃日に作成）
   var created = 0;
+  var skipped = 0;
   var now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm');
 
   for (var cr = 0; cr < toCreate.length; cr++) {
     var rec = toCreate[cr];
-    if (rec.staff === '未割当') continue;
+    if (rec.staff === '未割当') { skipped++; continue; }
 
     var evTitle = rec.title
       ? rec.staff + '⇒' + rec.unit + '(' + rec.title + ')'
       : rec.staff + '⇒' + rec.unit;
     var evDate = parseDateStr_(rec.cleaningDateStr);
+
+    if (isNaN(evDate.getTime())) {
+      errors.push('日付変換失敗(ID:' + rec.bookingId + '): "' + rec.cleaningDateStr + '"');
+      continue;
+    }
 
     try {
       var newEv = cal.createAllDayEvent(evTitle, evDate);
@@ -841,12 +853,12 @@ function doSyncToCalendar_() {
       newDb[rec.bookingId].lastSync = now;
       created++;
     } catch (err) {
-      Logger.log('イベント作成エラー: ' + err.message);
+      errors.push('作成失敗(ID:' + rec.bookingId + '): ' + err.message);
     }
   }
 
   writeDatabase_(newDb);
-  return { created: created, deleted: deleted };
+  return { created: created, deleted: deleted, errors: errors, pending: toCreate.length, skipped: skipped };
 }
 
 // ============================================================
@@ -878,11 +890,13 @@ function runMatchingMenu() {
 function syncToCalendarMenu() {
   try {
     var result = doSyncToCalendar_();
-    showAlert_('カレンダー反映完了',
-      '新規作成: ' + result.created + '件\n' +
-      '削除: ' + result.deleted + '件\n\n' +
-      '※ 変更のない予定はそのまま保持されています。'
-    );
+    var msg = '新規作成: ' + result.created + '件\n' +
+              '削除: ' + result.deleted + '件\n\n' +
+              '※ 変更のない予定はそのまま保持されています。';
+    if (result.errors && result.errors.length > 0) {
+      msg += '\n\n❌ エラー ' + result.errors.length + '件:\n' + result.errors.slice(0, 5).join('\n');
+    }
+    showAlert_('カレンダー反映完了', msg);
   } catch (e) {
     showAlert_('エラー', e.message);
   }
@@ -907,6 +921,9 @@ function runAll() {
     if (defr > 0) msg += '\n\n📅 翌日清掃に延期: ' + defr + '件（外注回避）';
     if (ext > 0)  msg += '\n⚠ Rクリーンへの外注が ' + ext + '件あります';
     if (una > 0)  msg += '\n⚠ 未割当（要確認）が ' + una + '件あります';
+    if (calResult.errors && calResult.errors.length > 0) {
+      msg += '\n\n❌ カレンダーエラー ' + calResult.errors.length + '件:\n' + calResult.errors.slice(0, 5).join('\n');
+    }
     showAlert_('一括実行完了', msg);
   } catch (e) {
     showAlert_('エラー', e.message);
@@ -932,12 +949,22 @@ function toDate_(val) {
 }
 
 function parseDateStr_(dateStr) {
-  var parts = dateStr.split('/');
+  var s = normalizeDateStr_(dateStr);
+  var parts = s.split('/');
   return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
 }
 
 function formatDate_(d) {
   return Utilities.formatDate(d, 'Asia/Tokyo', 'yyyy/MM/dd');
+}
+
+function normalizeDateStr_(val) {
+  if (val instanceof Date) return formatDate_(val);
+  var s = String(val).trim();
+  if (/^\d{4}\/\d{1,2}\/\d{1,2}$/.test(s)) return s;
+  var d = new Date(s);
+  if (!isNaN(d.getTime())) return formatDate_(d);
+  return s;
 }
 
 function countByStatus_(assignments, status) {
