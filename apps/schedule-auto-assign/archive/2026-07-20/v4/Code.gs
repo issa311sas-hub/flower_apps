@@ -105,8 +105,8 @@ function setupSpreadsheet() {
   // ----- 同期データベースシート -----
   var db = getOrCreateSheet_(ss, SHEET_DB);
   db.clear();
-  db.getRange('A1:H1')
-    .setValues([['予約ID', 'チェックアウト日', '清掃日', 'ユニット', 'タイトル', '担当', 'イベントID', '最終同期']])
+  db.getRange('A1:I1')
+    .setValues([['予約ID', 'チェックアウト日', '清掃日', 'ユニット', 'タイトル', '担当', 'イベントID', '同期状態', '最終同期']])
     .setFontWeight('bold').setBackground('#E3E8F0');
   db.setTabColor('#999999');
   db.getRange('A2').setValue('※ このシートはシステムが自動管理します。手動で編集しないでください。')
@@ -118,7 +118,8 @@ function setupSpreadsheet() {
   db.setColumnWidth(5, 150);
   db.setColumnWidth(6, 100);
   db.setColumnWidth(7, 280);
-  db.setColumnWidth(8, 150);
+  db.setColumnWidth(8, 80);
+  db.setColumnWidth(9, 150);
 
   removeDefaultSheet_(ss);
 
@@ -240,7 +241,7 @@ function readDatabase_() {
   var sheet = ss.getSheetByName(SHEET_DB);
   if (!sheet || sheet.getLastRow() < 2) return {};
 
-  var cols = Math.min(sheet.getLastColumn(), 8);
+  var cols = Math.min(sheet.getLastColumn(), 9);
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, cols).getValues();
   var db = {};
 
@@ -248,7 +249,7 @@ function readDatabase_() {
     var bid = String(data[i][0]).trim();
     if (!bid || !/^\d+$/.test(bid)) continue;
 
-    if (cols >= 8) {
+    if (cols >= 9) {
       db[bid] = {
         bookingId:       bid,
         checkoutDateStr: normalizeDateStr_(data[i][1]),
@@ -257,10 +258,25 @@ function readDatabase_() {
         title:           String(data[i][4]).trim(),
         staff:           String(data[i][5]).trim(),
         eventId:         String(data[i][6]).trim(),
+        syncStatus:      String(data[i][7]).trim(),
+        lastSync:        data[i][8]
+      };
+    } else if (cols >= 8) {
+      var eid8 = String(data[i][6]).trim();
+      db[bid] = {
+        bookingId:       bid,
+        checkoutDateStr: normalizeDateStr_(data[i][1]),
+        cleaningDateStr: normalizeDateStr_(data[i][2]),
+        unit:            String(data[i][3]).trim(),
+        title:           String(data[i][4]).trim(),
+        staff:           String(data[i][5]).trim(),
+        eventId:         eid8,
+        syncStatus:      eid8 ? '完了' : '未同期',
         lastSync:        data[i][7]
       };
     } else {
       var dateVal = normalizeDateStr_(data[i][1]);
+      var eid7 = String(data[i][5]).trim();
       db[bid] = {
         bookingId:       bid,
         checkoutDateStr: dateVal,
@@ -268,7 +284,8 @@ function readDatabase_() {
         unit:            String(data[i][2]).trim(),
         title:           String(data[i][3]).trim(),
         staff:           String(data[i][4]).trim(),
-        eventId:         String(data[i][5]).trim(),
+        eventId:         eid7,
+        syncStatus:      eid7 ? '完了' : '未同期',
         lastSync:        data[i][6]
       };
     }
@@ -281,10 +298,10 @@ function writeDatabase_(records) {
   var sheet = getOrCreateSheet_(ss, SHEET_DB);
 
   if (sheet.getLastRow() > 1) {
-    sheet.getRange(2, 1, sheet.getLastRow() - 1, 8).clearContent();
+    sheet.getRange(2, 1, sheet.getLastRow() - 1, 9).clearContent();
   }
-  sheet.getRange('A1:H1')
-    .setValues([['予約ID', 'チェックアウト日', '清掃日', 'ユニット', 'タイトル', '担当', 'イベントID', '最終同期']])
+  sheet.getRange('A1:I1')
+    .setValues([['予約ID', 'チェックアウト日', '清掃日', 'ユニット', 'タイトル', '担当', 'イベントID', '同期状態', '最終同期']])
     .setFontWeight('bold').setBackground('#E3E8F0');
 
   var keys = Object.keys(records);
@@ -302,13 +319,14 @@ function writeDatabase_(records) {
       r.cleaningDateStr || r.checkoutDateStr,
       r.unit, r.title, r.staff,
       r.eventId || '',
+      r.syncStatus || '未同期',
       r.lastSync || now
     ]);
   }
 
   sheet.getRange(2, 1, rows.length, 1).setNumberFormat('@');
   sheet.getRange(2, 2, rows.length, 2).setNumberFormat('@');
-  sheet.getRange(2, 1, rows.length, 8).setValues(rows);
+  sheet.getRange(2, 1, rows.length, 9).setValues(rows);
 }
 
 // ============================================================
@@ -786,8 +804,12 @@ function doSyncToCalendar_() {
       newDb[dbBid] = {
         bookingId: dbBid, checkoutDateStr: curRec.checkoutDateStr,
         cleaningDateStr: curRec.cleaningDateStr, unit: curRec.unit,
-        title: curRec.title, staff: curRec.staff, eventId: '', lastSync: ''
+        title: curRec.title, staff: curRec.staff,
+        eventId: '', syncStatus: '未同期', lastSync: ''
       };
+    } else if (dbRec.syncStatus === '未同期') {
+      toCreate.push(curRec);
+      newDb[dbBid] = dbRec;
     } else {
       newDb[dbBid] = dbRec;
     }
@@ -802,7 +824,8 @@ function doSyncToCalendar_() {
       newDb[curBid] = {
         bookingId: curBid, checkoutDateStr: current[curBid].checkoutDateStr,
         cleaningDateStr: current[curBid].cleaningDateStr, unit: current[curBid].unit,
-        title: current[curBid].title, staff: current[curBid].staff, eventId: '', lastSync: ''
+        title: current[curBid].title, staff: current[curBid].staff,
+        eventId: '', syncStatus: '未同期', lastSync: ''
       };
     }
   }
@@ -855,12 +878,14 @@ function doSyncToCalendar_() {
         if (rec.staff === '普久原さん') newEv.setColor('6');
         if (rec.staff === 'Rクリーン')  newEv.setColor('3');
 
-        newDb[rec.bookingId].eventId  = newEv.getId();
-        newDb[rec.bookingId].lastSync = now;
+        newDb[rec.bookingId].eventId    = newEv.getId();
+        newDb[rec.bookingId].syncStatus = '完了';
+        newDb[rec.bookingId].lastSync   = now;
         created++;
         success = true;
       } catch (err) {
         if (retry === 2) {
+          newDb[rec.bookingId].syncStatus = '未同期';
           errors.push('作成失敗(ID:' + rec.bookingId + '): ' + err.message);
         }
       }
@@ -868,7 +893,14 @@ function doSyncToCalendar_() {
   }
 
   writeDatabase_(newDb);
-  return { created: created, deleted: deleted, errors: errors, pending: toCreate.length, skipped: skipped };
+
+  var unsyncCount = 0;
+  var dbk = Object.keys(newDb);
+  for (var uk = 0; uk < dbk.length; uk++) {
+    if (newDb[dbk[uk]].syncStatus === '未同期') unsyncCount++;
+  }
+
+  return { created: created, deleted: deleted, errors: errors, pending: toCreate.length, skipped: skipped, unsyncCount: unsyncCount };
 }
 
 // ============================================================
@@ -903,6 +935,9 @@ function syncToCalendarMenu() {
     var msg = '新規作成: ' + result.created + '件\n' +
               '削除: ' + result.deleted + '件\n\n' +
               '※ 変更のない予定はそのまま保持されています。';
+    if (result.unsyncCount > 0) {
+      msg += '\n\n⏳ 未同期: ' + result.unsyncCount + '件（次回実行でリトライされます）';
+    }
     if (result.errors && result.errors.length > 0) {
       msg += '\n\n❌ エラー ' + result.errors.length + '件:\n' + result.errors.slice(0, 5).join('\n');
     }
@@ -931,6 +966,9 @@ function runAll() {
     if (defr > 0) msg += '\n\n📅 翌日清掃に延期: ' + defr + '件（外注回避）';
     if (ext > 0)  msg += '\n⚠ Rクリーンへの外注が ' + ext + '件あります';
     if (una > 0)  msg += '\n⚠ 未割当（要確認）が ' + una + '件あります';
+    if (calResult.unsyncCount > 0) {
+      msg += '\n\n⏳ 未同期: ' + calResult.unsyncCount + '件（「カレンダー反映のみ」で再実行してください）';
+    }
     if (calResult.errors && calResult.errors.length > 0) {
       msg += '\n\n❌ カレンダーエラー ' + calResult.errors.length + '件:\n' + calResult.errors.slice(0, 5).join('\n');
     }
