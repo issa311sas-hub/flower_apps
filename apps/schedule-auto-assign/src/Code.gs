@@ -807,10 +807,11 @@ function doSyncToCalendar_() {
     }
   }
 
-  // イベント削除
+  // イベント削除（レート制限対策: 5件ごとに1秒待機）
   var deleted = 0;
   var errors = [];
   for (var del = 0; del < toDelete.length; del++) {
+    if (del > 0 && del % 5 === 0) Utilities.sleep(1000);
     try {
       var ev = cal.getEventById(toDelete[del].eventId);
       if (ev) { ev.deleteEvent(); deleted++; }
@@ -819,7 +820,7 @@ function doSyncToCalendar_() {
     }
   }
 
-  // イベント作成（清掃日に作成）
+  // イベント作成（レート制限対策: 5件ごとに1秒待機、失敗時リトライ）
   var created = 0;
   var skipped = 0;
   var now = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm');
@@ -827,6 +828,8 @@ function doSyncToCalendar_() {
   for (var cr = 0; cr < toCreate.length; cr++) {
     var rec = toCreate[cr];
     if (rec.staff === '未割当') { skipped++; continue; }
+
+    if (created > 0 && created % 5 === 0) Utilities.sleep(1000);
 
     var evTitle = rec.title
       ? rec.staff + '⇒' + rec.unit + '(' + rec.title + ')'
@@ -838,22 +841,29 @@ function doSyncToCalendar_() {
       continue;
     }
 
-    try {
-      var newEv = cal.createAllDayEvent(evTitle, evDate);
-      newEv.setDescription(
-        SYSTEM_TAG + '\n予約ID: ' + rec.bookingId + '\n' +
-        '自動割当システムにより作成\n作成日時: ' + now
-      );
+    var success = false;
+    for (var retry = 0; retry < 3 && !success; retry++) {
+      try {
+        if (retry > 0) Utilities.sleep(retry * 5000);
+        var newEv = cal.createAllDayEvent(evTitle, evDate);
+        newEv.setDescription(
+          SYSTEM_TAG + '\n予約ID: ' + rec.bookingId + '\n' +
+          '自動割当システムにより作成\n作成日時: ' + now
+        );
 
-      if (rec.staff === '細田さん')   newEv.setColor('1');
-      if (rec.staff === '普久原さん') newEv.setColor('6');
-      if (rec.staff === 'Rクリーン')  newEv.setColor('3');
+        if (rec.staff === '細田さん')   newEv.setColor('1');
+        if (rec.staff === '普久原さん') newEv.setColor('6');
+        if (rec.staff === 'Rクリーン')  newEv.setColor('3');
 
-      newDb[rec.bookingId].eventId  = newEv.getId();
-      newDb[rec.bookingId].lastSync = now;
-      created++;
-    } catch (err) {
-      errors.push('作成失敗(ID:' + rec.bookingId + '): ' + err.message);
+        newDb[rec.bookingId].eventId  = newEv.getId();
+        newDb[rec.bookingId].lastSync = now;
+        created++;
+        success = true;
+      } catch (err) {
+        if (retry === 2) {
+          errors.push('作成失敗(ID:' + rec.bookingId + '): ' + err.message);
+        }
+      }
     }
   }
 
