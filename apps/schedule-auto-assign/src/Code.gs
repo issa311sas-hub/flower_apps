@@ -2,7 +2,7 @@
  * 民泊清掃予定 自動割り当てシステム v5
  *
  * v4からの変更点:
- *   - 入力データに開始日を追加（5列: 予約ID, タイトル, 開始日, チェックアウト日, ユニット）
+ *   - 入力データに開始日・ゲスト数を追加（6列: 予約ID, タイトル, 開始日, チェックアウト日, ユニット, ゲスト）
  *   - 翌日清掃判定をタイトルベースから実データベースに変更
  *     （次の予約の開始日までに清掃できればよい）
  *   - 割り当て優先順位を単純化: 細田さん → 普久原さん → 未割当 → Rクリーン(14日以内)
@@ -86,8 +86,8 @@ function setupSpreadsheet() {
   // ----- 予約データシート -----
   var res = getOrCreateSheet_(ss, SHEET_RESERVATIONS);
   res.clear();
-  res.getRange('A1:E1')
-    .setValues([['予約ID', 'タイトル', '開始日', 'チェックアウト日', 'ユニット']])
+  res.getRange('A1:F1')
+    .setValues([['予約ID', 'タイトル', '開始日', 'チェックアウト日', 'ユニット', 'ゲスト']])
     .setFontWeight('bold').setBackground('#F0EBE3');
   res.getRange('A2').setValue('← Beds24 の Excel データをここに貼り付け（A1から上書きでもOK）')
     .setFontColor('#999999');
@@ -96,6 +96,7 @@ function setupSpreadsheet() {
   res.setColumnWidth(3, 150);
   res.setColumnWidth(4, 150);
   res.setColumnWidth(5, 100);
+  res.setColumnWidth(6, 80);
 
   // ----- 割り当て結果シート -----
   var out = getOrCreateSheet_(ss, SHEET_RESULTS);
@@ -133,7 +134,7 @@ function setupSpreadsheet() {
     '   → カレンダーに終日イベントで数字を入力\n' +
     '   （例: 3 = 3件対応可能 / 0 = 出勤不可）\n' +
     '3. 「予約データ」シートにExcelデータを貼り付け\n' +
-    '   （形式: 予約ID, タイトル, 開始日, チェックアウト日, ユニット）\n' +
+    '   （形式: 予約ID, タイトル, 開始日, チェックアウト日, ユニット, ゲスト）\n' +
     '4. 「清掃管理」メニュー → 一括実行',
     SpreadsheetApp.getUi().ButtonSet.OK
   );
@@ -200,7 +201,8 @@ function readReservations_() {
   var lastRow = sheet.getLastRow();
   if (lastRow < 1) return [];
 
-  var data = sheet.getRange(1, 1, lastRow, 5).getValues();
+  var cols = Math.min(sheet.getLastColumn(), 6);
+  var data = sheet.getRange(1, 1, lastRow, cols).getValues();
   var results = [];
   var seen = {};
 
@@ -210,6 +212,7 @@ function readReservations_() {
     var rawStart   = data[i][2];
     var rawCheckout = data[i][3];
     var unit       = String(data[i][4]).trim();
+    var guests     = (cols >= 6 && data[i][5] !== '') ? Number(data[i][5]) || 0 : 0;
 
     if (!bookingId || !unit) continue;
     if (bookingId === '予約ID') continue;
@@ -231,7 +234,8 @@ function readReservations_() {
       date:         checkoutDate,
       dateStr:      formatDate_(checkoutDate),
       unit:         unit,
-      dow:          checkoutDate.getDay()
+      dow:          checkoutDate.getDay(),
+      guests:       guests
     });
   }
 
@@ -517,6 +521,7 @@ function buildCleaningDeadlines_(reservations) {
 //   細田さん → 普久原さん → 未割当
 // Phase 2: 清掃延期処理（+1日、+2日でスタッフに振り替え）
 // Phase 3: Rクリーン安全ネット（14日以内の未割当→Rクリーン）
+// Phase 4: Rクリーンコスト最適化（ゲスト数が少ない部屋にRクリーンを入れ替え）
 // ============================================================
 function doMatching_() {
   var cfg = getSettings_();
@@ -566,7 +571,8 @@ function doMatching_() {
       staff:           uc.oldData.staff,
       status:          uc.oldData.staff === 'Rクリーン' ? '外注' :
                        (uc.oldData.staff === '未割当' ? '要確認' :
-                       (cds !== uc.newData.dateStr ? '確定（翌日）' : '確定'))
+                       (cds !== uc.newData.dateStr ? '確定（翌日）' : '確定')),
+      guests:          uc.newData.guests || 0
     };
     // 14日以上先のRクリーン → 未割当に戻す（まだスタッフ確定の余地あり）
     if (a.staff === 'Rクリーン' && cleaningDate >= rclDeadline) {
@@ -731,6 +737,65 @@ function doMatching_() {
       ra.staff  = 'Rクリーン';
       ra.status = '外注';
     }
+
+    // --------------------------------------------------------
+    // Phase 4: Rクリーンコスト最適化
+    //
+    // Rクリーンは宿泊人数が少ない部屋のほうが安い。
+    // 同じ清掃日にRクリーンとスタッフの割り当てがある場合、
+    // スタッフ担当の中にゲスト数がより少ない部屋があれば入れ替える。
+    // --------------------------------------------------------
+    var rclByDate = {};
+    for (var ri = 0; ri < allAssignments.length; ri++) {
+      if (allAssignments[ri].staff === 'Rクリーン') {
+        if (!rclByDate[allAssignments[ri].dateStr]) rclByDate[allAssignments[ri].dateStr] = [];
+        rclByDate[allAssignments[ri].dateStr].push(ri);
+      }
+    }
+    var rclDates = Object.keys(rclByDate);
+    for (var rd = 0; rd < rclDates.length; rd++) {
+      var rclIdxs = rclByDate[rclDates[rd]];
+      var staffIdxs = [];
+      for (var si2 = 0; si2 < allAssignments.length; si2++) {
+        var sa = allAssignments[si2];
+        if (sa.dateStr === rclDates[rd] && sa.staff !== 'Rクリーン' && sa.staff !== '未割当') {
+          staffIdxs.push(si2);
+        }
+      }
+      if (staffIdxs.length === 0) continue;
+
+      for (var rx = 0; rx < rclIdxs.length; rx++) {
+        var rIdx = rclIdxs[rx];
+        var rAsgn = allAssignments[rIdx];
+        var bestSwap = -1;
+        var bestGuests = rAsgn.guests;
+
+        for (var sx = 0; sx < staffIdxs.length; sx++) {
+          var sIdx = staffIdxs[sx];
+          var sAsgn = allAssignments[sIdx];
+          if (sAsgn.guests < bestGuests) {
+            bestGuests = sAsgn.guests;
+            bestSwap = sx;
+          }
+        }
+
+        if (bestSwap >= 0) {
+          var swapIdx = staffIdxs[bestSwap];
+          var swapAsgn = allAssignments[swapIdx];
+
+          var tmpStaff  = rAsgn.staff;
+          var tmpStatus = rAsgn.status;
+          rAsgn.staff      = swapAsgn.staff;
+          rAsgn.status     = swapAsgn.status;
+          swapAsgn.staff   = tmpStaff;
+          swapAsgn.status  = tmpStatus;
+
+          staffIdxs.splice(bestSwap, 1);
+          staffIdxs.push(rIdx);
+          rclIdxs[rx] = swapIdx;
+        }
+      }
+    }
   }
 
   allAssignments.sort(function(a, b) {
@@ -752,7 +817,8 @@ function makeAssignFromBooking_(booking, staffName) {
     unit:            booking.unit,
     title:           booking.title,
     staff:           staffName,
-    status:          statusFor_(staffName)
+    status:          statusFor_(staffName),
+    guests:          booking.guests || 0
   };
 }
 
