@@ -763,8 +763,12 @@ function doSyncToCalendar_() {
     };
   }
 
+  var today = new Date();
+  today.setHours(0, 0, 0, 0);
+
   var toDelete = [];
   var toCreate = [];
+  var toCancel = [];
   var newDb    = {};
 
   // DB既存分を確認（清掃日・担当等で比較）
@@ -775,7 +779,11 @@ function doSyncToCalendar_() {
     var curRec = current[dbBid];
 
     if (!curRec) {
-      if (dbRec.eventId) toDelete.push(dbRec);
+      var cleanDate = parseDateStr_(dbRec.cleaningDateStr);
+      if (cleanDate >= today && dbRec.eventId && dbRec.syncStatus === '完了') {
+        toCancel.push(dbRec);
+      }
+      // 過去の予約は自然消滅、DBから除外するだけ（カレンダーは触らない）
     } else if (dbRec.cleaningDateStr !== curRec.cleaningDateStr ||
                dbRec.unit !== curRec.unit || dbRec.title !== curRec.title ||
                dbRec.staff !== curRec.staff) {
@@ -820,6 +828,25 @@ function doSyncToCalendar_() {
       if (ev) { ev.deleteEvent(); deleted++; }
     } catch (err) {
       errors.push('削除失敗(ID:' + toDelete[del].bookingId + '): ' + err.message);
+    }
+  }
+
+  // キャンセル検知: 予約データから消えた未来の予約のイベントタイトルを更新
+  var cancelled = 0;
+  for (var cn = 0; cn < toCancel.length; cn++) {
+    if (cn > 0 && cn % 5 === 0) Utilities.sleep(1000);
+    try {
+      var cev = cal.getEventById(toCancel[cn].eventId);
+      if (cev) {
+        var cancelLabel = toCancel[cn].title
+          ? toCancel[cn].unit + '(' + toCancel[cn].title + ')'
+          : toCancel[cn].unit;
+        cev.setTitle(cancelLabel + 'の予定はキャンセルされました');
+        cev.setColor('11');
+        cancelled++;
+      }
+    } catch (err) {
+      errors.push('キャンセル更新失敗(ID:' + toCancel[cn].bookingId + '): ' + err.message);
     }
   }
 
@@ -881,7 +908,7 @@ function doSyncToCalendar_() {
     if (newDb[dbk[uk]].syncStatus === '未同期') unsyncCount++;
   }
 
-  return { created: created, deleted: deleted, errors: errors, pending: toCreate.length, skipped: skipped, unsyncCount: unsyncCount };
+  return { created: created, deleted: deleted, cancelled: cancelled, errors: errors, pending: toCreate.length, skipped: skipped, unsyncCount: unsyncCount };
 }
 
 // ============================================================
@@ -914,8 +941,9 @@ function syncToCalendarMenu() {
   try {
     var result = doSyncToCalendar_();
     var msg = '新規作成: ' + result.created + '件\n' +
-              '削除: ' + result.deleted + '件\n\n' +
-              '※ 変更のない予定はそのまま保持されています。';
+              '削除: ' + result.deleted + '件';
+    if (result.cancelled > 0) msg += '\nキャンセル検知: ' + result.cancelled + '件';
+    msg += '\n\n※ 変更のない予定はそのまま保持されています。';
     if (result.unsyncCount > 0) {
       msg += '\n\n⏳ 未同期: ' + result.unsyncCount + '件（次回実行でリトライされます）';
     }
@@ -944,6 +972,7 @@ function runAll() {
     var msg = '割り当て: ' + assignments.length + '件\n' +
               'カレンダー新規作成: ' + calResult.created + '件\n' +
               'カレンダー削除: ' + calResult.deleted + '件';
+    if (calResult.cancelled > 0) msg += '\nキャンセル検知: ' + calResult.cancelled + '件';
     if (defr > 0) msg += '\n\n📅 翌日清掃に延期: ' + defr + '件（外注回避）';
     if (ext > 0)  msg += '\n⚠ Rクリーンへの外注が ' + ext + '件あります';
     if (una > 0)  msg += '\n⚠ 未割当（要確認）が ' + una + '件あります';
