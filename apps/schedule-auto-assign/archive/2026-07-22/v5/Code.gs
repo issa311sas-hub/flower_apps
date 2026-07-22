@@ -936,6 +936,11 @@ function doSyncToCalendar_() {
     var dbRec  = db[dbBid];
     var curRec = current[dbBid];
 
+    if (dbRec.syncStatus === '手動') {
+      newDb[dbBid] = dbRec;
+      continue;
+    }
+
     if (!curRec) {
       var cleanDate = parseDateStr_(dbRec.cleaningDateStr);
       if (cleanDate >= today && dbRec.eventId && dbRec.syncStatus === '完了') {
@@ -977,13 +982,30 @@ function doSyncToCalendar_() {
   }
 
   // イベント削除（レート制限対策: 5件ごとに1秒待機）
+  // 手動編集検知: カレンダーのタイトルがシステム生成と異なる場合はスキップ
   var deleted = 0;
+  var manualCount = 0;
   var errors = [];
   for (var del = 0; del < toDelete.length; del++) {
     if (del > 0 && del % 5 === 0) Utilities.sleep(1000);
     try {
       var ev = cal.getEventById(toDelete[del].eventId);
-      if (ev) { ev.deleteEvent(); deleted++; }
+      if (ev) {
+        var expectedTitle = buildEventTitle_(toDelete[del].staff, toDelete[del].unit, toDelete[del].title);
+        var actualTitle = ev.getTitle().trim();
+        if (actualTitle !== expectedTitle) {
+          newDb[toDelete[del].bookingId] = toDelete[del];
+          newDb[toDelete[del].bookingId].syncStatus = '手動';
+          var createIdx = -1;
+          for (var fi = 0; fi < toCreate.length; fi++) {
+            if (toCreate[fi].bookingId === toDelete[del].bookingId) { createIdx = fi; break; }
+          }
+          if (createIdx >= 0) toCreate.splice(createIdx, 1);
+          manualCount++;
+          continue;
+        }
+        ev.deleteEvent(); deleted++;
+      }
     } catch (err) {
       errors.push('削除失敗(ID:' + toDelete[del].bookingId + '): ' + err.message);
     }
@@ -1019,9 +1041,7 @@ function doSyncToCalendar_() {
 
     if (created > 0 && created % 5 === 0) Utilities.sleep(1000);
 
-    var evTitle = rec.title
-      ? rec.staff + '⇒' + rec.unit + '(' + rec.title + ')'
-      : rec.staff + '⇒' + rec.unit;
+    var evTitle = buildEventTitle_(rec.staff, rec.unit, rec.title);
     var evDate = parseDateStr_(rec.cleaningDateStr);
 
     if (isNaN(evDate.getTime())) {
@@ -1066,7 +1086,7 @@ function doSyncToCalendar_() {
     if (newDb[dbk[uk]].syncStatus === '未同期') unsyncCount++;
   }
 
-  return { created: created, deleted: deleted, cancelled: cancelled, errors: errors, pending: toCreate.length, skipped: skipped, unsyncCount: unsyncCount };
+  return { created: created, deleted: deleted, cancelled: cancelled, manual: manualCount, errors: errors, pending: toCreate.length, skipped: skipped, unsyncCount: unsyncCount };
 }
 
 // ============================================================
@@ -1101,6 +1121,7 @@ function syncToCalendarMenu() {
     var msg = '新規作成: ' + result.created + '件\n' +
               '削除: ' + result.deleted + '件';
     if (result.cancelled > 0) msg += '\nキャンセル検知: ' + result.cancelled + '件';
+    if (result.manual > 0) msg += '\n✋ 手動編集保持: ' + result.manual + '件（上書きスキップ）';
     msg += '\n\n※ 変更のない予定はそのまま保持されています。';
     if (result.unsyncCount > 0) {
       msg += '\n\n⏳ 未同期: ' + result.unsyncCount + '件（次回実行でリトライされます）';
@@ -1131,6 +1152,7 @@ function runAll() {
               'カレンダー新規作成: ' + calResult.created + '件\n' +
               'カレンダー削除: ' + calResult.deleted + '件';
     if (calResult.cancelled > 0) msg += '\nキャンセル検知: ' + calResult.cancelled + '件';
+    if (calResult.manual > 0) msg += '\n✋ 手動編集保持: ' + calResult.manual + '件（上書きスキップ）';
     if (defr > 0) msg += '\n\n📅 清掃延期: ' + defr + '件（外注回避）';
     if (ext > 0)  msg += '\n⚠ Rクリーンへの外注が ' + ext + '件あります';
     if (una > 0)  msg += '\n⚠ 未割当（要確認）が ' + una + '件あります';
@@ -1149,6 +1171,10 @@ function runAll() {
 // ============================================================
 // ユーティリティ
 // ============================================================
+function buildEventTitle_(staff, unit, title) {
+  return title ? staff + '⇒' + unit + '(' + title + ')' : staff + '⇒' + unit;
+}
+
 function toDate_(val) {
   if (val instanceof Date) return val;
   var s = String(val).trim();
