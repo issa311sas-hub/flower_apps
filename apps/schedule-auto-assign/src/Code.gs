@@ -461,21 +461,21 @@ function doMatching_() {
   var db   = readDatabase_();
   var diff = computeDiff_(reservations, db);
 
-  // Rクリーン割り当ての期限: 3週間以内のみ外注、それ以降は未割当
+  // Rクリーン割り当ての期限: 実行日から12日以内の未割当のみRクリーンに
   var today = new Date();
   today.setHours(0, 0, 0, 0);
-  var rclCutoff = new Date(today);
-  rclCutoff.setDate(rclCutoff.getDate() + 21);
+  var rclDeadline = new Date(today);
+  rclDeadline.setDate(rclDeadline.getDate() + 12);
 
-  // スタッフ情報を特定
-  var priInfo = null, othInfo = null, rclInfo = null;
+  // スタッフ情報を特定（細田さん=第1優先、普久原さん=第2優先）
+  var hosodaInfo = null, fukuharaInfo = null, rclInfo = null;
   for (var si = 0; si < cfg.staff.length; si++) {
-    if (cfg.staff[si].name === cfg.priorityStaff) priInfo = cfg.staff[si];
+    if (cfg.staff[si].name === '細田さん')        hosodaInfo = cfg.staff[si];
+    else if (cfg.staff[si].name === '普久原さん') fukuharaInfo = cfg.staff[si];
     else if (cfg.staff[si].name === 'Rクリーン')  rclInfo = cfg.staff[si];
-    else                                           othInfo = cfg.staff[si];
   }
-  if (!priInfo || !othInfo) {
-    throw new Error('設定シートのスタッフ名と優先スタッフ名が一致しません。');
+  if (!hosodaInfo || !fukuharaInfo) {
+    throw new Error('設定シートに「細田さん」と「普久原さん」が必要です。');
   }
 
   // --- 全割り当ての使用量を追跡 ---
@@ -502,8 +502,8 @@ function doMatching_() {
                        (uc.oldData.staff === '未割当' ? '要確認' :
                        (cds !== uc.newData.dateStr ? '確定（翌日）' : '確定'))
     };
-    // 3週間以上先のRクリーン割り当ては未割当に変更
-    if (a.staff === 'Rクリーン' && cleaningDate >= rclCutoff) {
+    // 12日以上先のRクリーン → 未割当に戻す（まだスタッフ確定の余地あり）
+    if (a.staff === 'Rクリーン' && cleaningDate >= rclDeadline) {
       a.staff = '未割当';
       a.status = '要確認';
     }
@@ -538,7 +538,9 @@ function doMatching_() {
         getCapacityForDates_(cfg.staff[s].calendarId, datesToCheck);
     }
 
-    // Phase 1: 日付ごとの通常割り当て
+    // Phase 1: 日付ごとの割り当て
+    //   優先順位: 細田さん → 普久原さん → 未割当
+    //   12日以内の未割当 → Rクリーン
     var newByDate = {};
     for (var nb = 0; nb < toAssign.length; nb++) {
       var r = toAssign[nb];
@@ -550,73 +552,43 @@ function doMatching_() {
     for (var di = 0; di < dateKeys.length; di++) {
       var dk       = dateKeys[di];
       var info     = newByDate[dk];
-      var dow      = info.dow;
       var newItems = info.items;
       var total    = newItems.length;
 
-      var priTotalCap = getCapForDate_(staffCaps, priInfo, dk);
-      var othTotalCap = getCapForDate_(staffCaps, othInfo, dk);
-      var rclTotalCap = rclInfo ? getCapForDate_(staffCaps, rclInfo, dk) : 99;
+      var hosodaCap   = getCapForDate_(staffCaps, hosodaInfo, dk);
+      var fukuharaCap = getCapForDate_(staffCaps, fukuharaInfo, dk);
 
-      var eu       = usageByDate[dk] || {};
-      var existPri = eu[priInfo.name] || 0;
-      var existOth = eu[othInfo.name] || 0;
-      var existRcl = eu[rclInfo ? rclInfo.name : 'Rクリーン'] || 0;
+      var eu            = usageByDate[dk] || {};
+      var existHosoda   = eu[hosodaInfo.name] || 0;
+      var existFukuhara = eu[fukuharaInfo.name] || 0;
 
-      var priRemain = Math.max(0, priTotalCap - existPri);
-      var othRemain = Math.max(0, othTotalCap - existOth);
-      var rclRemain = Math.max(0, rclTotalCap - existRcl);
+      var hosodaRemain   = Math.max(0, hosodaCap - existHosoda);
+      var fukuharaRemain = Math.max(0, fukuharaCap - existFukuhara);
 
-      var totalDayWork  = total + existPri + existOth + existRcl;
-      var isPriorityDay = cfg.priorityDays[dow] === true;
-
-      var priAlloc = 0, othAlloc = 0, rclAlloc = 0;
-
-      if (isPriorityDay) {
-        if (totalDayWork >= cfg.balanceThreshold && priTotalCap > 0 && othTotalCap > 0) {
-          var targetPri = Math.ceil(totalDayWork / 2);
-          var targetOth = totalDayWork - targetPri;
-          priAlloc = Math.min(Math.max(0, targetPri - existPri), priRemain, total);
-          othAlloc = Math.min(Math.max(0, targetOth - existOth), othRemain, total - priAlloc);
-        } else {
-          var priTarget = Math.max(0, cfg.priorityCount - existPri);
-          priAlloc = Math.min(priTarget, priRemain, total);
-          othAlloc = Math.min(total - priAlloc, othRemain);
-        }
-      } else {
-        othAlloc = Math.min(total, othRemain);
-        priAlloc = Math.min(total - othAlloc, priRemain);
-      }
-
-      if (info.date >= rclCutoff) {
-        rclAlloc = 0;
-      } else {
-        rclAlloc = Math.min(total - priAlloc - othAlloc, rclRemain);
-      }
-      var unassignedN = total - priAlloc - othAlloc - rclAlloc;
+      // 1. 細田さんの枠いっぱいまで
+      var hosodaAlloc = Math.min(total, hosodaRemain);
+      // 2. 残りを普久原さん
+      var fukuharaAlloc = Math.min(total - hosodaAlloc, fukuharaRemain);
+      // 3. さらに残りは未割当（12日以内ならRクリーン）
+      var remaining = total - hosodaAlloc - fukuharaAlloc;
 
       var unitIdx = 0;
-      var first   = isPriorityDay ? priInfo : othInfo;
-      var second  = isPriorityDay ? othInfo : priInfo;
-      var firstN  = isPriorityDay ? priAlloc : othAlloc;
-      var secondN = isPriorityDay ? othAlloc : priAlloc;
-
-      for (var a1 = 0; a1 < firstN; a1++, unitIdx++) {
-        allAssignments.push(makeAssignFromBooking_(newItems[unitIdx], first.name));
-        addUsage_(usageByDate, dk, first.name);
+      for (var a1 = 0; a1 < hosodaAlloc; a1++, unitIdx++) {
+        allAssignments.push(makeAssignFromBooking_(newItems[unitIdx], hosodaInfo.name));
+        addUsage_(usageByDate, dk, hosodaInfo.name);
       }
-      for (var a2 = 0; a2 < secondN; a2++, unitIdx++) {
-        allAssignments.push(makeAssignFromBooking_(newItems[unitIdx], second.name));
-        addUsage_(usageByDate, dk, second.name);
+      for (var a2 = 0; a2 < fukuharaAlloc; a2++, unitIdx++) {
+        allAssignments.push(makeAssignFromBooking_(newItems[unitIdx], fukuharaInfo.name));
+        addUsage_(usageByDate, dk, fukuharaInfo.name);
       }
-      for (var a3 = 0; a3 < rclAlloc; a3++, unitIdx++) {
-        var rclName = rclInfo ? rclInfo.name : 'Rクリーン';
-        allAssignments.push(makeAssignFromBooking_(newItems[unitIdx], rclName));
-        addUsage_(usageByDate, dk, rclName);
-      }
-      for (var a4 = 0; a4 < unassignedN; a4++, unitIdx++) {
-        allAssignments.push(makeAssignFromBooking_(newItems[unitIdx], '未割当'));
-        addUsage_(usageByDate, dk, '未割当');
+      for (var a3 = 0; a3 < remaining; a3++, unitIdx++) {
+        if (info.date < rclDeadline) {
+          allAssignments.push(makeAssignFromBooking_(newItems[unitIdx], 'Rクリーン'));
+          addUsage_(usageByDate, dk, 'Rクリーン');
+        } else {
+          allAssignments.push(makeAssignFromBooking_(newItems[unitIdx], '未割当'));
+          addUsage_(usageByDate, dk, '未割当');
+        }
       }
     }
 
@@ -625,6 +597,7 @@ function doMatching_() {
     //
     // Rクリーン or 未割当に回った「翌日清掃」予約について、
     // 翌日のスタッフ残容量を確認し、可能なら翌日に回す。
+    // 優先順位: 細田さん → 普久原さん
     // --------------------------------------------------------
     var deferCount = 0;
     for (var df = 0; df < allAssignments.length; df++) {
@@ -638,25 +611,16 @@ function doMatching_() {
       var nextDateStr = formatDate_(nextDate);
       var nextDow     = nextDate.getDay();
 
-      var priCapNext = getCapForDate_(staffCaps, priInfo, nextDateStr);
-      var othCapNext = getCapForDate_(staffCaps, othInfo, nextDateStr);
+      var hosodaCapNext   = getCapForDate_(staffCaps, hosodaInfo, nextDateStr);
+      var fukuharaCapNext = getCapForDate_(staffCaps, fukuharaInfo, nextDateStr);
 
-      var euNext     = usageByDate[nextDateStr] || {};
-      var priUsedN   = euNext[priInfo.name] || 0;
-      var othUsedN   = euNext[othInfo.name] || 0;
-      var priRemainN = Math.max(0, priCapNext - priUsedN);
-      var othRemainN = Math.max(0, othCapNext - othUsedN);
+      var euNext          = usageByDate[nextDateStr] || {};
+      var hosodaRemainN   = Math.max(0, hosodaCapNext - (euNext[hosodaInfo.name] || 0));
+      var fukuharaRemainN = Math.max(0, fukuharaCapNext - (euNext[fukuharaInfo.name] || 0));
 
-      var isPriDayNext = cfg.priorityDays[nextDow] === true;
       var deferTo = null;
-
-      if (isPriDayNext) {
-        if (priRemainN > 0)      deferTo = priInfo.name;
-        else if (othRemainN > 0) deferTo = othInfo.name;
-      } else {
-        if (othRemainN > 0)      deferTo = othInfo.name;
-        else if (priRemainN > 0) deferTo = priInfo.name;
-      }
+      if (hosodaRemainN > 0)        deferTo = hosodaInfo.name;
+      else if (fukuharaRemainN > 0) deferTo = fukuharaInfo.name;
 
       if (deferTo) {
         var origDate = asgn.dateStr;
@@ -866,7 +830,7 @@ function doSyncToCalendar_() {
 
   for (var cr = 0; cr < toCreate.length; cr++) {
     var rec = toCreate[cr];
-    if (rec.staff === '未割当') { skipped++; continue; }
+    // 未割当もカレンダーに出力する
 
     if (created > 0 && created % 5 === 0) Utilities.sleep(1000);
 
@@ -893,6 +857,7 @@ function doSyncToCalendar_() {
         if (rec.staff === '細田さん')   newEv.setColor('1');
         if (rec.staff === '普久原さん') newEv.setColor('6');
         if (rec.staff === 'Rクリーン')  newEv.setColor('3');
+        if (rec.staff === '未割当')     newEv.setColor('8');
 
         newDb[rec.bookingId].eventId    = newEv.getId();
         newDb[rec.bookingId].syncStatus = '完了';
