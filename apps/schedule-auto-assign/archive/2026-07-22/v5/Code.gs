@@ -492,6 +492,11 @@ function buildCleaningDeadlines_(reservations) {
         deadline = dayBefore;
       }
 
+      // 害虫防止: 清掃期限はチェックアウト+2日が上限
+      var maxDefer = new Date(bk.date);
+      maxDefer.setDate(maxDefer.getDate() + 2);
+      if (deadline > maxDefer) deadline = maxDefer;
+
       // 期限がチェックアウト日より前になる場合はチェックアウト日当日が期限
       if (deadline < bk.date) deadline = bk.date;
 
@@ -509,9 +514,9 @@ function buildCleaningDeadlines_(reservations) {
 // マッチングアルゴリズム（v5）
 //
 // Phase 1: 通常の割り当て（既存保持 + 新規割り当て）
-//   細田さん → 普久原さん → 未割当(14日以内はRクリーン)
-// Phase 2: 清掃延期処理
-//   次の予約まで余裕がある場合、翌日のスタッフに振り替え
+//   細田さん → 普久原さん → 未割当
+// Phase 2: 清掃延期処理（+1日、+2日でスタッフに振り替え）
+// Phase 3: Rクリーン安全ネット（14日以内の未割当→Rクリーン）
 // ============================================================
 function doMatching_() {
   var cfg = getSettings_();
@@ -592,16 +597,16 @@ function doMatching_() {
 
   var staffCaps = {};
   if (toAssign.length > 0) {
-    // 必要な日付を収集（清掃延期の翌日分も含む）
+    // 必要な日付を収集（全予約について +1日・+2日も取得）
     var datesNeeded = {};
     for (var t = 0; t < toAssign.length; t++) {
       datesNeeded[toAssign[t].dateStr] = true;
-      var dl = deadlines[toAssign[t].bookingId];
-      if (dl && dl.canDefer) {
-        var nd = new Date(toAssign[t].date);
-        nd.setDate(nd.getDate() + 1);
-        datesNeeded[formatDate_(nd)] = true;
-      }
+      var nd1 = new Date(toAssign[t].date);
+      nd1.setDate(nd1.getDate() + 1);
+      datesNeeded[formatDate_(nd1)] = true;
+      var nd2 = new Date(toAssign[t].date);
+      nd2.setDate(nd2.getDate() + 2);
+      datesNeeded[formatDate_(nd2)] = true;
     }
     var datesToCheck = Object.keys(datesNeeded);
 
@@ -612,7 +617,6 @@ function doMatching_() {
 
     // Phase 1: 日付ごとの割り当て
     //   優先順位: 細田さん → 普久原さん → 未割当
-    //   12日以内の未割当 → Rクリーン
     var newByDate = {};
     for (var nb = 0; nb < toAssign.length; nb++) {
       var r = toAssign[nb];
@@ -641,7 +645,7 @@ function doMatching_() {
       var hosodaAlloc = Math.min(total, hosodaRemain);
       // 2. 残りを普久原さん
       var fukuharaAlloc = Math.min(total - hosodaAlloc, fukuharaRemain);
-      // 3. さらに残りは未割当（12日以内ならRクリーン）
+      // 3. さらに残りは未割当（Phase 3でRクリーン判定）
       var remaining = total - hosodaAlloc - fukuharaAlloc;
 
       var unitIdx = 0;
@@ -654,66 +658,78 @@ function doMatching_() {
         addUsage_(usageByDate, dk, fukuharaInfo.name);
       }
       for (var a3 = 0; a3 < remaining; a3++, unitIdx++) {
-        if (info.date < rclDeadline) {
-          allAssignments.push(makeAssignFromBooking_(newItems[unitIdx], 'Rクリーン'));
-          addUsage_(usageByDate, dk, 'Rクリーン');
-        } else {
-          allAssignments.push(makeAssignFromBooking_(newItems[unitIdx], '未割当'));
-          addUsage_(usageByDate, dk, '未割当');
-        }
+        allAssignments.push(makeAssignFromBooking_(newItems[unitIdx], '未割当'));
+        addUsage_(usageByDate, dk, '未割当');
       }
     }
 
     // --------------------------------------------------------
     // Phase 2: 清掃延期処理
     //
-    // Rクリーン or 未割当に回った予約で、次の予約まで余裕がある場合
-    // 翌日のスタッフ残容量を確認し、可能なら翌日に回す。
+    // 未割当に回った予約で、+1日 or +2日にスタッフ枠がある場合
+    // そちらに振り替える。早い日を優先。
     // 優先順位: 細田さん → 普久原さん
     // --------------------------------------------------------
     var deferCount = 0;
     for (var df = 0; df < allAssignments.length; df++) {
       var asgn = allAssignments[df];
-      if (asgn.staff !== 'Rクリーン' && asgn.staff !== '未割当') continue;
+      if (asgn.staff !== '未割当') continue;
       if (asgn.checkoutDateStr !== asgn.dateStr) continue;
 
       var dl = deadlines[asgn.bookingId];
       if (!dl || !dl.canDefer) continue;
 
-      var nextDate = new Date(asgn.date);
-      nextDate.setDate(nextDate.getDate() + 1);
-      if (nextDate > dl.deadline) continue;
-
-      var nextDateStr = formatDate_(nextDate);
-      var nextDow     = nextDate.getDay();
-
-      var hosodaCapNext   = getCapForDate_(staffCaps, hosodaInfo, nextDateStr);
-      var fukuharaCapNext = getCapForDate_(staffCaps, fukuharaInfo, nextDateStr);
-
-      var euNext          = usageByDate[nextDateStr] || {};
-      var hosodaRemainN   = Math.max(0, hosodaCapNext - (euNext[hosodaInfo.name] || 0));
-      var fukuharaRemainN = Math.max(0, fukuharaCapNext - (euNext[fukuharaInfo.name] || 0));
-
       var deferTo = null;
-      if (hosodaRemainN > 0)        deferTo = hosodaInfo.name;
-      else if (fukuharaRemainN > 0) deferTo = fukuharaInfo.name;
+      var deferDate = null;
+
+      for (var offset = 1; offset <= 2 && !deferTo; offset++) {
+        var tryDate = new Date(asgn.date);
+        tryDate.setDate(tryDate.getDate() + offset);
+        if (tryDate > dl.deadline) continue;
+
+        var tryDateStr = formatDate_(tryDate);
+        var hosodaCapTry   = getCapForDate_(staffCaps, hosodaInfo, tryDateStr);
+        var fukuharaCapTry = getCapForDate_(staffCaps, fukuharaInfo, tryDateStr);
+        var euTry          = usageByDate[tryDateStr] || {};
+        var hosodaRemainT   = Math.max(0, hosodaCapTry - (euTry[hosodaInfo.name] || 0));
+        var fukuharaRemainT = Math.max(0, fukuharaCapTry - (euTry[fukuharaInfo.name] || 0));
+
+        if (hosodaRemainT > 0)        { deferTo = hosodaInfo.name; deferDate = tryDate; }
+        else if (fukuharaRemainT > 0) { deferTo = fukuharaInfo.name; deferDate = tryDate; }
+      }
 
       if (deferTo) {
         var origDate = asgn.dateStr;
         var origStaff = asgn.staff;
+        var deferDateStr = formatDate_(deferDate);
 
-        asgn.date    = nextDate;
-        asgn.dateStr = nextDateStr;
-        asgn.dayName = DAY_NAMES[nextDow];
+        asgn.date    = deferDate;
+        asgn.dateStr = deferDateStr;
+        asgn.dayName = DAY_NAMES[deferDate.getDay()];
         asgn.staff   = deferTo;
         asgn.status  = '確定（翌日）';
 
-        addUsage_(usageByDate, nextDateStr, deferTo);
+        addUsage_(usageByDate, deferDateStr, deferTo);
         if (usageByDate[origDate] && usageByDate[origDate][origStaff]) {
           usageByDate[origDate][origStaff]--;
         }
         deferCount++;
       }
+    }
+
+    // --------------------------------------------------------
+    // Phase 3: Rクリーン安全ネット
+    //
+    // 14日以内の未割当をRクリーンに割り当て。
+    // チェックアウト日当日を清掃日とする（早いほうが良い）。
+    // --------------------------------------------------------
+    for (var rn = 0; rn < allAssignments.length; rn++) {
+      var ra = allAssignments[rn];
+      if (ra.staff !== '未割当') continue;
+      if (ra.date >= rclDeadline) continue;
+
+      ra.staff  = 'Rクリーン';
+      ra.status = '外注';
     }
   }
 
