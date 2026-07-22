@@ -517,9 +517,10 @@ function buildCleaningDeadlines_(reservations) {
 // ============================================================
 // マッチングアルゴリズム（v5）
 //
-// Phase 1: 通常の割り当て（既存保持 + 新規割り当て）
+// Phase 1: 通常の割り当て（延期不可を優先してスタッフに割り当て）
 //   細田さん → 普久原さん → 未割当
-// Phase 2: 清掃延期処理（+1日、+2日でスタッフに振り替え）
+// Phase 2: 清掃延期処理（未割当を+1/+2日でスタッフに振り替え）
+// Phase 2.5: Rクリーン回避（同日スタッフの延期可能予約と未割当を入れ替え）
 // Phase 3: Rクリーン安全ネット（14日以内の未割当→Rクリーン）
 // Phase 4: Rクリーンコスト最適化（ゲスト数が少ない部屋にRクリーンを入れ替え）
 // ============================================================
@@ -601,27 +602,39 @@ function doMatching_() {
   for (var ad = 0; ad < diff.added.length; ad++)   toAssign.push(diff.added[ad]);
   for (var ch = 0; ch < diff.changed.length; ch++) toAssign.push(diff.changed[ch].newData);
 
-  var staffCaps = {};
-  if (toAssign.length > 0) {
-    // 必要な日付を収集（全予約について +1日・+2日も取得）
-    var datesNeeded = {};
-    for (var t = 0; t < toAssign.length; t++) {
-      datesNeeded[toAssign[t].dateStr] = true;
-      var nd1 = new Date(toAssign[t].date);
-      nd1.setDate(nd1.getDate() + 1);
-      datesNeeded[formatDate_(nd1)] = true;
-      var nd2 = new Date(toAssign[t].date);
-      nd2.setDate(nd2.getDate() + 2);
-      datesNeeded[formatDate_(nd2)] = true;
-    }
-    var datesToCheck = Object.keys(datesNeeded);
+  // 必要な日付を収集（全割り当て＋新規の +1日・+2日も取得）
+  var datesNeeded = {};
+  for (var ai = 0; ai < allAssignments.length; ai++) {
+    datesNeeded[allAssignments[ai].dateStr] = true;
+    var ad1 = new Date(allAssignments[ai].date);
+    ad1.setDate(ad1.getDate() + 1);
+    datesNeeded[formatDate_(ad1)] = true;
+    var ad2 = new Date(allAssignments[ai].date);
+    ad2.setDate(ad2.getDate() + 2);
+    datesNeeded[formatDate_(ad2)] = true;
+  }
+  for (var t = 0; t < toAssign.length; t++) {
+    datesNeeded[toAssign[t].dateStr] = true;
+    var nd1 = new Date(toAssign[t].date);
+    nd1.setDate(nd1.getDate() + 1);
+    datesNeeded[formatDate_(nd1)] = true;
+    var nd2 = new Date(toAssign[t].date);
+    nd2.setDate(nd2.getDate() + 2);
+    datesNeeded[formatDate_(nd2)] = true;
+  }
 
+  var staffCaps = {};
+  var datesToCheck = Object.keys(datesNeeded);
+  if (datesToCheck.length > 0) {
     for (var s = 0; s < cfg.staff.length; s++) {
       staffCaps[cfg.staff[s].name] =
         getCapacityForDates_(cfg.staff[s].calendarId, datesToCheck);
     }
+  }
 
+  if (toAssign.length > 0) {
     // Phase 1: 日付ごとの割り当て
+    //   延期不可の予約を先にスタッフに割り当て（延期可能な予約が溢れるように）
     //   優先順位: 細田さん → 普久原さん → 未割当
     var newByDate = {};
     for (var nb = 0; nb < toAssign.length; nb++) {
@@ -635,6 +648,14 @@ function doMatching_() {
       var dk       = dateKeys[di];
       var info     = newByDate[dk];
       var newItems = info.items;
+
+      // 延期不可の予約を先頭に並べ替え（スタッフ枠を優先的に確保）
+      newItems.sort(function(a, b) {
+        var aDef = deadlines[a.bookingId] && deadlines[a.bookingId].canDefer ? 1 : 0;
+        var bDef = deadlines[b.bookingId] && deadlines[b.bookingId].canDefer ? 1 : 0;
+        return aDef - bDef;
+      });
+
       var total    = newItems.length;
 
       var hosodaCap   = getCapForDate_(staffCaps, hosodaInfo, dk);
@@ -668,132 +689,189 @@ function doMatching_() {
         addUsage_(usageByDate, dk, '未割当');
       }
     }
+  }
 
-    // --------------------------------------------------------
-    // Phase 2: 清掃延期処理
-    //
-    // 未割当に回った予約で、+1日 or +2日にスタッフ枠がある場合
-    // そちらに振り替える。早い日を優先。
-    // 優先順位: 細田さん → 普久原さん
-    // --------------------------------------------------------
-    var deferCount = 0;
-    for (var df = 0; df < allAssignments.length; df++) {
-      var asgn = allAssignments[df];
-      if (asgn.staff !== '未割当') continue;
-      if (asgn.checkoutDateStr !== asgn.dateStr) continue;
+  // --------------------------------------------------------
+  // Phase 2: 清掃延期処理
+  //
+  // 未割当に回った予約で、+1日 or +2日にスタッフ枠がある場合
+  // そちらに振り替える。早い日を優先。
+  // 優先順位: 細田さん → 普久原さん
+  // --------------------------------------------------------
+  var deferCount = 0;
+  for (var df = 0; df < allAssignments.length; df++) {
+    var asgn = allAssignments[df];
+    if (asgn.staff !== '未割当') continue;
+    if (asgn.checkoutDateStr !== asgn.dateStr) continue;
 
-      var dl = deadlines[asgn.bookingId];
-      if (!dl || !dl.canDefer) continue;
+    var dl = deadlines[asgn.bookingId];
+    if (!dl || !dl.canDefer) continue;
 
-      var deferTo = null;
-      var deferDate = null;
+    var deferTo = null;
+    var deferDate = null;
 
-      for (var offset = 1; offset <= 2 && !deferTo; offset++) {
-        var tryDate = new Date(asgn.date);
-        tryDate.setDate(tryDate.getDate() + offset);
-        if (tryDate > dl.deadline) continue;
+    for (var offset = 1; offset <= 2 && !deferTo; offset++) {
+      var tryDate = new Date(asgn.date);
+      tryDate.setDate(tryDate.getDate() + offset);
+      if (tryDate > dl.deadline) continue;
 
-        var tryDateStr = formatDate_(tryDate);
-        var hosodaCapTry   = getCapForDate_(staffCaps, hosodaInfo, tryDateStr);
-        var fukuharaCapTry = getCapForDate_(staffCaps, fukuharaInfo, tryDateStr);
-        var euTry          = usageByDate[tryDateStr] || {};
-        var hosodaRemainT   = Math.max(0, hosodaCapTry - (euTry[hosodaInfo.name] || 0));
-        var fukuharaRemainT = Math.max(0, fukuharaCapTry - (euTry[fukuharaInfo.name] || 0));
+      var tryDateStr = formatDate_(tryDate);
+      var hosodaCapTry   = getCapForDate_(staffCaps, hosodaInfo, tryDateStr);
+      var fukuharaCapTry = getCapForDate_(staffCaps, fukuharaInfo, tryDateStr);
+      var euTry          = usageByDate[tryDateStr] || {};
+      var hosodaRemainT   = Math.max(0, hosodaCapTry - (euTry[hosodaInfo.name] || 0));
+      var fukuharaRemainT = Math.max(0, fukuharaCapTry - (euTry[fukuharaInfo.name] || 0));
 
-        if (hosodaRemainT > 0)        { deferTo = hosodaInfo.name; deferDate = tryDate; }
-        else if (fukuharaRemainT > 0) { deferTo = fukuharaInfo.name; deferDate = tryDate; }
-      }
-
-      if (deferTo) {
-        var origDate = asgn.dateStr;
-        var origStaff = asgn.staff;
-        var deferDateStr = formatDate_(deferDate);
-
-        asgn.date    = deferDate;
-        asgn.dateStr = deferDateStr;
-        asgn.dayName = DAY_NAMES[deferDate.getDay()];
-        asgn.staff   = deferTo;
-        asgn.status  = '確定（翌日）';
-
-        addUsage_(usageByDate, deferDateStr, deferTo);
-        if (usageByDate[origDate] && usageByDate[origDate][origStaff]) {
-          usageByDate[origDate][origStaff]--;
-        }
-        deferCount++;
-      }
+      if (hosodaRemainT > 0)        { deferTo = hosodaInfo.name; deferDate = tryDate; }
+      else if (fukuharaRemainT > 0) { deferTo = fukuharaInfo.name; deferDate = tryDate; }
     }
 
-    // --------------------------------------------------------
-    // Phase 3: Rクリーン安全ネット
-    //
-    // 14日以内の未割当をRクリーンに割り当て。
-    // チェックアウト日当日を清掃日とする（早いほうが良い）。
-    // --------------------------------------------------------
-    for (var rn = 0; rn < allAssignments.length; rn++) {
-      var ra = allAssignments[rn];
-      if (ra.staff !== '未割当') continue;
-      if (ra.date >= rclDeadline) continue;
+    if (deferTo) {
+      var origDate = asgn.dateStr;
+      var origStaff = asgn.staff;
+      var deferDateStr = formatDate_(deferDate);
 
-      ra.staff  = 'Rクリーン';
-      ra.status = '外注';
-    }
+      asgn.date    = deferDate;
+      asgn.dateStr = deferDateStr;
+      asgn.dayName = DAY_NAMES[deferDate.getDay()];
+      asgn.staff   = deferTo;
+      asgn.status  = '確定（翌日）';
 
-    // --------------------------------------------------------
-    // Phase 4: Rクリーンコスト最適化
-    //
-    // Rクリーンは宿泊人数が少ない部屋のほうが安い。
-    // 同じ清掃日にRクリーンとスタッフの割り当てがある場合、
-    // スタッフ担当の中にゲスト数がより少ない部屋があれば入れ替える。
-    // --------------------------------------------------------
-    var rclByDate = {};
-    for (var ri = 0; ri < allAssignments.length; ri++) {
-      if (allAssignments[ri].staff === 'Rクリーン') {
-        if (!rclByDate[allAssignments[ri].dateStr]) rclByDate[allAssignments[ri].dateStr] = [];
-        rclByDate[allAssignments[ri].dateStr].push(ri);
+      addUsage_(usageByDate, deferDateStr, deferTo);
+      if (usageByDate[origDate] && usageByDate[origDate][origStaff]) {
+        usageByDate[origDate][origStaff]--;
       }
+      deferCount++;
     }
-    var rclDates = Object.keys(rclByDate);
-    for (var rd = 0; rd < rclDates.length; rd++) {
-      var rclIdxs = rclByDate[rclDates[rd]];
-      var staffIdxs = [];
-      for (var si2 = 0; si2 < allAssignments.length; si2++) {
-        var sa = allAssignments[si2];
-        if (sa.dateStr === rclDates[rd] && sa.staff !== 'Rクリーン' && sa.staff !== '未割当') {
-          staffIdxs.push(si2);
-        }
-      }
-      if (staffIdxs.length === 0) continue;
+  }
 
-      for (var rx = 0; rx < rclIdxs.length; rx++) {
-        var rIdx = rclIdxs[rx];
-        var rAsgn = allAssignments[rIdx];
-        var bestSwap = -1;
-        var bestGuests = rAsgn.guests;
+  // --------------------------------------------------------
+  // Phase 2.5: Rクリーン回避スワップ
+  //
+  // Phase 2で延期できなかった未割当予約について、同日のスタッフ割り当ての中に
+  // 延期可能な予約があれば入れ替える。スタッフ予約を+1/+2日に移動し、
+  // 空いた枠に未割当予約を入れることでRクリーンを回避する。
+  // --------------------------------------------------------
+  for (var sw = 0; sw < allAssignments.length; sw++) {
+    var swAsgn = allAssignments[sw];
+    if (swAsgn.staff !== '未割当') continue;
 
-        for (var sx = 0; sx < staffIdxs.length; sx++) {
-          var sIdx = staffIdxs[sx];
-          var sAsgn = allAssignments[sIdx];
-          if (sAsgn.guests < bestGuests) {
-            bestGuests = sAsgn.guests;
-            bestSwap = sx;
+    var swapped = false;
+    for (var cand = 0; cand < allAssignments.length && !swapped; cand++) {
+      var candAsgn = allAssignments[cand];
+      if (candAsgn.dateStr !== swAsgn.dateStr) continue;
+      if (candAsgn.staff === '未割当' || candAsgn.staff === 'Rクリーン') continue;
+
+      var candDl = deadlines[candAsgn.bookingId];
+      if (!candDl || !candDl.canDefer) continue;
+      if (candAsgn.checkoutDateStr !== candAsgn.dateStr) continue;
+
+      for (var off2 = 1; off2 <= 2 && !swapped; off2++) {
+        var moveDate = new Date(candAsgn.date);
+        moveDate.setDate(moveDate.getDate() + off2);
+        if (moveDate > candDl.deadline) continue;
+
+        var moveDateStr = formatDate_(moveDate);
+        var moveCap = getCapForDate_(staffCaps, { name: candAsgn.staff, defaultCap: 0 }, moveDateStr);
+        var moveEu  = usageByDate[moveDateStr] || {};
+        var moveRemain = Math.max(0, moveCap - (moveEu[candAsgn.staff] || 0));
+
+        if (moveRemain > 0) {
+          var freedStaff = candAsgn.staff;
+          var origDay    = candAsgn.dateStr;
+
+          candAsgn.date    = moveDate;
+          candAsgn.dateStr = moveDateStr;
+          candAsgn.dayName = DAY_NAMES[moveDate.getDay()];
+          candAsgn.status  = '確定（翌日）';
+          addUsage_(usageByDate, moveDateStr, freedStaff);
+          if (usageByDate[origDay] && usageByDate[origDay][freedStaff]) {
+            usageByDate[origDay][freedStaff]--;
           }
+
+          swAsgn.staff  = freedStaff;
+          swAsgn.status = '確定';
+          addUsage_(usageByDate, swAsgn.dateStr, freedStaff);
+          if (usageByDate[swAsgn.dateStr] && usageByDate[swAsgn.dateStr]['未割当']) {
+            usageByDate[swAsgn.dateStr]['未割当']--;
+          }
+          deferCount++;
+          swapped = true;
         }
+      }
+    }
+  }
 
-        if (bestSwap >= 0) {
-          var swapIdx = staffIdxs[bestSwap];
-          var swapAsgn = allAssignments[swapIdx];
+  // --------------------------------------------------------
+  // Phase 3: Rクリーン安全ネット
+  //
+  // 14日以内の未割当をRクリーンに割り当て。
+  // チェックアウト日当日を清掃日とする（早いほうが良い）。
+  // --------------------------------------------------------
+  for (var rn = 0; rn < allAssignments.length; rn++) {
+    var ra = allAssignments[rn];
+    if (ra.staff !== '未割当') continue;
+    if (ra.date >= rclDeadline) continue;
 
-          var tmpStaff  = rAsgn.staff;
-          var tmpStatus = rAsgn.status;
-          rAsgn.staff      = swapAsgn.staff;
-          rAsgn.status     = swapAsgn.status;
-          swapAsgn.staff   = tmpStaff;
-          swapAsgn.status  = tmpStatus;
+    ra.staff  = 'Rクリーン';
+    ra.status = '外注';
+  }
 
-          staffIdxs.splice(bestSwap, 1);
-          staffIdxs.push(rIdx);
-          rclIdxs[rx] = swapIdx;
+  // --------------------------------------------------------
+  // Phase 4: Rクリーンコスト最適化
+  //
+  // Rクリーンは宿泊人数が少ない部屋のほうが安い。
+  // 同じ清掃日にRクリーンとスタッフの割り当てがある場合、
+  // スタッフ担当の中にゲスト数がより少ない部屋があれば入れ替える。
+  // --------------------------------------------------------
+  var rclByDate = {};
+  for (var ri = 0; ri < allAssignments.length; ri++) {
+    if (allAssignments[ri].staff === 'Rクリーン') {
+      if (!rclByDate[allAssignments[ri].dateStr]) rclByDate[allAssignments[ri].dateStr] = [];
+      rclByDate[allAssignments[ri].dateStr].push(ri);
+    }
+  }
+  var rclDates = Object.keys(rclByDate);
+  for (var rd = 0; rd < rclDates.length; rd++) {
+    var rclIdxs = rclByDate[rclDates[rd]];
+    var staffIdxs = [];
+    for (var si2 = 0; si2 < allAssignments.length; si2++) {
+      var sa = allAssignments[si2];
+      if (sa.dateStr === rclDates[rd] && sa.staff !== 'Rクリーン' && sa.staff !== '未割当') {
+        staffIdxs.push(si2);
+      }
+    }
+    if (staffIdxs.length === 0) continue;
+
+    for (var rx = 0; rx < rclIdxs.length; rx++) {
+      var rIdx = rclIdxs[rx];
+      var rAsgn = allAssignments[rIdx];
+      var bestSwap = -1;
+      var bestGuests = rAsgn.guests;
+
+      for (var sx = 0; sx < staffIdxs.length; sx++) {
+        var sIdx = staffIdxs[sx];
+        var sAsgn = allAssignments[sIdx];
+        if (sAsgn.guests < bestGuests) {
+          bestGuests = sAsgn.guests;
+          bestSwap = sx;
         }
+      }
+
+      if (bestSwap >= 0) {
+        var swapIdx = staffIdxs[bestSwap];
+        var swapAsgn = allAssignments[swapIdx];
+
+        var tmpStaff  = rAsgn.staff;
+        var tmpStatus = rAsgn.status;
+        rAsgn.staff      = swapAsgn.staff;
+        rAsgn.status     = swapAsgn.status;
+        swapAsgn.staff   = tmpStaff;
+        swapAsgn.status  = tmpStatus;
+
+        staffIdxs.splice(bestSwap, 1);
+        staffIdxs.push(rIdx);
+        rclIdxs[rx] = swapIdx;
       }
     }
   }
