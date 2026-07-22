@@ -461,6 +461,12 @@ function doMatching_() {
   var db   = readDatabase_();
   var diff = computeDiff_(reservations, db);
 
+  // Rクリーン割り当ての期限: 3週間以内のみ外注、それ以降は未割当
+  var today = new Date();
+  today.setHours(0, 0, 0, 0);
+  var rclCutoff = new Date(today);
+  rclCutoff.setDate(rclCutoff.getDate() + 21);
+
   // スタッフ情報を特定
   var priInfo = null, othInfo = null, rclInfo = null;
   for (var si = 0; si < cfg.staff.length; si++) {
@@ -496,6 +502,12 @@ function doMatching_() {
                        (uc.oldData.staff === '未割当' ? '要確認' :
                        (cds !== uc.newData.dateStr ? '確定（翌日）' : '確定'))
     };
+    // 3週間以上先のRクリーン割り当ては未割当に変更
+    if (a.staff === 'Rクリーン' && cleaningDate >= rclCutoff) {
+      a.staff = '未割当';
+      a.status = '要確認';
+    }
+
     allAssignments.push(a);
 
     if (!usageByDate[cds]) usageByDate[cds] = {};
@@ -576,7 +588,11 @@ function doMatching_() {
         priAlloc = Math.min(total - othAlloc, priRemain);
       }
 
-      rclAlloc = Math.min(total - priAlloc - othAlloc, rclRemain);
+      if (info.date >= rclCutoff) {
+        rclAlloc = 0;
+      } else {
+        rclAlloc = Math.min(total - priAlloc - othAlloc, rclRemain);
+      }
       var unassignedN = total - priAlloc - othAlloc - rclAlloc;
 
       var unitIdx = 0;
