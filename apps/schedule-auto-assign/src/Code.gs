@@ -461,11 +461,11 @@ function doMatching_() {
   var db   = readDatabase_();
   var diff = computeDiff_(reservations, db);
 
-  // Rクリーン割り当ての期限: 実行日から12日以内の未割当のみRクリーンに
+  // Rクリーン割り当ての期限: 実行日から14日以内の未割当はRクリーンに
   var today = new Date();
   today.setHours(0, 0, 0, 0);
   var rclDeadline = new Date(today);
-  rclDeadline.setDate(rclDeadline.getDate() + 12);
+  rclDeadline.setDate(rclDeadline.getDate() + 14);
 
   // スタッフ情報を特定（細田さん=第1優先、普久原さん=第2優先）
   var hosodaInfo = null, fukuharaInfo = null, rclInfo = null;
@@ -502,7 +502,7 @@ function doMatching_() {
                        (uc.oldData.staff === '未割当' ? '要確認' :
                        (cds !== uc.newData.dateStr ? '確定（翌日）' : '確定'))
     };
-    // 12日以上先のRクリーン → 未割当に戻す（まだスタッフ確定の余地あり）
+    // 14日以上先のRクリーン → 未割当に戻す（まだスタッフ確定の余地あり）
     if (a.staff === 'Rクリーン' && cleaningDate >= rclDeadline) {
       a.staff = '未割当';
       a.status = '要確認';
