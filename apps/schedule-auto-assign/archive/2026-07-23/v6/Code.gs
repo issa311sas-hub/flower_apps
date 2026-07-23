@@ -1253,6 +1253,11 @@ function runAll() {
 
 // ============================================================
 // タイムラインシート出力（ユニット×日付のガントチャート）
+//
+// 1日＝3セル構成:
+//   左セル: チェックアウト前（ゲストがまだいる状態）
+//   中セル: 清掃（担当者の略称）
+//   右セル: チェックイン後（新ゲストが到着した状態）
 // ============================================================
 function writeGanttChart_(assignments) {
   var reservations = readReservations_();
@@ -1270,7 +1275,6 @@ function writeGanttChart_(assignments) {
     if (!maxDate || dl > maxDate) maxDate = dl;
     if (!maxDate || r.date > maxDate) maxDate = r.date;
   }
-  // 前後1日の余白
   minDate = new Date(minDate); minDate.setDate(minDate.getDate() - 1);
   maxDate = new Date(maxDate); maxDate.setDate(maxDate.getDate() + 1);
 
@@ -1281,24 +1285,26 @@ function writeGanttChart_(assignments) {
     d.setDate(d.getDate() + 1);
   }
 
-  var UNITS = ['b2','b3','b4','b5','b6','s1','s2','s3','c4'];
+  var UNITS = ['b4','b5','b6','b2','b3','s1','s2','s3','c4'];
 
-  // --- 割り当て結果をマップ化 (unit+cleaningDate → assignment) ---
+  // --- マップ構築 ---
   var assignMap = {};
   for (var a = 0; a < assignments.length; a++) {
     var asn = assignments[a];
-    var key = asn.unit + '|' + asn.dateStr;
-    assignMap[key] = asn;
+    assignMap[asn.unit + '|' + asn.dateStr] = asn;
   }
 
-  // --- 予約の滞在日マップ (unit+date → bookingId) ---
-  var stayMap = {};
-  var coMap = {};   // unit+date → checkout bookingId
-  var deadlineMap = {}; // unit+date → deferrable window bookingId
+  var stayMap = {};    // startDate〜checkout前日
+  var coMap = {};      // checkout日
+  var checkinMap = {}; // startDate（チェックイン日）
+  var deadlineMap = {};
+
   for (var ri = 0; ri < reservations.length; ri++) {
     var res = reservations[ri];
     if (!res.startDate) continue;
-    // 滞在中 (startDate 〜 checkout前日)
+
+    checkinMap[res.unit + '|' + formatDate_(res.startDate)] = res.bookingId;
+
     var stay = new Date(res.startDate);
     var coMinus1 = new Date(res.date);
     coMinus1.setDate(coMinus1.getDate() - 1);
@@ -1306,10 +1312,9 @@ function writeGanttChart_(assignments) {
       stayMap[res.unit + '|' + formatDate_(stay)] = res.bookingId;
       stay.setDate(stay.getDate() + 1);
     }
-    // チェックアウト日
+
     coMap[res.unit + '|' + formatDate_(res.date)] = res.bookingId;
 
-    // 清掃可能期間 (チェックアウト翌日〜deadline)
     var dl = deadlines[res.bookingId];
     if (dl && dl.canDefer) {
       var wd = new Date(res.date);
@@ -1328,39 +1333,60 @@ function writeGanttChart_(assignments) {
   var sheet = getOrCreateSheet_(ss, SHEET_TIMELINE);
   sheet.clear();
 
-  var numCols = dates.length + 1; // +1 for unit label column
-  var numRows = UNITS.length + 2 + 3; // 2 header rows + units + 3 legend rows
+  var numCols = dates.length * 3 + 1;
 
-  // ヘッダ行1: 日付 (MM/DD)
+  // ヘッダ行1: 日付（3セル結合）
   var row1 = [''];
   for (var di = 0; di < dates.length; di++) {
     row1.push(Utilities.formatDate(dates[di], 'Asia/Tokyo', 'M/d'));
+    row1.push('');
+    row1.push('');
   }
 
-  // ヘッダ行2: 曜日
-  var row2 = ['ユニット'];
+  // ヘッダ行2: 曜日（3セル結合）
+  var row2 = [''];
   for (var dj = 0; dj < dates.length; dj++) {
     row2.push(DAY_NAMES[dates[dj].getDay()]);
+    row2.push('');
+    row2.push('');
   }
 
-  // データ行
+  // データ行: 各ユニット
   var allRows = [row1, row2];
   for (var ui = 0; ui < UNITS.length; ui++) {
     var unit = UNITS[ui];
     var row = [unit];
     for (var dk = 0; dk < dates.length; dk++) {
       var dateStr = formatDate_(dates[dk]);
-      var cellKey = unit + '|' + dateStr;
-      var asnKey = assignMap[cellKey];
+      var key = unit + '|' + dateStr;
+      var isStay    = !!stayMap[key];
+      var isCO      = !!coMap[key];
+      var isCheckin = !!checkinMap[key];
+      var asnObj    = assignMap[key];
 
-      if (asnKey) {
-        row.push(staffAbbr_(asnKey.staff));
-      } else if (coMap[cellKey]) {
+      // 左セル: CO前（ゲストがまだいる）
+      if (isCO) {
         row.push('CO');
-      } else if (stayMap[cellKey]) {
+      } else if (isStay && !isCheckin) {
         row.push('■');
-      } else if (deadlineMap[cellKey]) {
+      } else {
+        row.push('');
+      }
+
+      // 中セル: 清掃
+      if (asnObj) {
+        row.push(staffAbbr_(asnObj.staff));
+      } else if (deadlineMap[key]) {
         row.push('…');
+      } else if (isStay && !isCheckin) {
+        row.push('■');
+      } else {
+        row.push('');
+      }
+
+      // 右セル: CI後（ゲストが到着）
+      if (isStay) {
+        row.push('■');
       } else {
         row.push('');
       }
@@ -1368,10 +1394,9 @@ function writeGanttChart_(assignments) {
     allRows.push(row);
   }
 
-  // 凡例行（空行+3行）
+  // 凡例
   allRows.push([]);
-  allRows.push(['【凡例】', '■ = 宿泊中', 'CO = チェックアウト日', '細/普 = スタッフ清掃', 'R = Rクリーン清掃', '? = 未割当', '… = 清掃可能期間']);
-  allRows.push(['', '青 = 宿泊中', 'オレンジ = CO日', '緑 = 清掃予定', '紫 = Rクリーン', '赤 = 未割当', '黄 = 清掃猶予']);
+  allRows.push(['【凡例】', 'CO = チェックアウト', '', '', '細/普 = スタッフ清掃', '', '', 'R = Rクリーン', '', '', '? = 未割当', '', '', '… = 清掃猶予', '', '', '■ = 滞在中']);
 
   sheet.getRange(1, 1, allRows.length, numCols).setValues(
     allRows.map(function(r) {
@@ -1381,66 +1406,101 @@ function writeGanttChart_(assignments) {
   );
 
   // --- 書式設定 ---
-  // ヘッダ
-  sheet.getRange(1, 1, 1, numCols).setFontWeight('bold').setBackground('#E3E8F0').setHorizontalAlignment('center');
-  sheet.getRange(2, 1, 1, numCols).setFontWeight('bold').setBackground('#E3E8F0').setHorizontalAlignment('center');
+
+  // ヘッダ結合
+  for (var mi = 0; mi < dates.length; mi++) {
+    var startCol = mi * 3 + 2;
+    sheet.getRange(1, startCol, 1, 3).merge().setHorizontalAlignment('center');
+    sheet.getRange(2, startCol, 1, 3).merge().setHorizontalAlignment('center');
+  }
+
+  sheet.getRange(1, 1, 1, numCols).setFontWeight('bold').setBackground('#E3E8F0');
+  sheet.getRange(2, 1, 1, numCols).setFontWeight('bold').setBackground('#E3E8F0');
   sheet.setFrozenRows(2);
   sheet.setFrozenColumns(1);
 
-  // ユニット列
-  sheet.setColumnWidth(1, 60);
+  sheet.setColumnWidth(1, 50);
   sheet.getRange(3, 1, UNITS.length, 1).setFontWeight('bold').setBackground('#F5F5F5');
 
-  // 日付列幅
   for (var cw = 2; cw <= numCols; cw++) {
-    sheet.setColumnWidth(cw, 38);
+    sheet.setColumnWidth(cw, 26);
   }
 
-  // 土日の背景色をヘッダに適用
+  // 土日ヘッダ色
   for (var dh = 0; dh < dates.length; dh++) {
     var dow = dates[dh].getDay();
+    var hCol = dh * 3 + 2;
     if (dow === 0) {
-      sheet.getRange(1, dh + 2, 2, 1).setBackground('#FCE4EC').setFontColor('#C62828');
+      sheet.getRange(1, hCol, 2, 3).setBackground('#FCE4EC').setFontColor('#C62828');
     } else if (dow === 6) {
-      sheet.getRange(1, dh + 2, 2, 1).setBackground('#E3F2FD').setFontColor('#1565C0');
+      sheet.getRange(1, hCol, 2, 3).setBackground('#E3F2FD').setFontColor('#1565C0');
     }
   }
 
+  // 日付区切り線（各日の左端に薄い罫線）
+  for (var bd = 0; bd < dates.length; bd++) {
+    var bCol = bd * 3 + 2;
+    sheet.getRange(1, bCol, UNITS.length + 2, 1)
+      .setBorder(null, true, null, null, null, null, '#CCCCCC', SpreadsheetApp.BorderStyle.SOLID);
+  }
+
   // セル色塗り
-  var BG_STAY     = '#CFE2F3'; // 青: 宿泊中
-  var BG_CO       = '#FCE5CD'; // オレンジ: チェックアウト
-  var BG_STAFF    = '#D9EAD3'; // 緑: スタッフ清掃
-  var BG_RCLEAN   = '#E8D5F5'; // 紫: Rクリーン
-  var BG_UNASSIGN = '#FBEAE6'; // 赤: 未割当
-  var BG_WINDOW   = '#FFF2CC'; // 黄: 清掃猶予
+  var BG_STAY     = '#CFE2F3';
+  var BG_CO       = '#FCE5CD';
+  var BG_STAFF    = '#D9EAD3';
+  var BG_RCLEAN   = '#E8D5F5';
+  var BG_UNASSIGN = '#FBEAE6';
+  var BG_WINDOW   = '#FFF2CC';
 
   for (var ru = 0; ru < UNITS.length; ru++) {
     for (var cd = 0; cd < dates.length; cd++) {
       var ds = formatDate_(dates[cd]);
       var ck = UNITS[ru] + '|' + ds;
-      var cell = sheet.getRange(ru + 3, cd + 2);
-      cell.setHorizontalAlignment('center').setFontSize(9);
+      var rowIdx = ru + 3;
+      var baseCol = cd * 3 + 2;
 
-      if (assignMap[ck]) {
-        var staff = assignMap[ck].staff;
+      var isS  = !!stayMap[ck];
+      var isC  = !!coMap[ck];
+      var isCI = !!checkinMap[ck];
+      var aObj = assignMap[ck];
+
+      // 左セル
+      var mCell = sheet.getRange(rowIdx, baseCol);
+      mCell.setHorizontalAlignment('center').setFontSize(8);
+      if (isC) {
+        mCell.setBackground(BG_CO);
+      } else if (isS && !isCI) {
+        mCell.setBackground(BG_STAY);
+      }
+
+      // 中セル
+      var dCell = sheet.getRange(rowIdx, baseCol + 1);
+      dCell.setHorizontalAlignment('center').setFontSize(8);
+      if (aObj) {
+        var staff = aObj.staff;
         if (staff === 'Rクリーン') {
-          cell.setBackground(BG_RCLEAN);
+          dCell.setBackground(BG_RCLEAN);
         } else if (staff === '未割当') {
-          cell.setBackground(BG_UNASSIGN);
+          dCell.setBackground(BG_UNASSIGN);
         } else {
-          cell.setBackground(BG_STAFF);
+          dCell.setBackground(BG_STAFF);
         }
-      } else if (coMap[ck]) {
-        cell.setBackground(BG_CO);
-      } else if (stayMap[ck]) {
-        cell.setBackground(BG_STAY);
       } else if (deadlineMap[ck]) {
-        cell.setBackground(BG_WINDOW);
+        dCell.setBackground(BG_WINDOW);
+      } else if (isS && !isCI) {
+        dCell.setBackground(BG_STAY);
+      }
+
+      // 右セル
+      var eCell = sheet.getRange(rowIdx, baseCol + 2);
+      eCell.setHorizontalAlignment('center').setFontSize(8);
+      if (isS) {
+        eCell.setBackground(BG_STAY);
       }
     }
   }
 
-  // 凡例の書式
+  // 凡例
   var legendRow = UNITS.length + 4;
   sheet.getRange(legendRow, 1).setFontWeight('bold');
 
