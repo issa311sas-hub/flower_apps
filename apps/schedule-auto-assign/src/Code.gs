@@ -1437,11 +1437,14 @@ function writeGanttChart_(assignments) {
     }
   }
 
-  // 日付区切り線（各日の左端に薄い罫線）
+  // 1日3セルをボックスで囲む罫線
+  var borderColor = '#999999';
+  var borderStyle = SpreadsheetApp.BorderStyle.SOLID;
   for (var bd = 0; bd < dates.length; bd++) {
     var bCol = bd * 3 + 2;
-    sheet.getRange(1, bCol, UNITS.length + 2, 1)
-      .setBorder(null, true, null, null, null, null, '#CCCCCC', SpreadsheetApp.BorderStyle.SOLID);
+    // ヘッダ+データ行をまとめて囲む（上・左・下・右）
+    sheet.getRange(1, bCol, UNITS.length + 2, 3)
+      .setBorder(true, true, true, true, null, null, borderColor, borderStyle);
   }
 
   // セル色塗り
