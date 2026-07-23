@@ -1437,13 +1437,29 @@ function writeGanttChart_(assignments) {
     }
   }
 
-  // 1日3セルをボックスで囲む罫線
+  // 予約ごとのボックス罫線（チェックイン夜〜チェックアウト朝を囲む）
+  var dateIndexMap = {};
+  for (var bdi = 0; bdi < dates.length; bdi++) {
+    dateIndexMap[formatDate_(dates[bdi])] = bdi;
+  }
   var borderColor = '#999999';
   var borderStyle = SpreadsheetApp.BorderStyle.SOLID;
-  for (var bd = 0; bd < dates.length; bd++) {
-    var bCol = bd * 3 + 2;
-    // ヘッダ+データ行をまとめて囲む（上・左・下・右）
-    sheet.getRange(1, bCol, UNITS.length + 2, 3)
+  for (var bri = 0; bri < reservations.length; bri++) {
+    var bRes = reservations[bri];
+    if (!bRes.startDate) continue;
+    var bUnitIdx = -1;
+    for (var bu = 0; bu < UNITS.length; bu++) {
+      if (UNITS[bu] === bRes.unit) { bUnitIdx = bu; break; }
+    }
+    if (bUnitIdx < 0) continue;
+    var ciIdx = dateIndexMap[formatDate_(bRes.startDate)];
+    var coIdx = dateIndexMap[formatDate_(bRes.date)];
+    if (ciIdx === undefined || coIdx === undefined) continue;
+    // チェックイン日の右セル(夜) ～ チェックアウト日の左セル(朝)
+    var bStartCol = ciIdx * 3 + 4;
+    var bEndCol   = coIdx * 3 + 2;
+    if (bEndCol < bStartCol) continue;
+    sheet.getRange(bUnitIdx + 3, bStartCol, 1, bEndCol - bStartCol + 1)
       .setBorder(true, true, true, true, null, null, borderColor, borderStyle);
   }
 
