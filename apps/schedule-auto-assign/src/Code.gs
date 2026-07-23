@@ -1606,7 +1606,9 @@ function setupBeds24Auth() {
     // 接続テスト: アクセストークン取得
     var accessToken = getBeds24AccessToken_();
     if (!accessToken) {
-      showAlert_('エラー', 'リフレッシュトークンは保存しましたが、アクセストークンの取得に失敗しました。');
+      showAlert_('エラー', 'リフレッシュトークンは保存しましたが、アクセストークンの取得に失敗しました。\n\n' +
+        'Apps Scriptエディタの「実行ログ」でエラー詳細を確認してください。\n' +
+        '再度「🔑 Beds24 API接続設定」から招待コードを入力し直してください。');
       return;
     }
 
@@ -1639,12 +1641,18 @@ function getBeds24AccessToken_() {
 
   var res = UrlFetchApp.fetch(BEDS24_API_BASE + '/authentication/token', {
     method: 'get',
-    headers: { 'refreshToken': refreshToken },
+    headers: { 'token': refreshToken },
     muteHttpExceptions: true
   });
-  if (res.getResponseCode() !== 200) return null;
+  if (res.getResponseCode() !== 200) {
+    Logger.log('Beds24 token error: HTTP ' + res.getResponseCode() + ' ' + res.getContentText());
+    return null;
+  }
   var body = JSON.parse(res.getContentText());
-  if (!body.token) return null;
+  if (!body.token) {
+    Logger.log('Beds24 token error: no token in response: ' + JSON.stringify(body));
+    return null;
+  }
 
   props.setProperty('BEDS24_ACCESS_TOKEN', body.token);
   props.setProperty('BEDS24_TOKEN_EXPIRES', String(Date.now() + 3600000));
