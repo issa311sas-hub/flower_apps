@@ -131,8 +131,8 @@ function setupSpreadsheet() {
     '次の手順で進めてください:\n\n' +
     '1. 「設定」シートにカレンダーIDを入力\n' +
     '2. スタッフに入力ルールを案内\n' +
-    '   → カレンダーに終日イベントで数字を入力\n' +
-    '   （例: 3 = 3件対応可能 / 0 = 出勤不可）\n' +
+    '   → カレンダーに終日イベントで「名前+件数」を入力\n' +
+    '   （例: 細田③ / 普久原3 / 0 = 出勤不可）\n' +
     '3. 「予約データ」シートにExcelデータを貼り付け\n' +
     '   （形式: 予約ID, タイトル, 開始日, チェックアウト日, ユニット, ゲスト）\n' +
     '4. 「清掃管理」メニュー → 一括実行',
@@ -430,20 +430,15 @@ function getCapacityForDates_(calId, dateStrs) {
 
 function parseCapacityNumber_(str) {
   if (!str || str.length === 0) return null;
-  var c = str.charAt(0);
 
-  var hw = '0123456789';
-  var idx = hw.indexOf(c);
-  if (idx >= 0) return idx;
+  var ci = {'⓪':0,'①':1,'②':2,'③':3,'④':4,'⑤':5,'⑥':6,'⑦':7,'⑧':8,'⑨':9};
+  var fw = {'０':0,'１':1,'２':2,'３':3,'４':4,'５':5,'６':6,'７':7,'８':8,'９':9};
 
-  var fw = ['０','１','２','３','４','５','６','７','８','９'];
-  for (var i = 0; i < fw.length; i++) {
-    if (c === fw[i]) return i;
-  }
-
-  var ci = ['⓪','①','②','③','④','⑤','⑥','⑦','⑧','⑨'];
-  for (var j = 0; j < ci.length; j++) {
-    if (c === ci[j]) return j;
+  for (var i = 0; i < str.length; i++) {
+    var c = str.charAt(i);
+    if (c >= '0' && c <= '9') return parseInt(c);
+    if (ci[c] !== undefined) return ci[c];
+    if (fw[c] !== undefined) return fw[c];
   }
 
   return null;
