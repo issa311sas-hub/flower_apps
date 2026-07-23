@@ -1592,18 +1592,25 @@ function setupBeds24Auth() {
     var code = res.getResponseCode();
     var body = JSON.parse(res.getContentText());
 
-    if (code !== 200 || !body.token) {
+    if (code !== 200 || !body.refreshToken) {
       showAlert_('接続失敗', 'エラー: ' + (body.message || body.error || 'コード=' + code) +
         '\n\n招待コードが正しいか、スコープに bookings が含まれているか確認してください。');
       return;
     }
 
     var props = PropertiesService.getScriptProperties();
-    props.setProperty('BEDS24_REFRESH_TOKEN', body.token);
-    props.deleteProperty('BEDS24_ACCESS_TOKEN');
-    props.deleteProperty('BEDS24_TOKEN_EXPIRES');
+    props.setProperty('BEDS24_REFRESH_TOKEN', body.refreshToken);
+    // setupレスポンスにはアクセストークンも含まれるので保存
+    if (body.token) {
+      props.setProperty('BEDS24_ACCESS_TOKEN', body.token);
+      var expiresMs = (body.expiresIn || 86400) * 1000;
+      props.setProperty('BEDS24_TOKEN_EXPIRES', String(Date.now() + expiresMs));
+    } else {
+      props.deleteProperty('BEDS24_ACCESS_TOKEN');
+      props.deleteProperty('BEDS24_TOKEN_EXPIRES');
+    }
 
-    // 接続テスト: アクセストークン取得
+    // 接続テスト: アクセストークン取得（上で保存済みならキャッシュから返る）
     var accessToken = getBeds24AccessToken_();
     if (!accessToken) {
       showAlert_('エラー', 'リフレッシュトークンは保存しましたが、アクセストークンの取得に失敗しました。\n\n' +
@@ -1655,7 +1662,12 @@ function getBeds24AccessToken_() {
   }
 
   props.setProperty('BEDS24_ACCESS_TOKEN', body.token);
-  props.setProperty('BEDS24_TOKEN_EXPIRES', String(Date.now() + 3600000));
+  var expiresMs = (body.expiresIn || 86400) * 1000;
+  props.setProperty('BEDS24_TOKEN_EXPIRES', String(Date.now() + expiresMs));
+  // リフレッシュトークンもローテーションされるので更新
+  if (body.refreshToken) {
+    props.setProperty('BEDS24_REFRESH_TOKEN', body.refreshToken);
+  }
   return body.token;
 }
 
