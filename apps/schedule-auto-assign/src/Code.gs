@@ -1674,17 +1674,44 @@ function getBeds24AccessToken_() {
 // --- ユニットマッピング取得 ---
 function fetchUnitMapping_() {
   var token = getBeds24AccessToken_();
-  if (!token) return;
+  if (!token) { Logger.log('fetchUnitMapping_: no access token'); return; }
 
   var res = UrlFetchApp.fetch(BEDS24_API_BASE + '/properties', {
     method: 'get',
     headers: { 'token': token },
     muteHttpExceptions: true
   });
-  if (res.getResponseCode() !== 200) return;
+  if (res.getResponseCode() !== 200) {
+    Logger.log('fetchUnitMapping_: HTTP ' + res.getResponseCode() + ' ' + res.getContentText());
+    return;
+  }
 
-  var data = JSON.parse(res.getContentText());
-  if (!data || !Array.isArray(data)) return;
+  var raw = res.getContentText();
+  var data = JSON.parse(raw);
+  Logger.log('fetchUnitMapping_: response type=' + typeof data + ' isArray=' + Array.isArray(data));
+  Logger.log('fetchUnitMapping_: raw (first 2000 chars): ' + raw.substring(0, 2000));
+
+  // レスポンスがオブジェクトの場合（{ data: [...] } 等）配列を探す
+  if (data && !Array.isArray(data)) {
+    if (data.data && Array.isArray(data.data)) {
+      data = data.data;
+    } else {
+      var keys = Object.keys(data);
+      Logger.log('fetchUnitMapping_: object keys: ' + keys.join(', '));
+      for (var k = 0; k < keys.length; k++) {
+        if (Array.isArray(data[keys[k]])) {
+          data = data[keys[k]];
+          Logger.log('fetchUnitMapping_: using key "' + keys[k] + '" as array');
+          break;
+        }
+      }
+    }
+  }
+  if (!Array.isArray(data)) {
+    Logger.log('fetchUnitMapping_: data is not an array, aborting');
+    return;
+  }
+  Logger.log('fetchUnitMapping_: found ' + data.length + ' properties');
 
   var stg = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_SETTINGS);
   if (!stg) return;
@@ -1701,27 +1728,30 @@ function fetchUnitMapping_() {
     }
   }
 
-  // プロパティからroom一覧を抽出
+  // プロパティからroom一覧を抽出（複数のフィールド名に対応）
   var rooms = [];
   for (var p = 0; p < data.length; p++) {
     var prop = data[p];
-    if (prop.roomId) {
-      rooms.push({
-        roomId: String(prop.roomId),
-        name:   prop.name || '',
-        propName: prop.propertyName || ''
-      });
+    if (p === 0) Logger.log('fetchUnitMapping_: first property keys: ' + Object.keys(prop).join(', '));
+    var propId = String(prop.roomId || prop.propId || prop.id || '');
+    var propName = prop.name || prop.propertyName || '';
+    if (propId) {
+      rooms.push({ roomId: propId, name: propName, propName: '' });
     }
-    if (prop.rooms && Array.isArray(prop.rooms)) {
-      for (var r = 0; r < prop.rooms.length; r++) {
+    // rooms / roomTypes 配列がある場合
+    var subRooms = prop.rooms || prop.roomTypes || [];
+    if (Array.isArray(subRooms)) {
+      for (var r = 0; r < subRooms.length; r++) {
+        var sub = subRooms[r];
         rooms.push({
-          roomId: String(prop.rooms[r].roomId || prop.rooms[r].id),
-          name:   prop.rooms[r].name || '',
-          propName: prop.name || ''
+          roomId: String(sub.roomId || sub.id || ''),
+          name:   sub.name || '',
+          propName: propName
         });
       }
     }
   }
+  Logger.log('fetchUnitMapping_: extracted ' + rooms.length + ' rooms');
 
   if (rooms.length === 0) return;
 
