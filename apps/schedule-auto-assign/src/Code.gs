@@ -1875,9 +1875,9 @@ function fetchBeds24Bookings_() {
     var bookingId = String(b.id || b.bookingId || '');
     if (!bookingId) continue;
 
-    var title = b.guestComments || b.guestComment || b.notes || b.infoItems || '';
-    if (typeof title === 'object') title = '';
-    title = String(title).trim();
+    var guestFirst = String(b.guestFirstName || b.firstName || '').trim();
+    var guestLast  = String(b.guestLastName || b.lastName || b.guestName || '').trim();
+    var title = (guestFirst + ' ' + guestLast).trim() || String(b.guestTitle || b.title || '').trim();
 
     var arrival   = String(b.arrival || b.firstNight || '').replace(/-/g, '/');
     var departure = String(b.departure || b.lastNight || '').replace(/-/g, '/');
