@@ -102,12 +102,12 @@ function setupSpreadsheet() {
   stg.getRange('B20').setValue(6);
   stg.getRange('B20').setNote('週次トリガーの実行時刻（0〜23）');
 
-  stg.getRange('A22:C22').merge().setValue('■ ユニットマッピング（Beds24 roomId → ユニット名）')
+  stg.getRange('A22:D22').merge().setValue('■ ユニットマッピング（Beds24 roomId:unitId → ユニット名）')
     .setFontWeight('bold').setBackground('#FFF2CC');
-  stg.getRange('A23:C23')
-    .setValues([['Beds24 roomId', 'ユニット名', '備考']])
+  stg.getRange('A23:D23')
+    .setValues([['Beds24 roomId', 'unitId', 'ユニット名', '備考']])
     .setFontWeight('bold');
-  stg.getRange('A24').setValue('← API接続後に自動取得されます').setFontColor('#999999');
+  stg.getRange('A24').setValue('← 「🔍 Beds24 roomId確認」で確認してください').setFontColor('#999999');
 
   stg.setColumnWidth(1, 240);
   stg.setColumnWidth(2, 380);
@@ -1718,14 +1718,16 @@ function fetchUnitMapping_() {
   if (!stg) return;
 
   // 既存マッピングを読み取り（ユーザーが編集済みの場合は保持）
+  // キー: "roomId:unitId"
   var existingMap = {};
   var lastRow = stg.getLastRow();
   if (lastRow >= 24) {
-    var mapData = stg.getRange(24, 1, lastRow - 23, 2).getValues();
+    var mapData = stg.getRange(24, 1, lastRow - 23, 3).getValues();
     for (var m = 0; m < mapData.length; m++) {
       var rid = String(mapData[m][0]).trim();
-      var uname = String(mapData[m][1]).trim();
-      if (rid && /^\d+$/.test(rid) && uname) existingMap[rid] = uname;
+      var uid = String(mapData[m][1]).trim();
+      var uname = String(mapData[m][2]).trim();
+      if (rid && uname) existingMap[rid + ':' + uid] = uname;
     }
   }
 
@@ -1736,53 +1738,64 @@ function fetchUnitMapping_() {
     if (p === 0) Logger.log('fetchUnitMapping_: first property keys: ' + Object.keys(prop).join(', '));
     var propId = String(prop.roomId || prop.propId || prop.id || '');
     var propName = prop.name || prop.propertyName || '';
-    if (propId) {
-      rooms.push({ roomId: propId, name: propName, propName: '' });
-    }
-    // rooms / roomTypes 配列がある場合
+
+    // rooms / roomTypes 配列がある場合（個別ルーム）
     var subRooms = prop.rooms || prop.roomTypes || [];
-    if (Array.isArray(subRooms)) {
+    if (Array.isArray(subRooms) && subRooms.length > 0) {
       for (var r = 0; r < subRooms.length; r++) {
         var sub = subRooms[r];
-        rooms.push({
-          roomId: String(sub.roomId || sub.id || ''),
-          name:   sub.name || '',
-          propName: propName
-        });
+        var subId = String(sub.roomId || sub.id || '');
+        var subName = sub.name || '';
+        var numUnits = Number(sub.qty || sub.numUnits || sub.units || 1);
+        // 各ルームタイプのunit数分だけ行を生成
+        for (var u = 1; u <= numUnits; u++) {
+          rooms.push({
+            roomId: subId,
+            unitId: String(u),
+            name: subName,
+            propName: propName
+          });
+        }
       }
+    } else if (propId) {
+      // サブルームがなければプロパティ自体を登録
+      rooms.push({ roomId: propId, unitId: '1', name: propName, propName: '' });
     }
   }
-  Logger.log('fetchUnitMapping_: extracted ' + rooms.length + ' rooms');
+  Logger.log('fetchUnitMapping_: extracted ' + rooms.length + ' rooms/units');
 
   if (rooms.length === 0) return;
 
-  // 書き込み
+  // 書き込み（4列: roomId, unitId, ユニット名, 備考）
   if (lastRow >= 24) {
-    stg.getRange(24, 1, lastRow - 23, 3).clearContent();
+    stg.getRange(24, 1, lastRow - 23, 4).clearContent();
   }
   var mapRows = [];
   for (var i = 0; i < rooms.length; i++) {
     var rm = rooms[i];
-    var unitName = existingMap[rm.roomId] || '';
-    mapRows.push([rm.roomId, unitName, rm.name + (rm.propName ? ' (' + rm.propName + ')' : '')]);
+    var unitName = existingMap[rm.roomId + ':' + rm.unitId] || '';
+    var note = rm.name + (rm.propName ? ' (' + rm.propName + ')' : '');
+    mapRows.push([rm.roomId, rm.unitId, unitName, note]);
   }
-  stg.getRange(24, 1, mapRows.length, 3).setValues(mapRows);
-  stg.getRange(24, 3, mapRows.length, 1).setFontColor('#666666');
+  stg.getRange(24, 1, mapRows.length, 4).setValues(mapRows);
+  stg.getRange(24, 4, mapRows.length, 1).setFontColor('#666666');
 }
 
 // --- ユニットマッピング読み込み ---
+// キー: "roomId:unitId" → ユニット名
 function getUnitMapping_() {
   var stg = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_SETTINGS);
   if (!stg) return {};
   var lastRow = stg.getLastRow();
   if (lastRow < 24) return {};
 
-  var data = stg.getRange(24, 1, lastRow - 23, 2).getValues();
+  var data = stg.getRange(24, 1, lastRow - 23, 3).getValues();
   var map = {};
   for (var i = 0; i < data.length; i++) {
     var rid = String(data[i][0]).trim();
-    var uname = String(data[i][1]).trim();
-    if (rid && uname) map[rid] = uname;
+    var uid = String(data[i][1]).trim();
+    var uname = String(data[i][2]).trim();
+    if (rid && uname) map[rid + ':' + uid] = uname;
   }
   return map;
 }
@@ -1854,8 +1867,9 @@ function fetchBeds24Bookings_() {
   var rows = [];
   for (var i = 0; i < allBookings.length; i++) {
     var b = allBookings[i];
-    var roomId = String(b.roomId || b.unitId || '');
-    var unitName = unitMap[roomId];
+    var roomId = String(b.roomId || '');
+    var unitId = String(b.unitId || '');
+    var unitName = unitMap[roomId + ':' + unitId];
     if (!unitName) continue;
 
     var bookingId = String(b.id || b.bookingId || '');
@@ -1937,27 +1951,44 @@ function debugListRoomIds() {
     Logger.log('debugListRoomIds: first booking (first 2000): ' + JSON.stringify(bookings[0]).substring(0, 2000));
   }
 
-  var roomMap = {};
+  // roomId + unitId の組み合わせで集計
+  var comboMap = {};
   for (var i = 0; i < bookings.length; i++) {
     var b = bookings[i];
     var rid = String(b.roomId || '');
-    if (rid && !roomMap[rid]) {
-      roomMap[rid] = { name: b.roomName || b.unitName || '', count: 0 };
+    var uid = String(b.unitId || '');
+    var key = rid + ':' + uid;
+    if (!comboMap[key]) {
+      comboMap[key] = {
+        roomId: rid,
+        unitId: uid,
+        roomName: b.roomName || '',
+        unitName: b.unitName || '',
+        count: 0
+      };
     }
-    if (rid) roomMap[rid].count++;
+    comboMap[key].count++;
   }
 
-  var lines = ['予約データ内のroomId一覧:\n'];
-  var rids = Object.keys(roomMap);
-  for (var j = 0; j < rids.length; j++) {
-    var info = roomMap[rids[j]];
-    lines.push('roomId: ' + rids[j] + '  名前: ' + (info.name || '(不明)') + '  予約数: ' + info.count);
+  var lines = ['予約データ内の roomId:unitId 一覧:\n'];
+  var keys = Object.keys(comboMap).sort();
+  for (var j = 0; j < keys.length; j++) {
+    var info = comboMap[keys[j]];
+    lines.push(
+      'roomId=' + info.roomId +
+      '  unitId=' + info.unitId +
+      '  room名=' + (info.roomName || '?') +
+      '  unit名=' + (info.unitName || '?') +
+      '  予約数=' + info.count
+    );
   }
-  if (rids.length === 0) {
-    lines.push('（roomIdが見つかりませんでした）');
+  if (keys.length === 0) {
+    lines.push('（予約データが見つかりませんでした）');
   }
+  lines.push('\n※ 設定シートのユニットマッピングに');
+  lines.push('  roomId と unitId を入力してください。');
 
-  showAlert_('roomId一覧', lines.join('\n'));
+  showAlert_('roomId:unitId 一覧', lines.join('\n'));
 }
 
 // --- メニュー: Beds24から取得 ---
