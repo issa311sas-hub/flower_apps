@@ -3,7 +3,7 @@
  *
  * v6からの変更点:
  *   - Beds24 API V2連携（予約データの自動取得）
- *   - 週次トリガーによる完全自動実行
+ *   - 日次トリガーによる完全自動実行
  */
 
 // ============================================================
@@ -33,8 +33,8 @@ function onOpen() {
     .addItem('割り当て実行のみ', 'runMatchingMenu')
     .addItem('カレンダー反映のみ', 'syncToCalendarMenu')
     .addSeparator()
-    .addItem('⏰ 週次自動実行を設定', 'setupWeeklyTrigger')
-    .addItem('⏰ 週次自動実行を解除', 'removeWeeklyTrigger')
+    .addItem('⏰ 日次自動実行を設定', 'setupDailyTrigger')
+    .addItem('⏰ 日次自動実行を解除', 'removeDailyTrigger')
     .addSeparator()
     .addItem('🔑 Beds24 API接続設定', 'setupBeds24Auth')
     .addItem('🔍 Beds24 roomId確認', 'debugListRoomIds')
@@ -95,19 +95,16 @@ function setupSpreadsheet() {
   stg.getRange('A18').setValue('取得日数（今日から）').setFontWeight('bold');
   stg.getRange('B18').setValue(90);
   stg.getRange('B18').setNote('Beds24から何日先までの予約を取得するか');
-  stg.getRange('A19').setValue('自動実行曜日').setFontWeight('bold');
-  stg.getRange('B19').setValue('月');
-  stg.getRange('B19').setNote('週次トリガーの実行曜日（月〜日）');
-  stg.getRange('A20').setValue('自動実行時刻').setFontWeight('bold');
-  stg.getRange('B20').setValue(6);
-  stg.getRange('B20').setNote('週次トリガーの実行時刻（0〜23）');
+  stg.getRange('A19').setValue('自動実行時刻').setFontWeight('bold');
+  stg.getRange('B19').setValue(6);
+  stg.getRange('B19').setNote('日次トリガーの実行時刻（0〜23）');
 
-  stg.getRange('A22:D22').merge().setValue('■ ユニットマッピング（Beds24 roomId:unitId → ユニット名）')
+  stg.getRange('A21:D21').merge().setValue('■ ユニットマッピング（Beds24 roomId:unitId → ユニット名）')
     .setFontWeight('bold').setBackground('#FFF2CC');
-  stg.getRange('A23:D23')
+  stg.getRange('A22:D22')
     .setValues([['Beds24 roomId', 'unitId', 'ユニット名', '備考']])
     .setFontWeight('bold');
-  stg.getRange('A24').setValue('← 「🔍 Beds24 roomId確認」で確認してください').setFontColor('#999999');
+  stg.getRange('A23').setValue('← 「🔍 Beds24 roomId確認」で確認してください').setFontColor('#999999');
 
   stg.setColumnWidth(1, 240);
   stg.setColumnWidth(2, 380);
@@ -553,7 +550,7 @@ function buildCleaningDeadlines_(reservations) {
 //   細田さん → 普久原さん → 未割当
 // Phase 2: 清掃延期処理（未割当を+1/+2日でスタッフに振り替え）
 // Phase 2.5: Rクリーン回避（同日スタッフの延期可能予約と未割当を入れ替え）
-// Phase 3: Rクリーン安全ネット（14日以内の未割当→Rクリーン）
+// Phase 3: Rクリーン安全ネット（8日以内の未割当→Rクリーン）
 // Phase 4: Rクリーンコスト最適化（ゲスト数が少ない部屋にRクリーンを入れ替え）
 // ============================================================
 function doMatching_() {
@@ -565,11 +562,11 @@ function doMatching_() {
   var db   = readDatabase_();
   var diff = computeDiff_(reservations, db);
 
-  // Rクリーン割り当ての期限: 実行日から14日以内の未割当はRクリーンに
+  // Rクリーン割り当ての期限: 実行日から8日以内の未割当はRクリーンに
   var today = new Date();
   today.setHours(0, 0, 0, 0);
   var rclDeadline = new Date(today);
-  rclDeadline.setDate(rclDeadline.getDate() + 14);
+  rclDeadline.setDate(rclDeadline.getDate() + 8);
 
   // スタッフ情報を特定（細田さん=第1優先、普久原さん=第2優先）
   var hosodaInfo = null, fukuharaInfo = null, rclInfo = null;
@@ -607,7 +604,7 @@ function doMatching_() {
                        (cds !== uc.newData.dateStr ? '確定（翌日）' : '確定')),
       guests:          uc.newData.guests || 0
     };
-    // 14日以上先のRクリーン → 未割当に戻す（まだスタッフ確定の余地あり）
+    // 8日以上先のRクリーン → 未割当に戻す（まだスタッフ確定の余地あり）
     if (a.staff === 'Rクリーン' && cleaningDate >= rclDeadline) {
       a.staff = '未割当';
       a.status = '要確認';
@@ -837,7 +834,7 @@ function doMatching_() {
   // --------------------------------------------------------
   // Phase 3: Rクリーン安全ネット
   //
-  // 14日以内の未割当をRクリーンに割り当て。
+  // 8日以内の未割当をRクリーンに割り当て。
   // チェックアウト日当日を清掃日とする（早いほうが良い）。
   // --------------------------------------------------------
   for (var rn = 0; rn < allAssignments.length; rn++) {
@@ -1722,7 +1719,7 @@ function fetchUnitMapping_() {
   var existingMap = {};
   var lastRow = stg.getLastRow();
   if (lastRow >= 24) {
-    var mapData = stg.getRange(24, 1, lastRow - 23, 3).getValues();
+    var mapData = stg.getRange(23, 1, lastRow - 22, 3).getValues();
     for (var m = 0; m < mapData.length; m++) {
       var rid = String(mapData[m][0]).trim();
       var uid = String(mapData[m][1]).trim();
@@ -1768,7 +1765,7 @@ function fetchUnitMapping_() {
 
   // 書き込み（4列: roomId, unitId, ユニット名, 備考）
   if (lastRow >= 24) {
-    stg.getRange(24, 1, lastRow - 23, 4).clearContent();
+    stg.getRange(23, 1, lastRow - 22, 4).clearContent();
   }
   var mapRows = [];
   for (var i = 0; i < rooms.length; i++) {
@@ -1777,8 +1774,8 @@ function fetchUnitMapping_() {
     var note = rm.name + (rm.propName ? ' (' + rm.propName + ')' : '');
     mapRows.push([rm.roomId, rm.unitId, unitName, note]);
   }
-  stg.getRange(24, 1, mapRows.length, 4).setValues(mapRows);
-  stg.getRange(24, 4, mapRows.length, 1).setFontColor('#666666');
+  stg.getRange(23, 1, mapRows.length, 4).setValues(mapRows);
+  stg.getRange(23, 4, mapRows.length, 1).setFontColor('#666666');
 }
 
 // --- ユニットマッピング読み込み ---
@@ -1787,9 +1784,9 @@ function getUnitMapping_() {
   var stg = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_SETTINGS);
   if (!stg) return {};
   var lastRow = stg.getLastRow();
-  if (lastRow < 24) return {};
+  if (lastRow < 23) return {};
 
-  var data = stg.getRange(24, 1, lastRow - 23, 3).getValues();
+  var data = stg.getRange(23, 1, lastRow - 22, 3).getValues();
   var map = {};
   for (var i = 0; i < data.length; i++) {
     var rid = String(data[i][0]).trim();
@@ -2049,47 +2046,36 @@ function runAllAuto() {
 }
 
 // ============================================================
-// 週次トリガー管理
+// 日次トリガー管理
 // ============================================================
-function setupWeeklyTrigger() {
-  // 既存トリガーを削除
-  removeWeeklyTrigger_(true);
+function setupDailyTrigger() {
+  removeDailyTrigger_(true);
 
   var stg = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_SETTINGS);
-  var dayStr = '月';
   var hour = 6;
   if (stg) {
-    dayStr = String(stg.getRange('B19').getValue()).trim() || '月';
-    hour = Number(stg.getRange('B20').getValue()) || 6;
+    hour = Number(stg.getRange('B19').getValue()) || 6;
   }
-
-  var dayMap = {
-    '日': ScriptApp.WeekDay.SUNDAY,    '月': ScriptApp.WeekDay.MONDAY,
-    '火': ScriptApp.WeekDay.TUESDAY,   '水': ScriptApp.WeekDay.WEDNESDAY,
-    '木': ScriptApp.WeekDay.THURSDAY,  '金': ScriptApp.WeekDay.FRIDAY,
-    '土': ScriptApp.WeekDay.SATURDAY
-  };
-  var weekDay = dayMap[dayStr] || ScriptApp.WeekDay.MONDAY;
 
   ScriptApp.newTrigger('runAllAuto')
     .timeBased()
-    .onWeekDay(weekDay)
+    .everyDays(1)
     .atHour(hour)
     .create();
 
   showAlert_('トリガー設定完了',
-    '毎週' + dayStr + '曜日 ' + hour + '時に全自動実行されます。\n\n' +
+    '毎日 ' + hour + '時に全自動実行されます。\n\n' +
     '実行内容:\n' +
     '1. Beds24から予約データを自動取得\n' +
     '2. 割り当てアルゴリズム実行\n' +
     '3. Googleカレンダーに自動反映');
 }
 
-function removeWeeklyTrigger() {
-  removeWeeklyTrigger_(false);
+function removeDailyTrigger() {
+  removeDailyTrigger_(false);
 }
 
-function removeWeeklyTrigger_(silent) {
+function removeDailyTrigger_(silent) {
   var triggers = ScriptApp.getProjectTriggers();
   var removed = 0;
   for (var i = 0; i < triggers.length; i++) {
@@ -2100,9 +2086,9 @@ function removeWeeklyTrigger_(silent) {
   }
   if (!silent) {
     if (removed > 0) {
-      showAlert_('トリガー解除', '週次自動実行を解除しました。');
+      showAlert_('トリガー解除', '日次自動実行を解除しました。');
     } else {
-      showAlert_('トリガー未設定', '現在、週次自動実行は設定されていません。');
+      showAlert_('トリガー未設定', '現在、日次自動実行は設定されていません。');
     }
   }
 }
