@@ -37,6 +37,7 @@ function onOpen() {
     .addItem('⏰ 週次自動実行を解除', 'removeWeeklyTrigger')
     .addSeparator()
     .addItem('🔑 Beds24 API接続設定', 'setupBeds24Auth')
+    .addItem('🔍 Beds24 roomId確認', 'debugListRoomIds')
     .addItem('⚙ 初期設定', 'setupSpreadsheet')
     .addToUi();
 }
@@ -1676,7 +1677,7 @@ function fetchUnitMapping_() {
   var token = getBeds24AccessToken_();
   if (!token) { Logger.log('fetchUnitMapping_: no access token'); return; }
 
-  var res = UrlFetchApp.fetch(BEDS24_API_BASE + '/properties', {
+  var res = UrlFetchApp.fetch(BEDS24_API_BASE + '/properties?includeAllRooms=true', {
     method: 'get',
     headers: { 'token': token },
     muteHttpExceptions: true
@@ -1899,6 +1900,64 @@ function fetchBeds24Bookings_() {
   }
 
   return rows.length;
+}
+
+// --- デバッグ: 予約データからroomId一覧を取得 ---
+function debugListRoomIds() {
+  var token = getBeds24AccessToken_();
+  if (!token) { showAlert_('エラー', 'Beds24 APIに未接続です。'); return; }
+
+  var today = new Date();
+  var fromDate = formatDate_(today).replace(/\//g, '-');
+  var toDate = new Date(today);
+  toDate.setDate(toDate.getDate() + 90);
+  var toDateStr = formatDate_(toDate).replace(/\//g, '-');
+
+  var url = BEDS24_API_BASE + '/bookings' +
+    '?departure_from=' + fromDate +
+    '&departure_to=' + toDateStr +
+    '&includeInvoice=false&page=1';
+
+  var res = UrlFetchApp.fetch(url, {
+    method: 'get',
+    headers: { 'token': token },
+    muteHttpExceptions: true
+  });
+
+  if (res.getResponseCode() !== 200) {
+    showAlert_('エラー', 'HTTP ' + res.getResponseCode() + ': ' + res.getContentText());
+    return;
+  }
+
+  var body = JSON.parse(res.getContentText());
+  var bookings = Array.isArray(body) ? body : (body.data || []);
+  Logger.log('debugListRoomIds: ' + bookings.length + ' bookings found');
+  if (bookings.length > 0) {
+    Logger.log('debugListRoomIds: first booking keys: ' + Object.keys(bookings[0]).join(', '));
+    Logger.log('debugListRoomIds: first booking (first 2000): ' + JSON.stringify(bookings[0]).substring(0, 2000));
+  }
+
+  var roomMap = {};
+  for (var i = 0; i < bookings.length; i++) {
+    var b = bookings[i];
+    var rid = String(b.roomId || '');
+    if (rid && !roomMap[rid]) {
+      roomMap[rid] = { name: b.roomName || b.unitName || '', count: 0 };
+    }
+    if (rid) roomMap[rid].count++;
+  }
+
+  var lines = ['予約データ内のroomId一覧:\n'];
+  var rids = Object.keys(roomMap);
+  for (var j = 0; j < rids.length; j++) {
+    var info = roomMap[rids[j]];
+    lines.push('roomId: ' + rids[j] + '  名前: ' + (info.name || '(不明)') + '  予約数: ' + info.count);
+  }
+  if (rids.length === 0) {
+    lines.push('（roomIdが見つかりませんでした）');
+  }
+
+  showAlert_('roomId一覧', lines.join('\n'));
 }
 
 // --- メニュー: Beds24から取得 ---
