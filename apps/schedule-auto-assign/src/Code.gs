@@ -389,7 +389,7 @@ function computeDiff_(reservations, db) {
     var prev = db[r.bookingId];
     if (!prev) {
       added.push(r);
-    } else if (prev.checkoutDateStr !== r.dateStr || prev.unit !== r.unit || prev.title !== r.title) {
+    } else if (prev.checkoutDateStr !== r.dateStr || prev.unit !== r.unit) {
       changed.push({ newData: r, oldData: prev });
     } else {
       unchanged.push({ newData: r, oldData: prev });
