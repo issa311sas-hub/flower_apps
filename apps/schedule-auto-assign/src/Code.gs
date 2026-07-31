@@ -285,7 +285,7 @@ function readDatabase_() {
   var sheet = ss.getSheetByName(SHEET_DB);
   if (!sheet || sheet.getLastRow() < 2) return {};
 
-  var cols = Math.min(sheet.getLastColumn(), 9);
+  var cols = Math.min(sheet.getLastColumn(), 10);
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, cols).getValues();
   var db = {};
 
@@ -303,7 +303,8 @@ function readDatabase_() {
         staff:           String(data[i][5]).trim(),
         eventId:         String(data[i][6]).trim(),
         syncStatus:      String(data[i][7]).trim(),
-        lastSync:        data[i][8]
+        lastSync:        data[i][8],
+        nextGuests:      cols >= 10 ? (Number(data[i][9]) || 0) : 0
       };
     } else if (cols >= 8) {
       var eid8 = String(data[i][6]).trim();
@@ -342,10 +343,10 @@ function writeDatabase_(records) {
   var sheet = getOrCreateSheet_(ss, SHEET_DB);
 
   if (sheet.getLastRow() > 1) {
-    sheet.getRange(2, 1, sheet.getLastRow() - 1, 9).clearContent();
+    sheet.getRange(2, 1, sheet.getLastRow() - 1, 10).clearContent();
   }
-  sheet.getRange('A1:I1')
-    .setValues([['予約ID', 'チェックアウト日', '清掃日', 'ユニット', 'タイトル', '担当', 'イベントID', '同期状態', '最終同期']])
+  sheet.getRange('A1:J1')
+    .setValues([['予約ID', 'チェックアウト日', '清掃日', 'ユニット', 'タイトル', '担当', 'イベントID', '同期状態', '最終同期', '次ゲスト数']])
     .setFontWeight('bold').setBackground('#E3E8F0');
 
   var keys = Object.keys(records);
@@ -364,13 +365,14 @@ function writeDatabase_(records) {
       r.unit, r.title, r.staff,
       r.eventId || '',
       r.syncStatus || '未同期',
-      r.lastSync || now
+      r.lastSync || now,
+      r.nextGuests || 0
     ]);
   }
 
   sheet.getRange(2, 1, rows.length, 1).setNumberFormat('@');
   sheet.getRange(2, 2, rows.length, 2).setNumberFormat('@');
-  sheet.getRange(2, 1, rows.length, 9).setValues(rows);
+  sheet.getRange(2, 1, rows.length, 10).setValues(rows);
 }
 
 // ============================================================
@@ -1009,6 +1011,18 @@ function doSyncToCalendar_() {
     resLookup[reservations[rl].bookingId] = reservations[rl];
   }
 
+  // ユニット別に予約を開始日順で整理（次のゲスト数を調べるため）
+  var resByUnit = {};
+  for (var ru = 0; ru < reservations.length; ru++) {
+    var rv = reservations[ru];
+    if (!resByUnit[rv.unit]) resByUnit[rv.unit] = [];
+    resByUnit[rv.unit].push(rv);
+  }
+  var unitKeys = Object.keys(resByUnit);
+  for (var uk = 0; uk < unitKeys.length; uk++) {
+    resByUnit[unitKeys[uk]].sort(function(a, b) { return a.startDate - b.startDate; });
+  }
+
   // 割り当て結果シートから現在の状態を構築
   var current = {};
   for (var i = 0; i < resultData.length; i++) {
@@ -1017,14 +1031,27 @@ function doSyncToCalendar_() {
 
     var cleaningDateStr = normalizeDateStr_(resultData[i][1]);
     var checkoutDateStr = resLookup[bid] ? resLookup[bid].dateStr : cleaningDateStr;
+    var unit = String(resultData[i][3]).trim();
+
+    // 清掃日以降に始まる同ユニットの次の予約を探す
+    var nextGuests = 0;
+    var cleanDate = parseDateStr_(cleaningDateStr);
+    var unitBookings = resByUnit[unit] || [];
+    for (var ng = 0; ng < unitBookings.length; ng++) {
+      if (unitBookings[ng].startDate >= cleanDate && unitBookings[ng].bookingId !== bid) {
+        nextGuests = unitBookings[ng].guests;
+        break;
+      }
+    }
 
     current[bid] = {
       bookingId:       bid,
       checkoutDateStr: checkoutDateStr,
       cleaningDateStr: cleaningDateStr,
-      unit:            String(resultData[i][3]).trim(),
+      unit:            unit,
       title:           String(resultData[i][4]).trim(),
-      staff:           String(resultData[i][5]).trim()
+      staff:           String(resultData[i][5]).trim(),
+      nextGuests:      nextGuests
     };
   }
 
@@ -1056,13 +1083,14 @@ function doSyncToCalendar_() {
       // 過去の予約は自然消滅、DBから除外するだけ（カレンダーは触らない）
     } else if (dbRec.cleaningDateStr !== curRec.cleaningDateStr ||
                dbRec.unit !== curRec.unit || dbRec.title !== curRec.title ||
-               dbRec.staff !== curRec.staff) {
+               dbRec.staff !== curRec.staff ||
+               String(dbRec.nextGuests || 0) !== String(curRec.nextGuests || 0)) {
       if (dbRec.eventId) toDelete.push(dbRec);
       toCreate.push(curRec);
       newDb[dbBid] = {
         bookingId: dbBid, checkoutDateStr: curRec.checkoutDateStr,
         cleaningDateStr: curRec.cleaningDateStr, unit: curRec.unit,
-        title: curRec.title, staff: curRec.staff,
+        title: curRec.title, staff: curRec.staff, nextGuests: curRec.nextGuests || 0,
         eventId: '', syncStatus: '未同期', lastSync: ''
       };
     } else if (dbRec.syncStatus === '未同期') {
@@ -1083,6 +1111,7 @@ function doSyncToCalendar_() {
         bookingId: curBid, checkoutDateStr: current[curBid].checkoutDateStr,
         cleaningDateStr: current[curBid].cleaningDateStr, unit: current[curBid].unit,
         title: current[curBid].title, staff: current[curBid].staff,
+        nextGuests: current[curBid].nextGuests || 0,
         eventId: '', syncStatus: '未同期', lastSync: ''
       };
     }
@@ -1098,7 +1127,7 @@ function doSyncToCalendar_() {
     try {
       var ev = cal.getEventById(toDelete[del].eventId);
       if (ev) {
-        var expectedTitle = buildEventTitle_(toDelete[del].staff, toDelete[del].unit, toDelete[del].title);
+        var expectedTitle = buildEventTitle_(toDelete[del].staff, toDelete[del].unit, toDelete[del].title, toDelete[del].nextGuests);
         var actualTitle = ev.getTitle().trim();
         if (actualTitle !== expectedTitle) {
           newDb[toDelete[del].bookingId] = toDelete[del];
@@ -1148,7 +1177,7 @@ function doSyncToCalendar_() {
 
     if (created > 0 && created % 5 === 0) Utilities.sleep(1000);
 
-    var evTitle = buildEventTitle_(rec.staff, rec.unit, rec.title);
+    var evTitle = buildEventTitle_(rec.staff, rec.unit, rec.title, rec.nextGuests);
     var evDate = parseDateStr_(rec.cleaningDateStr);
 
     if (isNaN(evDate.getTime())) {
@@ -2096,8 +2125,12 @@ function removeDailyTrigger_(silent) {
 // ============================================================
 // ユーティリティ
 // ============================================================
-function buildEventTitle_(staff, unit, title) {
-  return title ? staff + '⇒' + unit + '(' + title + ')' : staff + '⇒' + unit;
+function buildEventTitle_(staff, unit, title, nextGuests) {
+  var name = staff.replace(/さん$/, '');
+  var s = name + '⇒' + unit;
+  if (title) s += '(' + title + ')';
+  if (nextGuests > 0) s += '次' + nextGuests + '人';
+  return s;
 }
 
 function toDate_(val) {
