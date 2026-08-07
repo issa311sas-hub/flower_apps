@@ -57,54 +57,47 @@ function setupSpreadsheet() {
   stg.getRange('A2:C2')
     .setValues([['スタッフ名', 'カレンダーID（出勤可否用）', '未入力時デフォルト上限']])
     .setFontWeight('bold');
-  stg.getRange('A3:C5').setValues([
+  stg.getRange('A3:C6').setValues([
     ['細田さん',   '', 0],
     ['普久原さん', '', 0],
+    ['福田さん',   '', 0],
     ['Rクリーン',  '', 99]
   ]);
-  stg.getRange('B3:B5').setFontColor('#999999')
-    .setValues([['← カレンダーIDを入力'], ['← カレンダーIDを入力'], ['← カレンダーIDを入力']]);
+  stg.getRange('B3:B6').setFontColor('#999999')
+    .setValues([['← カレンダーIDを入力'], ['← カレンダーIDを入力'], ['← カレンダーIDを入力'], ['← カレンダーIDを入力']]);
   stg.getRange('C2').setNote(
     'カレンダーに数字が未入力の日に適用される上限。\n' +
     '0 = 出勤不可（入れ忘れ防止）\n' +
     '99 = 常時対応可（Rクリーン向け）'
   );
 
-  stg.getRange('A7:B7').merge().setValue('■ 優先割り当てルール')
+  stg.getRange('A8:B8').merge().setValue('■ 割り当て優先順位')
     .setFontWeight('bold').setBackground('#E4F4F0');
-  stg.getRange('A8:B11').setValues([
-    ['優先スタッフ',         '細田さん'],
-    ['対象曜日',             '月,火,木,日'],
-    ['優先件数',             2],
-    ['均等化しきい値（件）', 4]
-  ]);
-  stg.getRange('A8:A11').setFontWeight('bold');
-  stg.getRange('B9').setNote('この曜日は優先スタッフに先に割り当て（カンマ区切り）');
-  stg.getRange('B10').setNote('対象曜日で、この件数まで優先スタッフに割り当て');
-  stg.getRange('B11').setNote('清掃がこの件数以上 かつ 両方出勤 なら均等に分配');
+  stg.getRange('A9').setValue('① 細田さん → ② 普久原さん → ③ 福田さん → ④ 未割当 → ⑤ Rクリーン（8日以内）')
+    .setFontColor('#555555');
 
-  stg.getRange('A13:B13').merge().setValue('■ 出力設定')
+  stg.getRange('A11:B11').merge().setValue('■ 出力設定')
     .setFontWeight('bold').setBackground('#FBEAE6');
-  stg.getRange('A14').setValue('割り当てカレンダーID').setFontWeight('bold');
-  stg.getRange('B14').setValue('← カレンダーIDを入力').setFontColor('#999999');
+  stg.getRange('A12').setValue('割り当てカレンダーID').setFontWeight('bold');
+  stg.getRange('B12').setValue('← カレンダーIDを入力').setFontColor('#999999');
 
-  stg.getRange('A16:C16').merge().setValue('■ Beds24 API連携')
+  stg.getRange('A14:C14').merge().setValue('■ Beds24 API連携')
     .setFontWeight('bold').setBackground('#E8FAE8');
-  stg.getRange('A17').setValue('接続状態').setFontWeight('bold');
-  stg.getRange('B17').setValue('未接続').setFontColor('#CC0000');
-  stg.getRange('A18').setValue('取得日数（今日から）').setFontWeight('bold');
-  stg.getRange('B18').setValue(90);
-  stg.getRange('B18').setNote('Beds24から何日先までの予約を取得するか');
-  stg.getRange('A19').setValue('自動実行時刻').setFontWeight('bold');
-  stg.getRange('B19').setValue(6);
-  stg.getRange('B19').setNote('日次トリガーの実行時刻（0〜23）');
+  stg.getRange('A15').setValue('接続状態').setFontWeight('bold');
+  stg.getRange('B15').setValue('未接続').setFontColor('#CC0000');
+  stg.getRange('A16').setValue('取得日数（今日から）').setFontWeight('bold');
+  stg.getRange('B16').setValue(90);
+  stg.getRange('B16').setNote('Beds24から何日先までの予約を取得するか');
+  stg.getRange('A17').setValue('自動実行時刻').setFontWeight('bold');
+  stg.getRange('B17').setValue(6);
+  stg.getRange('B17').setNote('日次トリガーの実行時刻（0〜23）');
 
-  stg.getRange('A21:D21').merge().setValue('■ ユニットマッピング（Beds24 roomId:unitId → ユニット名）')
+  stg.getRange('A19:D19').merge().setValue('■ ユニットマッピング（Beds24 roomId:unitId → ユニット名）')
     .setFontWeight('bold').setBackground('#FFF2CC');
-  stg.getRange('A22:D22')
+  stg.getRange('A20:D20')
     .setValues([['Beds24 roomId', 'unitId', 'ユニット名', '備考']])
     .setFontWeight('bold');
-  stg.getRange('A23').setValue('← 「🔍 Beds24 roomId確認」で確認してください').setFontColor('#999999');
+  stg.getRange('A21').setValue('← 「🔍 Beds24 roomId確認」で確認してください').setFontColor('#999999');
 
   stg.setColumnWidth(1, 240);
   stg.setColumnWidth(2, 380);
@@ -166,7 +159,7 @@ function setupSpreadsheet() {
     '1. 「設定」シートにカレンダーIDを入力\n' +
     '2. スタッフに入力ルールを案内\n' +
     '   → カレンダーに終日イベントで「名前+件数」を入力\n' +
-    '   （例: 細田③ / 普久原3 / 0 = 出勤不可）\n' +
+    '   （例: 細田③ / 普久原3 / 福田2 / 0 = 出勤不可）\n' +
     '3. 「予約データ」シートにExcelデータを貼り付け\n' +
     '   （形式: 予約ID, タイトル, 開始日, チェックアウト日, ユニット, ゲスト）\n' +
     '4. 「清掃管理」メニュー → 一括実行',
@@ -184,9 +177,9 @@ function getSettings_() {
     throw new Error('設定シートがありません。「清掃管理 → 初期設定」を実行してください。');
   }
 
-  var names    = sheet.getRange('A3:A5').getValues();
-  var calIds   = sheet.getRange('B3:B5').getValues();
-  var defaults = sheet.getRange('C3:C5').getValues();
+  var names    = sheet.getRange('A3:A6').getValues();
+  var calIds   = sheet.getRange('B3:B6').getValues();
+  var defaults = sheet.getRange('C3:C6').getValues();
 
   var staff = [];
   for (var i = 0; i < names.length; i++) {
@@ -199,27 +192,10 @@ function getSettings_() {
     });
   }
 
-  var priorityStaff     = String(sheet.getRange('B8').getValue()).trim();
-  var priorityDaysStr   = String(sheet.getRange('B9').getValue()).trim();
-  var priorityCount     = Number(sheet.getRange('B10').getValue()) || 2;
-  var balanceThreshold  = Number(sheet.getRange('B11').getValue()) || 4;
-
-  var dayMap = {'日':0,'月':1,'火':2,'水':3,'木':4,'金':5,'土':6};
-  var priorityDays = {};
-  var parts = priorityDaysStr.split(/[,、，\s]+/);
-  for (var d = 0; d < parts.length; d++) {
-    var dn = parts[d].trim();
-    if (dayMap[dn] !== undefined) priorityDays[dayMap[dn]] = true;
-  }
-
-  var outCal = String(sheet.getRange('B14').getValue()).trim();
+  var outCal = String(sheet.getRange('B12').getValue()).trim();
 
   return {
     staff:             staff,
-    priorityStaff:     priorityStaff,
-    priorityDays:      priorityDays,
-    priorityCount:     priorityCount,
-    balanceThreshold:  balanceThreshold,
     outputCalendarId:  outCal
   };
 }
@@ -546,13 +522,13 @@ function buildCleaningDeadlines_(reservations) {
 }
 
 // ============================================================
-// マッチングアルゴリズム（v5）
+// マッチングアルゴリズム（v6）
 //
 // Phase 1: 通常の割り当て（延期不可を優先してスタッフに割り当て）
-//   細田さん → 普久原さん → 未割当
+//   細田さん → 普久原さん → 福田さん → 未割当
 // Phase 2: 清掃延期処理（未割当を+1/+2日でスタッフに振り替え）
 // Phase 2.5: Rクリーン回避（同日スタッフの延期可能予約と未割当を入れ替え）
-// Phase 3: Rクリーン安全ネット（14日以内の未割当→Rクリーン）
+// Phase 3: Rクリーン安全ネット（8日以内の未割当→Rクリーン）
 // Phase 4: Rクリーンコスト最適化（ゲスト数が少ない部屋にRクリーンを入れ替え）
 // ============================================================
 function doMatching_() {
@@ -564,21 +540,22 @@ function doMatching_() {
   var db   = readDatabase_();
   var diff = computeDiff_(reservations, db);
 
-  // Rクリーン割り当ての期限: 実行日から14日以内の未割当はRクリーンに
+  // Rクリーン割り当ての期限: 実行日から8日以内の未割当はRクリーンに
   var today = new Date();
   today.setHours(0, 0, 0, 0);
   var rclDeadline = new Date(today);
-  rclDeadline.setDate(rclDeadline.getDate() + 14);
+  rclDeadline.setDate(rclDeadline.getDate() + 8);
 
-  // スタッフ情報を特定（細田さん=第1優先、普久原さん=第2優先）
-  var hosodaInfo = null, fukuharaInfo = null, rclInfo = null;
+  // スタッフ情報を特定（細田さん=第1優先、普久原さん=第2優先、福田さん=第3優先）
+  var hosodaInfo = null, fukuharaInfo = null, fukudaInfo = null, rclInfo = null;
   for (var si = 0; si < cfg.staff.length; si++) {
     if (cfg.staff[si].name === '細田さん')        hosodaInfo = cfg.staff[si];
     else if (cfg.staff[si].name === '普久原さん') fukuharaInfo = cfg.staff[si];
+    else if (cfg.staff[si].name === '福田さん')   fukudaInfo = cfg.staff[si];
     else if (cfg.staff[si].name === 'Rクリーン')  rclInfo = cfg.staff[si];
   }
-  if (!hosodaInfo || !fukuharaInfo) {
-    throw new Error('設定シートに「細田さん」と「普久原さん」が必要です。');
+  if (!hosodaInfo || !fukuharaInfo || !fukudaInfo) {
+    throw new Error('設定シートに「細田さん」「普久原さん」「福田さん」が必要です。');
   }
 
   // --- 全割り当ての使用量を追跡 ---
@@ -606,7 +583,7 @@ function doMatching_() {
                        (cds !== uc.newData.dateStr ? '確定（翌日）' : '確定')),
       guests:          uc.newData.guests || 0
     };
-    // 14日以上先のRクリーン → 未割当に戻す（まだスタッフ確定の余地あり）
+    // 8日以上先のRクリーン → 未割当に戻す（まだスタッフ確定の余地あり）
     if (a.staff === 'Rクリーン' && cleaningDate >= rclDeadline) {
       a.staff = '未割当';
       a.status = '要確認';
@@ -666,7 +643,7 @@ function doMatching_() {
   if (toAssign.length > 0) {
     // Phase 1: 日付ごとの割り当て
     //   延期不可の予約を先にスタッフに割り当て（延期可能な予約が溢れるように）
-    //   優先順位: 細田さん → 普久原さん → 未割当
+    //   優先順位: 細田さん → 普久原さん → 福田さん → 未割当
     var newByDate = {};
     for (var nb = 0; nb < toAssign.length; nb++) {
       var r = toAssign[nb];
@@ -691,20 +668,25 @@ function doMatching_() {
 
       var hosodaCap   = getCapForDate_(staffCaps, hosodaInfo, dk);
       var fukuharaCap = getCapForDate_(staffCaps, fukuharaInfo, dk);
+      var fukudaCap   = getCapForDate_(staffCaps, fukudaInfo, dk);
 
       var eu            = usageByDate[dk] || {};
       var existHosoda   = eu[hosodaInfo.name] || 0;
       var existFukuhara = eu[fukuharaInfo.name] || 0;
+      var existFukuda   = eu[fukudaInfo.name] || 0;
 
       var hosodaRemain   = Math.max(0, hosodaCap - existHosoda);
       var fukuharaRemain = Math.max(0, fukuharaCap - existFukuhara);
+      var fukudaRemain   = Math.max(0, fukudaCap - existFukuda);
 
       // 1. 細田さんの枠いっぱいまで
       var hosodaAlloc = Math.min(total, hosodaRemain);
       // 2. 残りを普久原さん
       var fukuharaAlloc = Math.min(total - hosodaAlloc, fukuharaRemain);
-      // 3. さらに残りは未割当（Phase 3でRクリーン判定）
-      var remaining = total - hosodaAlloc - fukuharaAlloc;
+      // 3. 残りを福田さん
+      var fukudaAlloc = Math.min(total - hosodaAlloc - fukuharaAlloc, fukudaRemain);
+      // 4. さらに残りは未割当（Phase 3でRクリーン判定）
+      var remaining = total - hosodaAlloc - fukuharaAlloc - fukudaAlloc;
 
       var unitIdx = 0;
       for (var a1 = 0; a1 < hosodaAlloc; a1++, unitIdx++) {
@@ -714,6 +696,10 @@ function doMatching_() {
       for (var a2 = 0; a2 < fukuharaAlloc; a2++, unitIdx++) {
         allAssignments.push(makeAssignFromBooking_(newItems[unitIdx], fukuharaInfo.name));
         addUsage_(usageByDate, dk, fukuharaInfo.name);
+      }
+      for (var a4 = 0; a4 < fukudaAlloc; a4++, unitIdx++) {
+        allAssignments.push(makeAssignFromBooking_(newItems[unitIdx], fukudaInfo.name));
+        addUsage_(usageByDate, dk, fukudaInfo.name);
       }
       for (var a3 = 0; a3 < remaining; a3++, unitIdx++) {
         allAssignments.push(makeAssignFromBooking_(newItems[unitIdx], '未割当'));
@@ -727,7 +713,7 @@ function doMatching_() {
   //
   // 未割当に回った予約で、+1日 or +2日にスタッフ枠がある場合
   // そちらに振り替える。早い日を優先。
-  // 優先順位: 細田さん → 普久原さん
+  // 優先順位: 細田さん → 普久原さん → 福田さん
   // --------------------------------------------------------
   var deferCount = 0;
   for (var df = 0; df < allAssignments.length; df++) {
@@ -749,12 +735,15 @@ function doMatching_() {
       var tryDateStr = formatDate_(tryDate);
       var hosodaCapTry   = getCapForDate_(staffCaps, hosodaInfo, tryDateStr);
       var fukuharaCapTry = getCapForDate_(staffCaps, fukuharaInfo, tryDateStr);
+      var fukudaCapTry   = getCapForDate_(staffCaps, fukudaInfo, tryDateStr);
       var euTry          = usageByDate[tryDateStr] || {};
       var hosodaRemainT   = Math.max(0, hosodaCapTry - (euTry[hosodaInfo.name] || 0));
       var fukuharaRemainT = Math.max(0, fukuharaCapTry - (euTry[fukuharaInfo.name] || 0));
+      var fukudaRemainT   = Math.max(0, fukudaCapTry - (euTry[fukudaInfo.name] || 0));
 
       if (hosodaRemainT > 0)        { deferTo = hosodaInfo.name; deferDate = tryDate; }
       else if (fukuharaRemainT > 0) { deferTo = fukuharaInfo.name; deferDate = tryDate; }
+      else if (fukudaRemainT > 0)   { deferTo = fukudaInfo.name; deferDate = tryDate; }
     }
 
     if (deferTo) {
@@ -836,7 +825,7 @@ function doMatching_() {
   // --------------------------------------------------------
   // Phase 3: Rクリーン安全ネット
   //
-  // 14日以内の未割当をRクリーンに割り当て。
+  // 8日以内の未割当をRクリーンに割り当て。
   // チェックアウト日当日を清掃日とする（早いほうが良い）。
   // --------------------------------------------------------
   for (var rn = 0; rn < allAssignments.length; rn++) {
@@ -970,6 +959,7 @@ function writeResults_(assignments) {
   var colors = {
     '細田さん':   '#E8F0FA',
     '普久原さん': '#FAF0E8',
+    '福田さん':   '#E8FAE8',
     'Rクリーン':  '#F0E8FA',
     '未割当':     '#FBEAE6'
   };
@@ -1197,6 +1187,7 @@ function doSyncToCalendar_() {
 
         if (rec.staff === '細田さん')   newEv.setColor('1');
         if (rec.staff === '普久原さん') newEv.setColor('6');
+        if (rec.staff === '福田さん')   newEv.setColor('5');
         if (rec.staff === 'Rクリーン')  newEv.setColor('3');
         if (rec.staff === '未割当')     newEv.setColor('8');
 
@@ -1451,7 +1442,7 @@ function writeGanttChart_(assignments) {
 
   // 凡例
   allRows.push([]);
-  allRows.push(['【凡例】', 'CO = チェックアウト', '', '', '細/普 = スタッフ清掃', '', '', 'R = Rクリーン', '', '', '? = 未割当', '', '', '… = 清掃猶予', '', '', '■ = 滞在中']);
+  allRows.push(['【凡例】', 'CO = チェックアウト', '', '', '細/普/福 = スタッフ清掃', '', '', 'R = Rクリーン', '', '', '? = 未割当', '', '', '… = 清掃猶予', '', '', '■ = 滞在中']);
 
   sheet.getRange(1, 1, allRows.length, numCols).setValues(
     allRows.map(function(r) {
@@ -1587,6 +1578,7 @@ function staffAbbr_(name) {
   if (name === '未割当') return '?';
   if (name.indexOf('細田') >= 0) return '細';
   if (name.indexOf('普久原') >= 0) return '普';
+  if (name.indexOf('福田') >= 0) return '福';
   return name.charAt(0);
 }
 
@@ -1649,7 +1641,7 @@ function setupBeds24Auth() {
     // 設定シートの接続状態を更新
     var stg = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_SETTINGS);
     if (stg) {
-      stg.getRange('B17').setValue('接続済み ✓').setFontColor('#006600');
+      stg.getRange('B15').setValue('接続済み ✓').setFontColor('#006600');
     }
 
     // ユニットマッピングを自動取得
@@ -1747,8 +1739,8 @@ function fetchUnitMapping_() {
   // キー: "roomId:unitId"
   var existingMap = {};
   var lastRow = stg.getLastRow();
-  if (lastRow >= 24) {
-    var mapData = stg.getRange(23, 1, lastRow - 22, 3).getValues();
+  if (lastRow >= 22) {
+    var mapData = stg.getRange(21, 1, lastRow - 20, 3).getValues();
     for (var m = 0; m < mapData.length; m++) {
       var rid = String(mapData[m][0]).trim();
       var uid = String(mapData[m][1]).trim();
@@ -1793,8 +1785,8 @@ function fetchUnitMapping_() {
   if (rooms.length === 0) return;
 
   // 書き込み（4列: roomId, unitId, ユニット名, 備考）
-  if (lastRow >= 24) {
-    stg.getRange(23, 1, lastRow - 22, 4).clearContent();
+  if (lastRow >= 22) {
+    stg.getRange(21, 1, lastRow - 20, 4).clearContent();
   }
   var mapRows = [];
   for (var i = 0; i < rooms.length; i++) {
@@ -1803,8 +1795,8 @@ function fetchUnitMapping_() {
     var note = rm.name + (rm.propName ? ' (' + rm.propName + ')' : '');
     mapRows.push([rm.roomId, rm.unitId, unitName, note]);
   }
-  stg.getRange(23, 1, mapRows.length, 4).setValues(mapRows);
-  stg.getRange(23, 4, mapRows.length, 1).setFontColor('#666666');
+  stg.getRange(21, 1, mapRows.length, 4).setValues(mapRows);
+  stg.getRange(21, 4, mapRows.length, 1).setFontColor('#666666');
 }
 
 // --- ユニットマッピング読み込み ---
@@ -1813,9 +1805,9 @@ function getUnitMapping_() {
   var stg = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_SETTINGS);
   if (!stg) return {};
   var lastRow = stg.getLastRow();
-  if (lastRow < 23) return {};
+  if (lastRow < 21) return {};
 
-  var data = stg.getRange(23, 1, lastRow - 22, 3).getValues();
+  var data = stg.getRange(21, 1, lastRow - 20, 3).getValues();
   var map = {};
   for (var i = 0; i < data.length; i++) {
     var rid = String(data[i][0]).trim();
@@ -1842,7 +1834,7 @@ function fetchBeds24Bookings_() {
   var stg = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_SETTINGS);
   var fetchDays = BEDS24_FETCH_DAYS;
   if (stg) {
-    var customDays = Number(stg.getRange('B18').getValue());
+    var customDays = Number(stg.getRange('B16').getValue());
     if (customDays > 0) fetchDays = customDays;
   }
 
@@ -2083,7 +2075,7 @@ function setupDailyTrigger() {
   var stg = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_SETTINGS);
   var hour = 6;
   if (stg) {
-    hour = Number(stg.getRange('B19').getValue()) || 6;
+    hour = Number(stg.getRange('B17').getValue()) || 6;
   }
 
   ScriptApp.newTrigger('runAllAuto')
