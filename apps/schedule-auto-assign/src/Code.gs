@@ -522,11 +522,12 @@ function buildCleaningDeadlines_(reservations) {
 }
 
 // ============================================================
-// マッチングアルゴリズム（v6）
+// マッチングアルゴリズム（v7）
 //
-// Phase 1: 通常の割り当て（延期不可を優先してスタッフに割り当て）
-//   細田さん → 普久原さん → 福田さん → 未割当
-// Phase 2: 清掃延期処理（未割当を+1/+2日でスタッフに振り替え）
+// Phase 1:   通常の割り当て（延期不可を優先してスタッフに割り当て）
+//            細田さん → 普久原さん → 福田さん → 未割当
+// Phase 1.5: 既存の未割当をスタッフ空き枠に再割り当て
+// Phase 2:   清掃延期処理（未割当を+1/+2日でスタッフに振り替え）
 // Phase 2.5: Rクリーン回避（同日スタッフの延期可能予約と未割当を入れ替え）
 // Phase 3: Rクリーン安全ネット（14日以内の未割当→Rクリーン）
 // Phase 4: Rクリーンコスト最適化（ゲスト数が少ない部屋にRクリーンを入れ替え）
@@ -705,6 +706,40 @@ function doMatching_() {
         allAssignments.push(makeAssignFromBooking_(newItems[unitIdx], '未割当'));
         addUsage_(usageByDate, dk, '未割当');
       }
+    }
+  }
+
+  // --------------------------------------------------------
+  // Phase 1.5: 既存の未割当をスタッフに再割り当て
+  //
+  // 前回実行時に未割当だった予約について、スタッフの空き枠を
+  // 再チェックする。後からスケジュールが追加された場合に対応。
+  // 優先順位: 細田さん → 普久原さん → 福田さん
+  // --------------------------------------------------------
+  for (var ra = 0; ra < allAssignments.length; ra++) {
+    var raAsgn = allAssignments[ra];
+    if (raAsgn.staff !== '未割当') continue;
+
+    var raDk = raAsgn.dateStr;
+    var raHosodaCap   = getCapForDate_(staffCaps, hosodaInfo, raDk);
+    var raFukuharaCap = getCapForDate_(staffCaps, fukuharaInfo, raDk);
+    var raFukudaCap   = getCapForDate_(staffCaps, fukudaInfo, raDk);
+
+    var raEu            = usageByDate[raDk] || {};
+    var raHosodaRemain   = Math.max(0, raHosodaCap - (raEu[hosodaInfo.name] || 0));
+    var raFukuharaRemain = Math.max(0, raFukuharaCap - (raEu[fukuharaInfo.name] || 0));
+    var raFukudaRemain   = Math.max(0, raFukudaCap - (raEu[fukudaInfo.name] || 0));
+
+    var raNewStaff = null;
+    if (raHosodaRemain > 0)        raNewStaff = hosodaInfo.name;
+    else if (raFukuharaRemain > 0) raNewStaff = fukuharaInfo.name;
+    else if (raFukudaRemain > 0)   raNewStaff = fukudaInfo.name;
+
+    if (raNewStaff) {
+      raAsgn.staff  = raNewStaff;
+      raAsgn.status = raAsgn.checkoutDateStr !== raAsgn.dateStr ? '確定（翌日）' : '確定';
+      addUsage_(usageByDate, raDk, raNewStaff);
+      if (raEu['未割当']) raEu['未割当']--;
     }
   }
 
