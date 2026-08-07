@@ -73,7 +73,7 @@ function setupSpreadsheet() {
 
   stg.getRange('A8:B8').merge().setValue('■ 割り当て優先順位')
     .setFontWeight('bold').setBackground('#E4F4F0');
-  stg.getRange('A9').setValue('① 細田さん → ② 普久原さん → ③ 福田さん → ④ 未割当 → ⑤ Rクリーン（8日以内）')
+  stg.getRange('A9').setValue('① 細田さん → ② 普久原さん → ③ 福田さん → ④ 未割当 → ⑤ Rクリーン（14日以内）')
     .setFontColor('#555555');
 
   stg.getRange('A11:B11').merge().setValue('■ 出力設定')
@@ -528,7 +528,7 @@ function buildCleaningDeadlines_(reservations) {
 //   細田さん → 普久原さん → 福田さん → 未割当
 // Phase 2: 清掃延期処理（未割当を+1/+2日でスタッフに振り替え）
 // Phase 2.5: Rクリーン回避（同日スタッフの延期可能予約と未割当を入れ替え）
-// Phase 3: Rクリーン安全ネット（8日以内の未割当→Rクリーン）
+// Phase 3: Rクリーン安全ネット（14日以内の未割当→Rクリーン）
 // Phase 4: Rクリーンコスト最適化（ゲスト数が少ない部屋にRクリーンを入れ替え）
 // ============================================================
 function doMatching_() {
@@ -540,11 +540,11 @@ function doMatching_() {
   var db   = readDatabase_();
   var diff = computeDiff_(reservations, db);
 
-  // Rクリーン割り当ての期限: 実行日から8日以内の未割当はRクリーンに
+  // Rクリーン割り当ての期限: 実行日から14日以内の未割当はRクリーンに
   var today = new Date();
   today.setHours(0, 0, 0, 0);
   var rclDeadline = new Date(today);
-  rclDeadline.setDate(rclDeadline.getDate() + 8);
+  rclDeadline.setDate(rclDeadline.getDate() + 14);
 
   // スタッフ情報を特定（細田さん=第1優先、普久原さん=第2優先、福田さん=第3優先）
   var hosodaInfo = null, fukuharaInfo = null, fukudaInfo = null, rclInfo = null;
@@ -583,7 +583,7 @@ function doMatching_() {
                        (cds !== uc.newData.dateStr ? '確定（翌日）' : '確定')),
       guests:          uc.newData.guests || 0
     };
-    // 8日以上先のRクリーン → 未割当に戻す（まだスタッフ確定の余地あり）
+    // 14日以上先のRクリーン → 未割当に戻す（まだスタッフ確定の余地あり）
     if (a.staff === 'Rクリーン' && cleaningDate >= rclDeadline) {
       a.staff = '未割当';
       a.status = '要確認';
@@ -825,7 +825,7 @@ function doMatching_() {
   // --------------------------------------------------------
   // Phase 3: Rクリーン安全ネット
   //
-  // 8日以内の未割当をRクリーンに割り当て。
+  // 14日以内の未割当をRクリーンに割り当て。
   // チェックアウト日当日を清掃日とする（早いほうが良い）。
   // --------------------------------------------------------
   for (var rn = 0; rn < allAssignments.length; rn++) {
