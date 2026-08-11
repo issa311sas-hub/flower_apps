@@ -403,19 +403,20 @@ Private Sub SetupTaskSheet()
     End If
 
     headers = Array("契約番号", "邸名", _
-                    "基礎開始日", "基礎終了日", "色名", "備考", _
-                    "躯体開始日", "躯体終了日", "色名", "備考")
+                    "基礎開始日", "基礎調整", "基礎終了日", "色名", "備考", _
+                    "躯体開始日", "躯体調整", "躯体終了日", "色名", "備考")
     WriteHeader ws, headers
     If Not isNew Then Exit Sub
 
     ' 使い方が分かるようヘッダにコメントを付ける（新規作成時のみ）
     On Error Resume Next
-    ws.Range("C1").AddComment "ここだけ入力すれば足ります"
-    ws.Range("D1").AddComment "「工程を作る」で自動計算されます。" & _
-                              "手で入れるとその日付が優先されます"
-    ws.Range("E1").AddComment "空欄なら業者が自動で割り当てられます。" & _
+    ws.Range("C1").AddComment "入力。ここだけ入れれば足ります"
+    ws.Range("D1").AddComment "入力。工期に足し引きする日数（+1 / -2 など）。空欄は0"
+    ws.Range("E1").AddComment "出力。実行のたびに計算し直されます。手で直しても上書きされます"
+    ws.Range("F1").AddComment "空欄なら業者が自動で割り当てられます。" & _
                               "埋めておけばその業者で固定されます"
-    ws.Range("G1").AddComment "空欄なら基礎の終了日から自動で決まります"
+    ws.Range("H1").AddComment "空欄なら基礎の終了日から自動で決まります。" & _
+                              "手で入れるとその日付が優先されます"
     On Error GoTo 0
 
     ' 色名は M_業者 シートのA列から選ぶ
@@ -424,13 +425,19 @@ Private Sub SetupTaskSheet()
         RefersTo:="=" & SH_VENDOR & "!$A$2:$A$100"
     On Error GoTo 0
 
-    Dim k As Long, c0 As Long
-    For k = 1 To (UBound(headers) - LBound(headers) + 1 - TASK_COL_FIRST + 1) \ TASK_COL_WIDTH
+    Dim k As Long, c0 As Long, taskCount As Long
+    taskCount = (UBound(headers) - LBound(headers) + 1 - TASK_COL_FIRST + 1) \ TASK_COL_WIDTH
+    For k = 1 To taskCount
         c0 = TASK_COL_FIRST + (k - 1) * TASK_COL_WIDTH
-        ' 開始日・終了日
-        ws.Range(ws.Cells(2, c0), ws.Cells(2000, c0 + 1)).NumberFormatLocal = "yyyy/mm/dd"
-        ' 色名
-        With ws.Range(ws.Cells(2, c0 + 2), ws.Cells(2000, c0 + 2)).Validation
+        ws.Range(ws.Cells(2, c0 + TASK_OFS_START), _
+                 ws.Cells(2000, c0 + TASK_OFS_START)).NumberFormatLocal = "yyyy/mm/dd"
+        ws.Range(ws.Cells(2, c0 + TASK_OFS_END), _
+                 ws.Cells(2000, c0 + TASK_OFS_END)).NumberFormatLocal = "yyyy/mm/dd"
+        ' 出力列は薄く色を付けて、入力列と見分けられるようにする
+        ws.Range(ws.Cells(1, c0 + TASK_OFS_END), _
+                 ws.Cells(2000, c0 + TASK_OFS_END)).Interior.Color = RGB(242, 242, 242)
+        With ws.Range(ws.Cells(2, c0 + TASK_OFS_COLOR), _
+                      ws.Cells(2000, c0 + TASK_OFS_COLOR)).Validation
             .Delete
             .Add Type:=xlValidateList, AlertStyle:=xlValidAlertStop, _
                  Operator:=xlBetween, Formula1:="=色名一覧"
@@ -440,11 +447,14 @@ Private Sub SetupTaskSheet()
     Next k
 
     ws.Columns("A:B").ColumnWidth = 14
-    ws.Columns("C:J").ColumnWidth = 12
+    ws.Range(ws.Columns(TASK_COL_FIRST), _
+             ws.Columns(TASK_COL_FIRST + taskCount * TASK_COL_WIDTH - 1)).ColumnWidth = 11
 End Sub
 
 '---------------------------------------------------------------------
-' M_工程データ が新形式（1物件1行の横並び）かどうか
+' M_工程データ が新形式（1物件1行・工程あたり5列）かどうか
+'
+' 「調整」列があるかどうかで、4列時代のものと区別する。
 '---------------------------------------------------------------------
 Public Function TaskSheetIsCurrent() As Boolean
     Dim ws As Worksheet
@@ -453,7 +463,10 @@ Public Function TaskSheetIsCurrent() As Boolean
     On Error GoTo 0
     If ws Is Nothing Then Exit Function
 
-    TaskSheetIsCurrent = (Trim$(CStr(ws.Cells(1, TASK_COL_FIRST).Value)) = "基礎開始日")
+    If Trim$(CStr(ws.Cells(1, TASK_COL_FIRST + TASK_OFS_START).Value)) <> "基礎開始日" Then Exit Function
+    If Trim$(CStr(ws.Cells(1, TASK_COL_FIRST + TASK_OFS_ADJUST).Value)) <> "基礎調整" Then Exit Function
+
+    TaskSheetIsCurrent = True
 End Function
 
 '---------------------------------------------------------------------

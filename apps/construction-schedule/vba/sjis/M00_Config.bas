@@ -48,14 +48,28 @@ Public Const OFS_KISO_SUB   As Long = 5          ' 基礎行の補助 (契約着工日の黒1
 '   躯体 … +0 の 1 行のみ     (実測 +0 が 808、+1 は 19 のみ)
 
 ' --- M_工程データ の列レイアウト（1物件1行の横並び） ----------------
-' A 契約番号 / B 邸名 / 以降は工程ごとに 4 列ずつ
-'   基礎: C 開始日  D 終了日  E 色名  F 備考
-'   躯体: G 開始日  H 終了日  I 色名  J 備考
-' 工程を足すときは右へ 4 列ずつ伸ばす。
+' A 契約番号 / B 邸名 / 以降は工程ごとに 5 列ずつ
+'   基礎: C 開始日  D 調整  E 終了日  F 色名  G 備考
+'   躯体: H 開始日  I 調整  J 終了日  K 色名  L 備考
+' 工程を足すときは右へ 5 列ずつ伸ばす。
+'
+' 各列の役割（開始日を直したら全部計算し直せるよう、入力と出力を分けてある）
+'   開始日 … 入力。2番目以降の工程は空欄なら前工程の終了日から自動で決まる
+'   調整   … 入力。工期に足し引きする日数（+1 / -2 など）。空欄は 0
+'   終了日 … 出力。実行のたびに必ず計算し直して上書きする
+'   色名   … 空欄なら自動割り当て。入っていればその業者で固定
+'   備考   … 自由記入。マクロは読み書きしない
 Public Const TASK_COL_CONTRACT As Long = 1
 Public Const TASK_COL_NAME     As Long = 2
 Public Const TASK_COL_FIRST    As Long = 3    ' 最初の工程ブロックの開始列
-Public Const TASK_COL_WIDTH    As Long = 4    ' 1工程あたりの列数
+Public Const TASK_COL_WIDTH    As Long = 5    ' 1工程あたりの列数
+
+' 工程ブロック内での列オフセット（0 始まり）
+Public Const TASK_OFS_START  As Long = 0
+Public Const TASK_OFS_ADJUST As Long = 1
+Public Const TASK_OFS_END    As Long = 2
+Public Const TASK_OFS_COLOR  As Long = 3
+Public Const TASK_OFS_NOTE   As Long = 4
 
 ' --- 色 -------------------------------------------------------------
 Public Const CLR_HOLIDAY    As Long = 39321      ' RGB(153, 204, 0)  日曜・祝日の黄緑
