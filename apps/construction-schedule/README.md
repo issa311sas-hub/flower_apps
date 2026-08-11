@@ -48,6 +48,8 @@ vba/                           ← UTF-8。編集するのはこちら
 tools/
   analyze_chart.py             ← 過去の工程表を解析して工期を実測する
   make_import_bas.py           ← vba/ から vba/sjis/ を生成する
+archive/                       ← 版ごとの保管（README.md に一覧と復元手順）
+  2026-08-11/v1〜v6/
 ```
 
 > **Excel に取り込むときは `vba/sjis/` を使ってください。**
@@ -58,6 +60,11 @@ tools/
 ## セットアップ
 
 [セットアップ手順](docs/setup-guide.md) を参照。
+
+## 版の管理
+
+VBA の各版は [archive/](archive/) に保管している。過去の版に戻す手順もそこに書いてある。
+`vba/` を変更したら、動作確認のうえで新しい版として archive に追加する。
 
 ## 開発フェーズ
 

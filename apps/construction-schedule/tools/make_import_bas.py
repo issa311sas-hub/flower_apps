@@ -9,9 +9,13 @@ VBE の「ファイルのインポート」は .bas を OS の ANSI コードペ
     vba/sjis/  … CP932。Excel に取り込むのはこちら（このスクリプトが生成）
 
 使い方:
-    python tools/make_import_bas.py
+    python tools/make_import_bas.py                  … vba/ を変換
+    python tools/make_import_bas.py <フォルダ>        … 任意の .bas フォルダを変換
 
 vba/ を編集したら、必ずこれを実行して vba/sjis/ を作り直すこと。
+アーカイブした版を Excel に戻したいときは、その版のフォルダを引数に渡す。
+
+    python tools/make_import_bas.py archive/2026-08-11/v5
 """
 
 import os
@@ -19,8 +23,7 @@ import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SRC = os.path.join(HERE, "..", "vba")
-DST = os.path.join(SRC, "sjis")
+DEFAULT_SRC = os.path.join(HERE, "..", "vba")
 
 # VBE は CRLF を前提にしている
 NEWLINE = "\r\n"
@@ -101,20 +104,24 @@ def convert(path, out_path):
 
 
 def main():
-    if not os.path.isdir(SRC):
-        sys.exit(f"{SRC} が見つかりません。")
-    os.makedirs(DST, exist_ok=True)
+    src = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_SRC
+    if not os.path.isdir(src):
+        sys.exit(f"{src} が見つかりません。")
 
-    names = sorted(f for f in os.listdir(SRC) if f.endswith(".bas"))
+    dst = os.path.join(src, "sjis")
+    os.makedirs(dst, exist_ok=True)
+
+    names = sorted(f for f in os.listdir(src) if f.endswith(".bas"))
     if not names:
-        sys.exit(f"{SRC} に .bas がありません。")
+        sys.exit(f"{src} に .bas がありません。")
 
+    label = os.path.relpath(dst)
     for name in names:
-        size = convert(os.path.join(SRC, name), os.path.join(DST, name))
-        print(f"  {name:<28} -> vba/sjis/{name}  ({size:,} バイト)")
+        size = convert(os.path.join(src, name), os.path.join(dst, name))
+        print(f"  {name:<28} -> {label}/{name}  ({size:,} バイト)")
 
     print(f"\n{len(names)} ファイルを CP932 で書き出しました。")
-    print("Excel には vba/sjis/ の方をインポートしてください。")
+    print(f"Excel には {label}/ の方をインポートしてください。")
 
 
 if __name__ == "__main__":
