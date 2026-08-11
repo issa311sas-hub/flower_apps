@@ -10,22 +10,83 @@ Option Explicit
 ' ・振替休日（祝日が日曜のとき、次の非祝日を休みにする）
 ' ・国民の休日（祝日に挟まれた平日。9月の敬老の日～秋分の日）
 '
-' 会社独自の休日は無い、と確認済みのため実装していない。
+' 加えて、会社の休業日（お盆・年末年始）も非稼働日として扱う。
+' これらは祝日ではないので、振替休日・国民の休日の判定には含めない。
 ' 個別の休工日を足したい場合は M_例外日 シートで物件単位に指定する。
 '=====================================================================
 
+' --- 会社休業日（月/日で指定。年によらず固定） ----------------------
+Public Const OBON_MONTH     As Long = 8    ' お盆
+Public Const OBON_FROM_DAY  As Long = 13
+Public Const OBON_TO_DAY    As Long = 16
+Public Const NENMATSU_MONTH As Long = 12   ' 年末（12/30～12/31）
+Public Const NENMATSU_DAY   As Long = 30
+Public Const NENSHI_MONTH   As Long = 1    ' 年始（1/1～1/3）
+Public Const NENSHI_DAY     As Long = 3
+
 '---------------------------------------------------------------------
-' 祝日か（振替休日・国民の休日を含む）
+' 祝日か（振替休日・国民の休日を含む。会社休業日は含まない）
 '---------------------------------------------------------------------
 Public Function IsHoliday(d As Date) As Boolean
     IsHoliday = (Len(HolidayName(d)) > 0)
 End Function
 
 '---------------------------------------------------------------------
-' 非稼働日か（日曜 または 祝日）
+' 会社休業日か（お盆・年末年始）
+'---------------------------------------------------------------------
+Public Function IsCompanyClosure(d As Date) As Boolean
+    IsCompanyClosure = (Len(CompanyClosureName(d)) > 0)
+End Function
+
+'---------------------------------------------------------------------
+' 会社休業日の名前を返す。該当しなければ空文字。
+'---------------------------------------------------------------------
+Public Function CompanyClosureName(d As Date) As String
+    Dim m As Long, dd As Long
+    m = Month(d): dd = Day(d)
+
+    If m = OBON_MONTH Then
+        If dd >= OBON_FROM_DAY And dd <= OBON_TO_DAY Then
+            CompanyClosureName = "お盆"
+            Exit Function
+        End If
+    End If
+
+    If m = NENMATSU_MONTH And dd >= NENMATSU_DAY Then
+        CompanyClosureName = "年末年始"
+        Exit Function
+    End If
+
+    If m = NENSHI_MONTH And dd <= NENSHI_DAY Then
+        CompanyClosureName = "年末年始"
+        Exit Function
+    End If
+
+    CompanyClosureName = ""
+End Function
+
+'---------------------------------------------------------------------
+' 非稼働日か（日曜 / 祝日 / 会社休業日）
 '---------------------------------------------------------------------
 Public Function IsNonWorkingDay(d As Date) As Boolean
-    IsNonWorkingDay = (Weekday(d, vbSunday) = 1) Or IsHoliday(d)
+    IsNonWorkingDay = (Weekday(d, vbSunday) = 1) _
+                      Or IsHoliday(d) _
+                      Or IsCompanyClosure(d)
+End Function
+
+'---------------------------------------------------------------------
+' 非稼働日の理由を返す。稼働日なら空文字。
+'---------------------------------------------------------------------
+Public Function NonWorkingReason(d As Date) As String
+    If Weekday(d, vbSunday) = 1 Then
+        NonWorkingReason = "日曜"
+    ElseIf Len(HolidayName(d)) > 0 Then
+        NonWorkingReason = HolidayName(d)
+    ElseIf Len(CompanyClosureName(d)) > 0 Then
+        NonWorkingReason = CompanyClosureName(d)
+    Else
+        NonWorkingReason = ""
+    End If
 End Function
 
 '---------------------------------------------------------------------
@@ -178,9 +239,11 @@ Public Sub DebugListHolidays()
     End If
 
     For d = DateSerial(y, 1, 1) To DateSerial(y, 12, 31)
-        If IsHoliday(d) Then
-            s = s & Format$(d, "yyyy/mm/dd (aaa)") & "  " & HolidayName(d) & vbCrLf
+        If IsHoliday(d) Or IsCompanyClosure(d) Then
+            s = s & Format$(d, "yyyy/mm/dd (aaa)") & "  " & NonWorkingReason(d) & vbCrLf
         End If
     Next d
-    MsgBox y & "年の祝日" & vbCrLf & vbCrLf & s, vbInformation, "祝日一覧"
+    MsgBox y & "年の祝日・会社休業日" & vbCrLf & _
+           "（日曜を除く。日曜も非稼働日として扱われます）" & vbCrLf & vbCrLf & s, _
+           vbInformation, "非稼働日一覧"
 End Sub

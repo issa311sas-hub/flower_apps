@@ -19,6 +19,20 @@ Public Sub ボタン_日祝を塗る()
     PaintHolidays
 End Sub
 
+'---------------------------------------------------------------------
+' 基礎工事の工程を作る
+'
+' M_工程データ に 契約番号・工程「基礎」・開始日 を入れて実行すると、
+' 工期の計算 → 終了日の確定 → 業者の割り当て → 色塗り まで行う。
+'---------------------------------------------------------------------
+Public Sub ボタン_基礎の工程を作る()
+    GenerateKisoPlan
+End Sub
+
+Public Sub ボタン_基礎の業者割当をクリア()
+    ClearKisoVendorAssignment
+End Sub
+
 Public Sub ボタン_色を塗り直す()
     RepaintTasks
 End Sub
@@ -66,6 +80,10 @@ End Sub
 
 Public Sub ボタン_祝日を一覧表示()
     DebugListHolidays
+End Sub
+
+Public Sub ボタン_工期の計算を確認()
+    DebugTermDays
 End Sub
 
 '--- 保守 -------------------------------------------------------------

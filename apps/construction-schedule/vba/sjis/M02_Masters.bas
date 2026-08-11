@@ -111,7 +111,7 @@ Private Sub SetupVendorSheet()
         Array("桃", 255, 0, 255, "基礎", "", ""), _
         Array("黄", 255, 255, 0, "基礎", "", ""), _
         Array("水色", 153, 204, 255, "外構", "", "外構フェーズ1"), _
-        Array("黒", 0, 0, 0, "コテ", "", "契約着工日(1日)にも使用。行で区別する"), _
+        Array("黒", 0, 0, 0, "モルタル", "", "契約着工日(1日)にも使用。行で区別する"), _
         Array("淡水", 204, 255, 255, "足場", "", "内部足場を含む"), _
         Array("金", 255, 204, 0, "行事", "", "社内行事・タイル工事"), _
         Array("白", 255, 255, 255, "単発", "", "家具搬入・器具・CL 等") _
@@ -156,49 +156,141 @@ End Sub
 '---------------------------------------------------------------------
 ' M_工期 : 標準工期マスタ
 '
-' 過去データ46物件の実測中央値を初期値として入れてある。
-' 工事店さまの確認後にこの表を直せば、以降の自動生成に反映される。
+' 工期は次の式で計算する。
+'
+'     稼働日数 = ROUND(基準日数 + 坪係数 × 坪数) + 種類補正
+'
+' 基準日数・坪係数は C 種 29 件の回帰、種類補正はその残差から求めた。
+' 工事店さまの確認後にこの表を直せば、以降の自動計算に反映される。
 '---------------------------------------------------------------------
+Public Const TERM_ROW_FORMULA As Long = 2    ' 基準式ブロックの先頭行
+Public Const TERM_ROW_CORRECT As Long = 8    ' 種類補正ブロックの先頭行
+
 Private Sub SetupTermSheet()
     Dim ws As Worksheet, isNew As Boolean
+    Dim i As Long, r As Long, rows As Variant
+
     Set ws = GetOrCreateSheet(SH_TERM)
     isNew = (Len(Trim$(CStr(ws.Cells(1, 1).Value))) = 0)
-
-    WriteHeader ws, Array("坪下限", "坪上限", "基礎_稼働日", "基礎_暦日", "躯体_稼働日", "コテ_稼働日", "根拠件数")
     If Not isNew Then Exit Sub
 
-    Dim rows As Variant, i As Long
+    ' --- 基準式（C 種基準） ---
+    ws.Range("A1").Value = "■ 基準式：稼働日数 = ROUND(基準日数 + 坪係数 × 坪数) + 種類補正"
+    ws.Range("A1").Font.Bold = True
+
+    WriteHeaderAt ws, TERM_ROW_FORMULA, Array("工程", "基準日数", "坪係数", "備考")
     rows = Array( _
-        Array(0, 32, 10, 20, 4, 3, 6), _
-        Array(33, 39, 10, 22, 4, 3, 23), _
-        Array(40, 47, 10, 18, 4, 3, 4), _
-        Array(48, 55, 9, 18, 6, 4, 2), _
-        Array(56, 70, 15, 26, 6, 4, 8), _
-        Array(71, 100, 16, 32, 10, 4, 1), _
-        Array(101, 999, 28, 40, 11, 6, 2) _
+        Array("基礎", 6.37, 0.1075, "C種29件の回帰。平均絶対誤差 2.2日"), _
+        Array("躯体", -0.21, 0.1103, "C種29件の回帰。平均絶対誤差 0.6日（Phase2で使用）"), _
+        Array("基礎_暦日", 17.59, 0.0976, "参考値。養生等の中断を含む実績スパン。誤差が大きく自動計算には未使用") _
     )
     For i = LBound(rows) To UBound(rows)
-        WriteRow ws, i + 2, rows(i)
+        WriteRow ws, TERM_ROW_FORMULA + 1 + i, rows(i)
     Next i
 
-    Dim r As Long
-    r = UBound(rows) + 4
-    ws.Cells(r, 1).Value = "補正"
-    ws.Cells(r, 1).Font.Bold = True
-    ws.Cells(r + 1, 1).Value = "3階建て"
-    ws.Cells(r + 1, 5).Value = 2
-    ws.Cells(r + 1, 7).Value = "躯体に加算（実測: R3F36=6日 vs C2E36=3～4日）"
-    ws.Cells(r + 2, 1).Value = "契約着工日→基礎着手"
-    ws.Cells(r + 2, 4).Value = 2
-    ws.Cells(r + 2, 7).Value = "暦日。実測 1～7日、中央値2日"
-    ws.Cells(r + 3, 1).Value = "基礎完了→躯体着手"
-    ws.Cells(r + 3, 4).Value = 4
-    ws.Cells(r + 3, 7).Value = "暦日。実測 2～11日、中央値4日"
-    ws.Cells(r + 4, 1).Value = "躯体完了→コテ着手"
-    ws.Cells(r + 4, 4).Value = 2
-    ws.Cells(r + 4, 7).Value = "暦日。間に穴明け1日が入る"
+    ' --- 種類補正 ---
+    r = TERM_ROW_CORRECT
+    ws.Cells(r - 1, 1).Value = "■ 建物種類による補正（日数に加算）"
+    ws.Cells(r - 1, 1).Font.Bold = True
 
-    ws.Columns("A:G").AutoFit
+    WriteHeaderAt ws, r, Array("種類", "基礎補正", "躯体補正", "件数", "根拠")
+    rows = Array( _
+        Array("C", 0, 0, 29, "基準"), _
+        Array("R", 3, 1, 6, "工事店確認済：基礎・躯体ともC より長い。実測 +2.6 / +0.5"), _
+        Array("P", 0, 1, 1, "工事店確認済：基礎はCと同じ、躯体だけ長い"), _
+        Array("D", 1, 0, 5, "実測のみ +1.4 / +0.1"), _
+        Array("DY", -2, 0, 3, "実測のみ -1.6 / +0.2　※要確認"), _
+        Array("M", 5, -2, 2, "実測のみ。大規模は別扱いの可能性　※要確認"), _
+        Array("V", 0, 0, 0, "データなし。Cと同じ扱い　※要確認") _
+    )
+    For i = LBound(rows) To UBound(rows)
+        WriteRow ws, r + 1 + i, rows(i)
+    Next i
+
+    ' --- 工程間インターバル（Phase2 用の参考値） ---
+    r = r + UBound(rows) + 3
+    ws.Cells(r, 1).Value = "■ 工程間インターバル（暦日・Phase2 で使用）"
+    ws.Cells(r, 1).Font.Bold = True
+    WriteHeaderAt ws, r + 1, Array("区間", "日数", "", "", "備考")
+    ws.Cells(r + 2, 1).Value = "契約着工日→基礎着手"
+    ws.Cells(r + 2, 2).Value = 2
+    ws.Cells(r + 2, 5).Value = "実測 1～7日、中央値2日"
+    ws.Cells(r + 3, 1).Value = "基礎完了→躯体着手"
+    ws.Cells(r + 3, 2).Value = 4
+    ws.Cells(r + 3, 5).Value = "実測 2～11日、中央値4日"
+    ws.Cells(r + 4, 1).Value = "躯体完了→モルタル着手"
+    ws.Cells(r + 4, 2).Value = 2
+    ws.Cells(r + 4, 5).Value = "間に穴明け1日が入る"
+
+    ws.Columns("A:E").AutoFit
+End Sub
+
+'---------------------------------------------------------------------
+' M_工期 から、指定タイプの稼働日数を計算する
+'
+' taskName : "基礎" または "躯体"
+' 戻り値   : 稼働日数（1 未満にはならない）。タイプが読めなければ 0
+'---------------------------------------------------------------------
+Public Function TermDays(taskName As String, typeCode As String) As Long
+    Dim ws As Worksheet
+    Dim kind As String, floors As Long, area As Long
+    Dim baseDays As Double, coef As Double, corr As Long
+    Dim r As Long, found As Boolean
+
+    If Not ParseType(typeCode, kind, floors, area) Then Exit Function
+
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(SH_TERM)
+    On Error GoTo 0
+    If ws Is Nothing Then Exit Function
+
+    ' 基準式を探す
+    For r = TERM_ROW_FORMULA + 1 To TERM_ROW_FORMULA + 5
+        If Trim$(CStr(ws.Cells(r, 1).Value)) = taskName Then
+            baseDays = CDbl(ws.Cells(r, 2).Value)
+            coef = CDbl(ws.Cells(r, 3).Value)
+            found = True
+            Exit For
+        End If
+    Next r
+    If Not found Then Exit Function
+
+    ' 種類補正を探す（見つからなければ 0 のまま）
+    For r = TERM_ROW_CORRECT + 1 To TERM_ROW_CORRECT + 20
+        If Trim$(CStr(ws.Cells(r, 1).Value)) = kind Then
+            If taskName = "躯体" Then
+                corr = CLng(ws.Cells(r, 3).Value)
+            Else
+                corr = CLng(ws.Cells(r, 2).Value)
+            End If
+            Exit For
+        End If
+    Next r
+
+    TermDays = CLng(Application.WorksheetFunction.Round(baseDays + coef * area, 0)) + corr
+    If TermDays < 1 Then TermDays = 1
+End Function
+
+'---------------------------------------------------------------------
+' 動作確認用 : タイプを入れると計算結果を表示する
+'---------------------------------------------------------------------
+Public Sub DebugTermDays()
+    Dim t As String, kind As String, floors As Long, area As Long
+    t = InputBox("タイプコードを入力してください（例 C2E42）", "工期の計算確認", "C2E42")
+    If Len(Trim$(t)) = 0 Then Exit Sub
+
+    If Not ParseType(t, kind, floors, area) Then
+        MsgBox "タイプ「" & t & "」を解析できませんでした。", vbExclamation
+        Exit Sub
+    End If
+
+    MsgBox "タイプ : " & UCase$(Trim$(t)) & vbCrLf & _
+           "  建物種類 : " & kind & vbCrLf & _
+           "  階数     : " & IIf(floors > 0, CStr(floors) & " 階", "（表記なし）") & vbCrLf & _
+           "  坪数     : " & area & " 坪" & vbCrLf & vbCrLf & _
+           "基礎工事 : " & TermDays("基礎", t) & " 稼働日" & vbCrLf & _
+           "躯体工事 : " & TermDays("躯体", t) & " 稼働日", _
+           vbInformation, "工期の計算確認"
 End Sub
 
 '---------------------------------------------------------------------
@@ -215,10 +307,17 @@ Private Sub SetupTaskSheet()
     WriteHeader ws, Array("契約番号", "邸名", "工程", "開始日", "終了日", "色名", "備考")
     If Not isNew Then Exit Sub
 
+    ' 使い方が分かるようヘッダにコメントを付ける（新規作成時のみ）
+    On Error Resume Next
+    ws.Range("E1").AddComment "「基礎の工程を作る」を実行すると自動で入ります"
+    ws.Range("F1").AddComment "空欄なら業者が自動で割り当てられます。" & _
+                              "埋めておけばその業者で固定されます"
+    On Error GoTo 0
+
     With ws.Range("C2:C2000").Validation
         .Delete
         .Add Type:=xlValidateList, AlertStyle:=xlValidAlertStop, _
-             Operator:=xlBetween, Formula1:="契約着工日,基礎,躯体,コテ,外構"
+             Operator:=xlBetween, Formula1:="契約着工日,基礎,躯体,モルタル,外構"
         .IgnoreBlank = True
         .InCellDropdown = True
     End With
@@ -279,16 +378,20 @@ End Function
 '--- 小物 ------------------------------------------------------------
 
 Private Sub WriteHeader(ws As Worksheet, headers As Variant)
+    WriteHeaderAt ws, 1, headers
+    ' 実行のたびに切り替わらないよう、未設定のときだけ付ける
+    If Not ws.AutoFilterMode Then ws.Rows(1).AutoFilter
+End Sub
+
+Private Sub WriteHeaderAt(ws As Worksheet, r As Long, headers As Variant)
     Dim i As Long
     For i = LBound(headers) To UBound(headers)
-        With ws.Cells(1, i + 1)
+        With ws.Cells(r, i + 1)
             .Value = headers(i)
             .Font.Bold = True
             .Interior.Color = RGB(217, 217, 217)
         End With
     Next i
-    ' 実行のたびに切り替わらないよう、未設定のときだけ付ける
-    If Not ws.AutoFilterMode Then ws.Rows(1).AutoFilter
 End Sub
 
 Private Sub WriteRow(ws As Worksheet, r As Long, vals As Variant)

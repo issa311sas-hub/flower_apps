@@ -243,7 +243,7 @@ Public Sub WhatIsThisCell()
                 Case OFS_KUTAI:     ofsName = "躯体（色帯）"
                 Case OFS_KUTAI_SUB: ofsName = "躯体（補助）"
                 Case OFS_NOTE:      ofsName = "補助メモ"
-                Case OFS_KOTE:      ofsName = "コテ（黒帯）"
+                Case OFS_MORTAR:    ofsName = "モルタル（黒帯）"
                 Case OFS_KISO:      ofsName = "基礎（色帯）／外構"
                 Case OFS_KISO_SUB:  ofsName = "基礎（補助）／契約着工日"
             End Select
@@ -251,8 +251,14 @@ Public Sub WhatIsThisCell()
         End If
     Next b
 
+    Dim reason As String
+    If IsDate(d) Then
+        reason = NonWorkingReason(CDate(d))
+        If Len(reason) = 0 Then reason = "稼働日"
+    End If
+
     MsgBox "セル : " & Selection.Address(False, False) & vbCrLf & _
-           "日付 : " & d & vbCrLf & _
+           "日付 : " & d & "  (" & reason & ")" & vbCrLf & _
            "物件 : " & nm & vbCrLf & _
            "契約番号 : " & contract & vbCrLf & _
            "行の意味 : " & ofsName, vbInformation, "セル情報"

@@ -13,10 +13,10 @@ Option Explicit
 '=====================================================================
 
 ' 工程名 -> 描画する行オフセット
-Private Function TaskOffsets(taskName As String) As Variant
+Public Function TaskOffsets(taskName As String) As Variant
     Select Case taskName
         Case "躯体":       TaskOffsets = Array(OFS_KUTAI, OFS_KUTAI_SUB)
-        Case "コテ":       TaskOffsets = Array(OFS_KOTE)
+        Case "モルタル":   TaskOffsets = Array(OFS_MORTAR)
         Case "基礎":       TaskOffsets = Array(OFS_KISO, OFS_KISO_SUB)
         Case "外構":       TaskOffsets = Array(OFS_KISO, OFS_KISO_SUB)
         Case "契約着工日": TaskOffsets = Array(OFS_KISO, OFS_KISO_SUB)

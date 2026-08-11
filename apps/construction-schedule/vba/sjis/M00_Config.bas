@@ -34,13 +34,18 @@ Public Const COL_TSUBO      As Long = 14         ' 坪数          (先頭行 +2)
 Public Const OFS_KUTAI      As Long = 0          ' 躯体工事の色帯
 Public Const OFS_KUTAI_SUB  As Long = 1          ' 躯体行の補助 (単発イベント)
 Public Const OFS_NOTE       As Long = 2          ' 補助 (吹付・タイル・養生メモ)
-Public Const OFS_KOTE       As Long = 3          ' コテ工事の黒帯
+Public Const OFS_MORTAR     As Long = 3          ' モルタル工事の黒帯
 Public Const OFS_KISO       As Long = 4          ' 基礎工事の色帯 (後半は外構が使う)
 Public Const OFS_KISO_SUB   As Long = 5          ' 基礎行の補助 (契約着工日の黒1マス)
 
+' --- クリティカル工程 (工事店確認済。この順で必ず進む) --------------
+'   1 基礎工事 → 2 躯体工事 → 3 モルタル工事 → 4 防水工事
+'   → 5 断熱工事 → 6 木工事 → 7 仕上げ工事
+' 実装は 1 基礎工事 から着手し、以降は順次追加する。
+
 ' --- 色 -------------------------------------------------------------
 Public Const CLR_HOLIDAY    As Long = 39321      ' RGB(153, 204, 0)  日曜・祝日の黄緑
-Public Const CLR_BLACK      As Long = 0          ' RGB(0, 0, 0)      契約着工日 / コテ
+Public Const CLR_BLACK      As Long = 0          ' RGB(0, 0, 0)      契約着工日 / モルタル
 
 '---------------------------------------------------------------------
 ' 工程表シートを取得する
@@ -203,6 +208,64 @@ Public Function FindBlocks(ws As Worksheet) As Collection
     Loop
 
     Set FindBlocks = col
+End Function
+
+'=====================================================================
+' タイプコードの解析
+'
+' 例) C2E42 → 種類 "C" / 階数 2 / 坪数 42
+'     DYF67 → 種類 "DY" / 階数 0 / 坪数 67
+'     V3F208 → 種類 "V" / 階数 3 / 坪数 208
+'
+' 末尾の E または F の後ろがすべて数字であるところで区切る。
+' その数字が総坪数（坪数欄 ①②の合計とほぼ一致することを実データで確認済み）。
+'=====================================================================
+Public Function ParseType(typeCode As String, ByRef kind As String, _
+                          ByRef floors As Long, ByRef area As Long) As Boolean
+    Dim t As String, i As Long, sep As Long
+    Dim prefix As String, tail As String, lastCh As String
+
+    kind = "": floors = 0: area = 0
+    t = UCase$(Trim$(typeCode))
+    If Len(t) < 3 Then Exit Function
+
+    ' 後ろから、E/F の直後がすべて数字になる位置を探す
+    For i = Len(t) - 1 To 2 Step -1
+        If Mid$(t, i, 1) = "E" Or Mid$(t, i, 1) = "F" Then
+            tail = Mid$(t, i + 1)
+            If Len(tail) > 0 Then
+                If IsAllDigits(tail) Then
+                    sep = i
+                    Exit For
+                End If
+            End If
+        End If
+    Next i
+    If sep = 0 Then Exit Function
+
+    area = CLng(tail)
+    prefix = Left$(t, sep - 1)
+    If Len(prefix) = 0 Then Exit Function
+
+    ' 接頭辞の末尾が数字なら階数
+    lastCh = Right$(prefix, 1)
+    If lastCh >= "0" And lastCh <= "9" Then
+        floors = CLng(lastCh)
+        kind = Left$(prefix, Len(prefix) - 1)
+    Else
+        kind = prefix
+    End If
+
+    ParseType = (Len(kind) > 0 And area > 0)
+End Function
+
+Private Function IsAllDigits(s As String) As Boolean
+    Dim i As Long, c As String
+    For i = 1 To Len(s)
+        c = Mid$(s, i, 1)
+        If c < "0" Or c > "9" Then Exit Function
+    Next i
+    IsAllDigits = (Len(s) > 0)
 End Function
 
 '---------------------------------------------------------------------
