@@ -4,4 +4,5 @@
 
 | app-name | 内容 | 状況 |
 |---|---|---|
-| `schedule-auto-assign` | 予定自動割り当てアプリ | 計画中(未着手) |
+| `schedule-auto-assign` | 予定自動割り当てアプリ | 実装完了・テスト待ち |
+| `construction-schedule` | ホームメーカー工程表の自動化マクロ | Phase 1 実装完了・テスト待ち |
