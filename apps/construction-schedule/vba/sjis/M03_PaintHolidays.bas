@@ -102,6 +102,8 @@ Cleanup:
 
     Dim msg As String
     msg = "日曜・祝日の塗りつぶしが完了しました。" & vbCrLf & vbCrLf & _
+          "対象シート : " & ws.Name & vbCrLf & _
+          "物件       : " & blocks.Count & " 件" & vbCrLf & vbCrLf & _
           "塗った   : " & painted & " セル" & vbCrLf & _
           "消した   : " & cleared & " セル" & vbCrLf & _
           "見送った : " & skipped & " セル（工程色が入っていたため）"

@@ -9,8 +9,10 @@ Option Explicit
 '=====================================================================
 
 ' --- シート名 -------------------------------------------------------
-Public Const SH_CHART   As String = "1"          ' 工程表本体
-Public Const SH_HOLIDAY As String = "M_祝日"
+' 工程表シートの名前はブックによって変わる（"1" だったり "工程表実データ" だったり）。
+' M_設定 シートの B1 で指定し、未設定なら既定名 → アクティブシートの順に探す。
+Public Const SH_CHART_DEFAULT As String = "1"    ' 工程表本体の既定名
+Public Const SH_SETTING As String = "M_設定"
 Public Const SH_VENDOR  As String = "M_業者"
 Public Const SH_EXCEPT  As String = "M_例外日"
 Public Const SH_TERM    As String = "M_工期"
@@ -44,15 +46,93 @@ Public Const CLR_BLACK      As Long = 0          ' RGB(0, 0, 0)      契約着�
 ' 工程表シートを取得する
 '---------------------------------------------------------------------
 Public Function ChartSheet() As Worksheet
+    Dim ws As Worksheet, nm As String
+    nm = ChartSheetName()
+
+    If Len(nm) = 0 Then
+        Err.Raise vbObjectError + 1, "ChartSheet", _
+                  "どのシートが工程表か分かりません。" & vbCrLf & vbCrLf & _
+                  "工程表シートを開いた状態で「ボタン_このシートを工程表に設定」を" & vbCrLf & _
+                  "実行するか、" & SH_SETTING & " シートの B1 にシート名を入力してください。" & vbCrLf & vbCrLf & _
+                  "このブックのシート:" & vbCrLf & SheetNameList()
+    End If
+
+    Set ws = ThisWorkbook.Worksheets(nm)
+    Set ChartSheet = ws
+End Function
+
+'---------------------------------------------------------------------
+' 工程表シートの名前を決める
+'
+' 1) M_設定 の B1 に入っていて、そのシートが実在すればそれ
+' 2) 既定名 "1" のシートがあればそれ
+' 3) いま開いているシートがマスタ以外ならそれ
+' どれにも当たらなければ空文字を返す。
+'---------------------------------------------------------------------
+Public Function ChartSheetName() As String
+    Dim ws As Worksheet, nm As String
+
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(SH_SETTING)
+    On Error GoTo 0
+    If Not ws Is Nothing Then nm = Trim$(CStr(ws.Range("B1").Value))
+
+    If Len(nm) > 0 Then
+        If SheetExists(nm) Then
+            ChartSheetName = nm
+            Exit Function
+        End If
+    End If
+
+    If SheetExists(SH_CHART_DEFAULT) Then
+        ChartSheetName = SH_CHART_DEFAULT
+        Exit Function
+    End If
+
+    If TypeName(ActiveSheet) = "Worksheet" Then
+        If Not IsMasterSheet(ActiveSheet.Name) Then
+            ChartSheetName = ActiveSheet.Name
+            Exit Function
+        End If
+    End If
+
+    ChartSheetName = ""
+End Function
+
+'---------------------------------------------------------------------
+' シートが存在するか
+'---------------------------------------------------------------------
+Public Function SheetExists(sheetName As String) As Boolean
     Dim ws As Worksheet
     On Error Resume Next
-    Set ws = ThisWorkbook.Worksheets(SH_CHART)
+    Set ws = ThisWorkbook.Worksheets(sheetName)
     On Error GoTo 0
-    If ws Is Nothing Then
-        Err.Raise vbObjectError + 1, "ChartSheet", _
-                  "工程表シート「" & SH_CHART & "」が見つかりません。"
-    End If
-    Set ChartSheet = ws
+    SheetExists = Not ws Is Nothing
+End Function
+
+'---------------------------------------------------------------------
+' マクロが作ったマスタシートか（工程表の候補から外すため）
+'---------------------------------------------------------------------
+Public Function IsMasterSheet(sheetName As String) As Boolean
+    Select Case sheetName
+        Case SH_SETTING, SH_VENDOR, SH_EXCEPT, SH_TERM, SH_TASK
+            IsMasterSheet = True
+        Case Else
+            IsMasterSheet = False
+    End Select
+End Function
+
+'---------------------------------------------------------------------
+' ブック内のシート名を一覧の文字列にする（エラーメッセージ用）
+'---------------------------------------------------------------------
+Public Function SheetNameList() As String
+    Dim ws As Worksheet, s As String
+    For Each ws In ThisWorkbook.Worksheets
+        s = s & "  ・" & ws.Name
+        If IsMasterSheet(ws.Name) Then s = s & "  （マスタ）"
+        s = s & vbCrLf
+    Next ws
+    SheetNameList = s
 End Function
 
 '---------------------------------------------------------------------

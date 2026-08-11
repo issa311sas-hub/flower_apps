@@ -113,7 +113,9 @@ Cleanup:
     End If
 
     Dim msg As String
-    msg = "色の塗り直しが完了しました。" & vbCrLf & "塗ったセル : " & painted
+    msg = "色の塗り直しが完了しました。" & vbCrLf & vbCrLf & _
+          "対象シート : " & ws.Name & vbCrLf & _
+          "塗ったセル : " & painted
     If warnCount > 0 Then msg = msg & vbCrLf & vbCrLf & "警告:" & vbCrLf & warned
     MsgBox msg, vbInformation, "色塗り直し"
 End Sub

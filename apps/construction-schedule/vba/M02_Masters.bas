@@ -13,8 +13,16 @@ Option Explicit
 ' すべてのマスタシートを作成／初期化する（初回セットアップ用）
 '---------------------------------------------------------------------
 Public Sub SetupMasters()
+    Dim activeName As String
+
+    ' マスタを作る前に、いま開いているシートを工程表の候補として覚えておく
+    If TypeName(ActiveSheet) = "Worksheet" Then
+        If Not IsMasterSheet(ActiveSheet.Name) Then activeName = ActiveSheet.Name
+    End If
+
     Application.ScreenUpdating = False
 
+    SetupSettingSheet activeName
     SetupVendorSheet
     SetupExceptionSheet
     SetupTermSheet
@@ -22,11 +30,60 @@ Public Sub SetupMasters()
 
     Application.ScreenUpdating = True
     MsgBox "マスタシートを作成しました。" & vbCrLf & vbCrLf & _
+           SH_SETTING & " : 工程表シートの指定" & vbCrLf & _
            SH_VENDOR & " : 業者と色の対応" & vbCrLf & _
            SH_EXCEPT & " : 物件ごとの祝日例外" & vbCrLf & _
            SH_TERM & " : 標準工期" & vbCrLf & _
-           SH_TASK & " : 工程データ（色塗りの元データ）", _
+           SH_TASK & " : 工程データ（色塗りの元データ）" & vbCrLf & vbCrLf & _
+           "工程表シート : " & IIf(Len(ChartSheetName()) > 0, ChartSheetName(), "（未設定）"), _
            vbInformation, "セットアップ完了"
+End Sub
+
+'---------------------------------------------------------------------
+' M_設定 : どのシートを工程表として扱うか
+'
+' ブックによって工程表シートの名前が違う（"1" / "工程表実データ" 等）ため、
+' 決め打ちにせずここで指定する。
+'---------------------------------------------------------------------
+Private Sub SetupSettingSheet(defaultChartName As String)
+    Dim ws As Worksheet, isNew As Boolean
+    Set ws = GetOrCreateSheet(SH_SETTING)
+    isNew = (Len(Trim$(CStr(ws.Cells(1, 1).Value))) = 0)
+
+    With ws.Range("A1")
+        .Value = "工程表シート名"
+        .Font.Bold = True
+        .Interior.Color = RGB(217, 217, 217)
+    End With
+    ws.Range("C1").Value = "← 色を塗る対象のシート。空欄なら開いているシートを使う"
+
+    If isNew And Len(defaultChartName) > 0 Then
+        ws.Range("B1").Value = defaultChartName
+    End If
+
+    ' ブック内のシート名から選べるようにする
+    Dim src As Worksheet, list As String
+    For Each src In ThisWorkbook.Worksheets
+        If Not IsMasterSheet(src.Name) Then
+            If Len(list) > 0 Then list = list & ","
+            list = list & src.Name
+        End If
+    Next src
+
+    On Error Resume Next
+    With ws.Range("B1").Validation
+        .Delete
+        If Len(list) > 0 And Len(list) < 255 Then
+            .Add Type:=xlValidateList, AlertStyle:=xlValidAlertStop, _
+                 Operator:=xlBetween, Formula1:=list
+            .IgnoreBlank = True
+            .InCellDropdown = True
+        End If
+    End With
+    On Error GoTo 0
+
+    ws.Columns("A:A").ColumnWidth = 18
+    ws.Columns("B:B").ColumnWidth = 24
 End Sub
 
 '---------------------------------------------------------------------

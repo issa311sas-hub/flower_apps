@@ -28,6 +28,34 @@ Public Sub ボタン_業者の重複を確認()
 End Sub
 
 '--- 補助 -------------------------------------------------------------
+
+'---------------------------------------------------------------------
+' いま開いているシートを、色を塗る対象として登録する
+'---------------------------------------------------------------------
+Public Sub ボタン_このシートを工程表に設定()
+    Dim ws As Worksheet, nm As String
+
+    If TypeName(ActiveSheet) <> "Worksheet" Then
+        MsgBox "ワークシートを開いた状態で実行してください。", vbExclamation
+        Exit Sub
+    End If
+
+    nm = ActiveSheet.Name
+    If IsMasterSheet(nm) Then
+        MsgBox "「" & nm & "」はマクロが使うマスタシートです。" & vbCrLf & _
+               "工程表のシートを開いてから実行してください。", vbExclamation
+        Exit Sub
+    End If
+
+    Set ws = GetOrCreateSheet(SH_SETTING)
+    ws.Range("A1").Value = "工程表シート名"
+    ws.Range("B1").Value = nm
+
+    MsgBox "工程表シートを「" & nm & "」に設定しました。" & vbCrLf & vbCrLf & _
+           "続けて「ボタン_レイアウトを検証」で座標を確認してください。", _
+           vbInformation, "工程表シートの設定"
+End Sub
+
 Public Sub ボタン_このセルは何()
     WhatIsThisCell
 End Sub
@@ -71,7 +99,8 @@ Public Sub ボタン_レイアウトを検証()
         If CLng(c) > maxC Then maxC = CLng(c): lastDate = colMap(c)
     Next c
 
-    msg = "■ 日付エリア" & vbCrLf & _
+    msg = "■ 対象シート : " & ws.Name & vbCrLf & vbCrLf & _
+          "■ 日付エリア" & vbCrLf & _
           "  日付の行     : " & ROW_DATE & " 行目" & vbCrLf & _
           "  日付の列数   : " & colMap.Count & " 列" & vbCrLf & _
           "  先頭         : " & minC & " 列目 = " & firstDate & vbCrLf & _
