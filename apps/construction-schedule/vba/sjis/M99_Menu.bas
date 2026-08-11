@@ -20,22 +20,22 @@ Public Sub ボタン_日祝を塗る()
 End Sub
 
 '---------------------------------------------------------------------
-' 基礎工事の工程を作る
+' 工程を作る（基礎・躯体）
 '
-' M_工程データ に 契約番号・工程「基礎」・開始日 を入れて実行すると、
+' M_工程データ に 契約番号 と 基礎開始日 を入れて実行すると、
 ' 工期の計算 → 終了日の確定 → 業者の割り当て → 色塗り まで行う。
+' 躯体開始日が空欄なら、基礎の終了日から自動で決まる。
 '---------------------------------------------------------------------
-Public Sub ボタン_基礎の工程を作る()
-    GenerateKisoPlan
+Public Sub ボタン_工程を作る()
+    GeneratePlan
 End Sub
 
-Public Sub ボタン_基礎の業者割当をクリア()
-    ClearKisoVendorAssignment
+Public Sub ボタン_工程の計算結果をクリア()
+    ClearPlanResults
 End Sub
 
-Public Sub ボタン_色を塗り直す()
-    RepaintTasks
-End Sub
+' 「色を塗り直す」は「工程を作る」に統合した。
+' 開始日を直して ボタン_工程を作る を実行すれば塗り直される。
 
 Public Sub ボタン_業者の重複を確認()
     CheckVendorConflicts
@@ -112,11 +112,17 @@ Public Sub ボタン_導入状態を確認()
     msg = msg & CheckSheet(SH_TERM, ng)
     msg = msg & CheckSheet(SH_TASK, ng)
 
-    msg = msg & vbCrLf & "■ " & SH_TERM & " の形式" & vbCrLf
+    msg = msg & vbCrLf & "■ シートの形式" & vbCrLf
     If TermSheetIsCurrent() Then
-        msg = msg & "  OK  計算式ベース（新形式）" & vbCrLf
+        msg = msg & "  OK  " & SH_TERM & " : 計算式ベース" & vbCrLf
     Else
-        msg = msg & "  NG  古い形式です。「ボタン_初期セットアップ」を実行してください" & vbCrLf
+        msg = msg & "  NG  " & SH_TERM & " : 古い形式。「ボタン_初期セットアップ」を実行してください" & vbCrLf
+        ng = ng + 1
+    End If
+    If TaskSheetIsCurrent() Then
+        msg = msg & "  OK  " & SH_TASK & " : 1物件1行の横並び" & vbCrLf
+    Else
+        msg = msg & "  NG  " & SH_TASK & " : 古い形式。「ボタン_初期セットアップ」を実行してください" & vbCrLf
         ng = ng + 1
     End If
 

@@ -327,6 +327,34 @@ Public Function TermDays(taskName As String, typeCode As String) As Long
 End Function
 
 '---------------------------------------------------------------------
+' M_工期 の「工程間インターバル」から日数（暦日）を読む
+'
+' 見出しの文字列で A 列を検索する。見つからなければ既定値を返す。
+'---------------------------------------------------------------------
+Public Function TermInterval(label As String, defaultDays As Long) As Long
+    Dim ws As Worksheet, r As Long, lastRow As Long
+
+    TermInterval = defaultDays
+
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(SH_TERM)
+    On Error GoTo 0
+    If ws Is Nothing Then Exit Function
+
+    lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+    For r = 2 To lastRow
+        If Trim$(CStr(ws.Cells(r, 1).Value)) = label Then
+            If IsNumeric(ws.Cells(r, 2).Value) Then
+                If Len(Trim$(CStr(ws.Cells(r, 2).Value))) > 0 Then
+                    TermInterval = CLng(ws.Cells(r, 2).Value)
+                End If
+            End If
+            Exit Function
+        End If
+    Next r
+End Function
+
+'---------------------------------------------------------------------
 ' 動作確認用 : タイプを入れると計算結果を表示する
 '---------------------------------------------------------------------
 Public Sub DebugTermDays()
@@ -351,48 +379,82 @@ End Sub
 '---------------------------------------------------------------------
 ' M_工程データ : 色塗りの元データ
 '
-' 工程表への色塗りは必ずこのシートを経由する。
-' 日程がずれたらここの日付だけ直し、「色を塗り直す」を実行する。
+' 1物件 = 1行。工程は横に 4 列ずつ並べる。
+' 同じ物件の基礎と躯体が横一列に並ぶので、担当の重なりを目で追いやすい。
+'
+'   A 契約番号 | B 邸名 | C-F 基礎 | G-J 躯体 | （以降 工程を足すごとに右へ）
+'
+' 入力するのは開始日だけでよい。終了日と色名は自動で入る。
 '---------------------------------------------------------------------
 Private Sub SetupTaskSheet()
     Dim ws As Worksheet, isNew As Boolean
+    Dim headers As Variant
+
     Set ws = GetOrCreateSheet(SH_TASK)
     isNew = (Len(Trim$(CStr(ws.Cells(1, 1).Value))) = 0)
 
-    WriteHeader ws, Array("契約番号", "邸名", "工程", "開始日", "終了日", "色名", "備考")
+    ' 旧形式（1行1工程の縦持ち）が残っていたら退避して作り直す
+    If Not isNew Then
+        If Not TaskSheetIsCurrent() Then
+            BackupSheet ws
+            Set ws = GetOrCreateSheet(SH_TASK)
+            isNew = True
+        End If
+    End If
+
+    headers = Array("契約番号", "邸名", _
+                    "基礎開始日", "基礎終了日", "色名", "備考", _
+                    "躯体開始日", "躯体終了日", "色名", "備考")
+    WriteHeader ws, headers
     If Not isNew Then Exit Sub
 
     ' 使い方が分かるようヘッダにコメントを付ける（新規作成時のみ）
     On Error Resume Next
-    ws.Range("E1").AddComment "「基礎の工程を作る」を実行すると自動で入ります"
-    ws.Range("F1").AddComment "空欄なら業者が自動で割り当てられます。" & _
+    ws.Range("C1").AddComment "ここだけ入力すれば足ります"
+    ws.Range("D1").AddComment "「工程を作る」で自動計算されます。" & _
+                              "手で入れるとその日付が優先されます"
+    ws.Range("E1").AddComment "空欄なら業者が自動で割り当てられます。" & _
                               "埋めておけばその業者で固定されます"
+    ws.Range("G1").AddComment "空欄なら基礎の終了日から自動で決まります"
     On Error GoTo 0
-
-    With ws.Range("C2:C2000").Validation
-        .Delete
-        .Add Type:=xlValidateList, AlertStyle:=xlValidAlertStop, _
-             Operator:=xlBetween, Formula1:="契約着工日,基礎,躯体,モルタル,外構"
-        .IgnoreBlank = True
-        .InCellDropdown = True
-    End With
 
     ' 色名は M_業者 シートのA列から選ぶ
     On Error Resume Next
     ThisWorkbook.Names.Add Name:="色名一覧", _
         RefersTo:="=" & SH_VENDOR & "!$A$2:$A$100"
     On Error GoTo 0
-    With ws.Range("F2:F2000").Validation
-        .Delete
-        .Add Type:=xlValidateList, AlertStyle:=xlValidAlertStop, _
-             Operator:=xlBetween, Formula1:="=色名一覧"
-        .IgnoreBlank = True
-        .InCellDropdown = True
-    End With
 
-    ws.Range("D2:E2000").NumberFormatLocal = "yyyy/mm/dd"
-    ws.Columns("A:G").ColumnWidth = 14
+    Dim k As Long, c0 As Long
+    For k = 1 To (UBound(headers) - LBound(headers) + 1 - TASK_COL_FIRST + 1) \ TASK_COL_WIDTH
+        c0 = TASK_COL_FIRST + (k - 1) * TASK_COL_WIDTH
+        ' 開始日・終了日
+        ws.Range(ws.Cells(2, c0), ws.Cells(2000, c0 + 1)).NumberFormatLocal = "yyyy/mm/dd"
+        ' 色名
+        With ws.Range(ws.Cells(2, c0 + 2), ws.Cells(2000, c0 + 2)).Validation
+            .Delete
+            .Add Type:=xlValidateList, AlertStyle:=xlValidAlertStop, _
+                 Operator:=xlBetween, Formula1:="=色名一覧"
+            .IgnoreBlank = True
+            .InCellDropdown = True
+        End With
+    Next k
+
+    ws.Columns("A:B").ColumnWidth = 14
+    ws.Columns("C:J").ColumnWidth = 12
 End Sub
+
+'---------------------------------------------------------------------
+' M_工程データ が新形式（1物件1行の横並び）かどうか
+'---------------------------------------------------------------------
+Public Function TaskSheetIsCurrent() As Boolean
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(SH_TASK)
+    On Error GoTo 0
+    If ws Is Nothing Then Exit Function
+
+    TaskSheetIsCurrent = (Trim$(CStr(ws.Cells(1, TASK_COL_FIRST).Value)) = "基礎開始日")
+End Function
 
 '---------------------------------------------------------------------
 ' 工程表から物件一覧を M_工程データ に取り込む（ひな形作成）
