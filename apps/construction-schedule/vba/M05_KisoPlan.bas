@@ -38,6 +38,20 @@ Public Sub GenerateKisoPlan()
     Dim warned As String, warnCount As Long
     Dim i As Long
 
+    ' 前提のシートが揃っているか先に確かめる
+    If Not SheetExists(SH_TASK) Then
+        MsgBox SH_TASK & " シートがありません。" & vbCrLf & _
+               "「ボタン_初期セットアップ」を実行してください。", vbExclamation
+        Exit Sub
+    End If
+    If Not TermSheetIsCurrent() Then
+        MsgBox SH_TERM & " シートが古い形式です。" & vbCrLf & vbCrLf & _
+               "「ボタン_初期セットアップ」を実行してください。" & vbCrLf & _
+               "古いシートは " & SH_TERM & "_旧1 という名前で残ります。", _
+               vbExclamation, "基礎の工程を作る"
+        Exit Sub
+    End If
+
     Set ws = ChartSheet()
     Set wsT = ThisWorkbook.Worksheets(SH_TASK)
     Set dateMap = BuildDateMap(ws)
@@ -45,7 +59,8 @@ Public Sub GenerateKisoPlan()
     Set kisoColors = LoadKisoVendors()
 
     If kisoColors.Count = 0 Then
-        MsgBox SH_VENDOR & " シートに、工種が「基礎」の色が1つもありません。", vbExclamation
+        MsgBox SH_VENDOR & " シートに、工種が「基礎」の色が1つもありません。" & vbCrLf & _
+               "E列（工種）に「基礎」と入っている行が必要です。", vbExclamation
         Exit Sub
     End If
 

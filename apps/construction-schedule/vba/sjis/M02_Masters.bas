@@ -166,12 +166,26 @@ End Sub
 Public Const TERM_ROW_FORMULA As Long = 2    ' 基準式ブロックの先頭行
 Public Const TERM_ROW_CORRECT As Long = 8    ' 種類補正ブロックの先頭行
 
+' 新形式であることの目印。A1 にこの文字が入っている。
+Private Const TERM_MARKER As String = "基準式"
+
 Private Sub SetupTermSheet()
     Dim ws As Worksheet, isNew As Boolean
     Dim i As Long, r As Long, rows As Variant
 
     Set ws = GetOrCreateSheet(SH_TERM)
     isNew = (Len(Trim$(CStr(ws.Cells(1, 1).Value))) = 0)
+
+    ' 旧形式（坪帯ごとの一覧表）が残っていたら、退避して作り直す。
+    ' 計算式は旧形式では表現できないため、そのままでは工期を計算できない。
+    If Not isNew Then
+        If Not TermSheetIsCurrent() Then
+            BackupSheet ws
+            Set ws = GetOrCreateSheet(SH_TERM)
+            isNew = True
+        End If
+    End If
+
     If Not isNew Then Exit Sub
 
     ' --- 基準式（C 種基準） ---
@@ -223,6 +237,42 @@ Private Sub SetupTermSheet()
     ws.Cells(r + 4, 5).Value = "間に穴明け1日が入る"
 
     ws.Columns("A:E").AutoFit
+End Sub
+
+'---------------------------------------------------------------------
+' M_工期 が新形式（計算式ベース）かどうか
+'
+' 旧版のマクロで作られた坪帯ごとの一覧表だと工期を計算できないため、
+' 実行前にこれで判定する。
+'---------------------------------------------------------------------
+Public Function TermSheetIsCurrent() As Boolean
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(SH_TERM)
+    On Error GoTo 0
+    If ws Is Nothing Then Exit Function
+
+    If InStr(1, CStr(ws.Range("A1").Value), TERM_MARKER) = 0 Then Exit Function
+    If Trim$(CStr(ws.Cells(TERM_ROW_FORMULA + 1, 1).Value)) <> "基礎" Then Exit Function
+
+    TermSheetIsCurrent = True
+End Function
+
+'---------------------------------------------------------------------
+' シートを退避する（M_工期_旧1 のように連番を付けて改名）
+'---------------------------------------------------------------------
+Private Sub BackupSheet(ws As Worksheet)
+    Dim base As String, nm As String, i As Long
+    base = ws.Name & "_旧"
+    i = 1
+    Do
+        nm = base & i
+        i = i + 1
+    Loop While SheetExists(nm)
+
+    On Error Resume Next
+    ws.Name = nm
+    On Error GoTo 0
 End Sub
 
 '---------------------------------------------------------------------

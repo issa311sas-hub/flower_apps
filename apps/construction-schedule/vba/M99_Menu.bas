@@ -92,6 +92,61 @@ Public Sub ボタン_日祝の塗りを全部消す()
 End Sub
 
 '=====================================================================
+' 導入チェック
+'
+' マスタシートの不足・古い形式を検出する。
+' うまく動かないときは、まずこれを実行する。
+'
+' モジュールの入れ忘れはここでは検出できない。VBA はプロジェクト全体を
+' コンパイルするため、1つでも欠けていると実行時に
+' 「Sub または Function が定義されていません」で止まる。
+' そのエラーが出たら、7モジュールすべてを入れ直すこと。
+'=====================================================================
+Public Sub ボタン_導入状態を確認()
+    Dim msg As String, ng As Long
+
+    msg = "■ マスタシート" & vbCrLf
+    msg = msg & CheckSheet(SH_SETTING, ng)
+    msg = msg & CheckSheet(SH_VENDOR, ng)
+    msg = msg & CheckSheet(SH_EXCEPT, ng)
+    msg = msg & CheckSheet(SH_TERM, ng)
+    msg = msg & CheckSheet(SH_TASK, ng)
+
+    msg = msg & vbCrLf & "■ " & SH_TERM & " の形式" & vbCrLf
+    If TermSheetIsCurrent() Then
+        msg = msg & "  OK  計算式ベース（新形式）" & vbCrLf
+    Else
+        msg = msg & "  NG  古い形式です。「ボタン_初期セットアップ」を実行してください" & vbCrLf
+        ng = ng + 1
+    End If
+
+    msg = msg & vbCrLf & "■ 工程表シート" & vbCrLf
+    If Len(ChartSheetName()) > 0 Then
+        msg = msg & "  OK  " & ChartSheetName() & vbCrLf
+    Else
+        msg = msg & "  NG  未設定。「ボタン_このシートを工程表に設定」を実行してください" & vbCrLf
+        ng = ng + 1
+    End If
+
+    If ng = 0 Then
+        msg = msg & vbCrLf & "すべて揃っています。"
+    Else
+        msg = msg & vbCrLf & ng & " 件の問題があります。上の NG を解消してください。"
+    End If
+
+    MsgBox msg, IIf(ng = 0, vbInformation, vbExclamation), "導入状態の確認"
+End Sub
+
+Private Function CheckSheet(nm As String, ByRef ng As Long) As String
+    If SheetExists(nm) Then
+        CheckSheet = "  OK  " & nm & vbCrLf
+    Else
+        CheckSheet = "  NG  " & nm & " がありません" & vbCrLf
+        ng = ng + 1
+    End If
+End Function
+
+'=====================================================================
 ' レイアウト検証
 '
 ' M00_Config の座標定数が、実際のシートと合っているかを確認する。
