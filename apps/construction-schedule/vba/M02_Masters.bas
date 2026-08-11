@@ -130,13 +130,13 @@ Private Sub SetupTermSheet()
     ws.Cells(r, 1).Font.Bold = True
     ws.Cells(r + 1, 1).Value = "3階建て"
     ws.Cells(r + 1, 5).Value = 2
-    ws.Cells(r + 1, 7).Value = "躯体に加算（実測: R3F36=6日 vs C2E36=3〜4日）"
+    ws.Cells(r + 1, 7).Value = "躯体に加算（実測: R3F36=6日 vs C2E36=3～4日）"
     ws.Cells(r + 2, 1).Value = "契約着工日→基礎着手"
     ws.Cells(r + 2, 4).Value = 2
-    ws.Cells(r + 2, 7).Value = "暦日。実測 1〜7日、中央値2日"
+    ws.Cells(r + 2, 7).Value = "暦日。実測 1～7日、中央値2日"
     ws.Cells(r + 3, 1).Value = "基礎完了→躯体着手"
     ws.Cells(r + 3, 4).Value = 4
-    ws.Cells(r + 3, 7).Value = "暦日。実測 2〜11日、中央値4日"
+    ws.Cells(r + 3, 7).Value = "暦日。実測 2～11日、中央値4日"
     ws.Cells(r + 4, 1).Value = "躯体完了→コテ着手"
     ws.Cells(r + 4, 4).Value = 2
     ws.Cells(r + 4, 7).Value = "暦日。間に穴明け1日が入る"

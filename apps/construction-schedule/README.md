@@ -35,16 +35,23 @@ docs/
   02-duration-hypothesis.md    ← 標準工期の対応表（仮説）※工事店さま確認用
   03-open-questions.md         ← 確認事項リスト
   setup-guide.md               ← セットアップ手順
-vba/
+vba/                           ← UTF-8。編集するのはこちら
   M00_Config.bas               ← 座標定数と共通ヘルパー
   M01_Holiday.bas              ← 祝日判定（計算で判定。外部データ不要）
   M02_Masters.bas              ← マスタシートの生成
   M03_PaintHolidays.bas        ← 日祝の自動塗りつぶし
   M04_Repaint.bas              ← 色の塗り直し・業者重複チェック
   M99_Menu.bas                 ← ボタン用エントリポイント
+  sjis/                        ← Shift-JIS。Excel に取り込むのはこちら（自動生成）
 tools/
   analyze_chart.py             ← 過去の工程表を解析して工期を実測する
+  make_import_bas.py           ← vba/ から vba/sjis/ を生成する
 ```
+
+> **Excel に取り込むときは `vba/sjis/` を使ってください。**
+> VBE の「ファイルのインポート」は日本語版 Windows では Shift-JIS として
+> 読むため、UTF-8 の `vba/` を取り込むと日本語がすべて文字化けします。
+> `vba/` を編集したら `python tools/make_import_bas.py` で作り直します。
 
 ## セットアップ
 
