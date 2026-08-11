@@ -9,6 +9,15 @@ Option Explicit
 ' 既存シートがある場合、見出しだけ整えて中身は消さない。
 '=====================================================================
 
+' --- M_工期 シートの構造 --------------------------------------------
+' VBA はモジュールレベルの宣言を先頭にまとめる必要があるため、
+' 使う場所（SetupTermSheet / TermDays）から離れているがここに置く。
+Public Const TERM_ROW_FORMULA As Long = 2    ' 基準式ブロックの先頭行
+Public Const TERM_ROW_CORRECT As Long = 8    ' 種類補正ブロックの先頭行
+
+' 新形式であることの目印。A1 にこの文字が入っている。
+Private Const TERM_MARKER As String = "基準式"
+
 '---------------------------------------------------------------------
 ' すべてのマスタシートを作成／初期化する（初回セットアップ用）
 '---------------------------------------------------------------------
@@ -162,13 +171,9 @@ End Sub
 '
 ' 基準日数・坪係数は C 種 29 件の回帰、種類補正はその残差から求めた。
 ' 工事店さまの確認後にこの表を直せば、以降の自動計算に反映される。
+'
+' 行位置の定数 TERM_ROW_FORMULA / TERM_ROW_CORRECT はモジュール冒頭にある。
 '---------------------------------------------------------------------
-Public Const TERM_ROW_FORMULA As Long = 2    ' 基準式ブロックの先頭行
-Public Const TERM_ROW_CORRECT As Long = 8    ' 種類補正ブロックの先頭行
-
-' 新形式であることの目印。A1 にこの文字が入っている。
-Private Const TERM_MARKER As String = "基準式"
-
 Private Sub SetupTermSheet()
     Dim ws As Worksheet, isNew As Boolean
     Dim i As Long, r As Long, rows As Variant

@@ -15,6 +15,7 @@ vba/ を編集したら、必ずこれを実行して vba/sjis/ を作り直す�
 """
 
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -25,9 +26,46 @@ DST = os.path.join(SRC, "sjis")
 NEWLINE = "\r\n"
 
 
+PROC_RE = re.compile(r"^\s*(Public\s+|Private\s+|Friend\s+)?(Sub|Function|Property)\s", re.I)
+END_RE = re.compile(r"^\s*End\s+(Sub|Function|Property)\s*$", re.I)
+DECL_RE = re.compile(r"^\s*(Public|Private|Dim|Global)\s+(Const\s+|WithEvents\s+)?[A-Za-z_]", re.I)
+
+
+def check_declarations(path, text):
+    """モジュールレベルの宣言がプロシージャより後ろに無いか確かめる。
+
+    VBA は Const / Dim などのモジュールレベル宣言を冒頭の宣言セクションに
+    まとめる必要がある。途中に書くと
+    「End Sub、End Function または End Property 以降には、コメントのみが
+    記述できます」というコンパイルエラーになる。
+    Excel を開くまで気づけないので、ここで止める。
+    """
+    inside = False
+    seen_proc = False
+    for i, line in enumerate(text.split("\n"), 1):
+        s = line.strip()
+        if not s or s.startswith("'"):
+            continue
+        if PROC_RE.match(line):
+            inside, seen_proc = True, True
+            continue
+        if END_RE.match(line):
+            inside = False
+            continue
+        if not inside and seen_proc and DECL_RE.match(line):
+            raise SystemExit(
+                f"{os.path.basename(path)} の {i} 行目にモジュールレベルの宣言があります:\n"
+                f"    {s}\n"
+                f"VBA では Const / Dim はモジュール冒頭の宣言セクションにまとめる必要があります。\n"
+                f"このままでは Excel でコンパイルエラーになります。"
+            )
+
+
 def convert(path, out_path):
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
+
+    check_declarations(path, text)
 
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = NEWLINE.join(text.split("\n"))
