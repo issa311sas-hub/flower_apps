@@ -6,7 +6,7 @@
 
 - 「予定自動割り当てアプリ」(`apps/schedule-auto-assign/`) 実装完了・テスト待ち。
 - 「ホームメーカー工程表の自動化マクロ」(`apps/construction-schedule/`) Phase 1 実装完了。
-  Phase 2 は工事店さまへの確認事項の回答待ち（`docs/03-open-questions.md`)。
+  Phase 1 は v13（業者をシートから読む・祝日は稼働日）まで実装済み。Phase 2 は工事店さまへの確認事項の回答待ち（`docs/03-open-questions.md`)。
 
 ## 開発方針
 

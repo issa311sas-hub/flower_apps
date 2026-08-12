@@ -5,10 +5,13 @@ Option Explicit
 ' M03_PaintHolidays : 日曜・祝日の自動塗りつぶし
 '
 ' ・日曜・祝日・お盆・年末年始を黄緑 RGB(153,204,0) で塗る
+'   祝日は稼働日だが、日程を確認したいので色は塗る
 ' ・物件ごとの例外を M_例外日 シートで受け付ける
-'   （その日の判定が反転する。判定は M01_Holiday に集約してある）
-' ・すでに工程色が入っているセルは塗りつぶさず、報告だけする
-'   （実データに、日曜へ社内行事の色を載せている例があるため）
+'   （例外で休みにした平日も塗る。判定は M01_Holiday に集約してある）
+' ・すでに色が入っているセルには触らない（工程色を消さない）
+'
+' 塗った日祝を剥がす処理は持たない。日祝の上に工事があるときは、
+' このあとに走る工程の色塗りが黄緑を上書きする。
 '
 ' 単独のボタンは用意していない。色を塗る処理（工程表に色を塗る・初期セットアップ）
 ' から PaintHolidaysCore が呼ばれ、そのついでに塗られる。
@@ -27,7 +30,7 @@ Public Function PaintHolidaysCore(ws As Worksheet) As String
     Dim c As Variant, d As Date
     Dim r As Long, off As Long
     Dim eff As Boolean
-    Dim painted As Long, cleared As Long, skipped As Long
+    Dim painted As Long, skipped As Long
     Dim skipList As String, skipCount As Long
     Dim cell As Range
 
@@ -49,20 +52,19 @@ Public Function PaintHolidaysCore(ws As Worksheet) As String
         d = colMap(c)
 
         For Each b In blocks
-            eff = IsNonWorkingDayFor(BlockKey(b), d)
+            eff = IsPaintDayFor(BlockKey(b), d)
+            If eff Then
+                For off = 0 To BLOCK_ROWS - 1
+                    r = CLng(b(0)) + off
+                    Set cell = ws.Cells(r, CLng(c))
 
-            For off = 0 To BLOCK_ROWS - 1
-                r = CLng(b(0)) + off
-                Set cell = ws.Cells(r, CLng(c))
-
-                If eff Then
                     If cell.Interior.Pattern = xlNone Then
                         cell.Interior.Color = CLR_HOLIDAY
                         painted = painted + 1
                     ElseIf cell.Interior.Color = CLR_HOLIDAY Then
                         ' 既に塗られている。何もしない
                     Else
-                        ' 工程色が入っている。上書きせず報告に回す
+                        ' 別の色が入っている。上書きせず報告に回す
                         skipped = skipped + 1
                         If skipCount < 20 Then
                             skipList = skipList & "  " & b(1) & " / " & _
@@ -70,15 +72,8 @@ Public Function PaintHolidaysCore(ws As Worksheet) As String
                             skipCount = skipCount + 1
                         End If
                     End If
-                Else
-                    If cell.Interior.Pattern <> xlNone Then
-                        If cell.Interior.Color = CLR_HOLIDAY Then
-                            cell.Interior.Pattern = xlNone
-                            cleared = cleared + 1
-                        End If
-                    End If
-                End If
-            Next off
+                Next off
+            End If
         Next b
     Next c
 
@@ -92,9 +87,9 @@ Cleanup:
 
     Dim msg As String
     msg = "日祝（日曜・祝日・お盆・年末年始）" & vbCrLf & _
-          "  塗った " & painted & " セル / 消した " & cleared & " セル"
+          "  塗った " & painted & " セル"
     If skipped > 0 Then
-        msg = msg & " / 見送り " & skipped & " セル（工程色が入っていたため）" & vbCrLf & _
+        msg = msg & " / 見送り " & skipped & " セル（別の色が入っていたため）" & vbCrLf & _
               "  見送った箇所（先頭20件）:" & vbCrLf & skipList
         If skipped > skipCount Then msg = msg & "    ... 他 " & (skipped - skipCount) & " 件" & vbCrLf
     End If
@@ -110,12 +105,8 @@ Private Sub PaintHeaderHolidays(ws As Worksheet, colMap As Object)
         d = colMap(c)
         For r = ROW_DATE To ROW_DATE + 1
             With ws.Cells(r, CLng(c)).Interior
-                If IsNonWorkingDay(d) Then
+                If IsPaintDay(d) Then
                     If .Pattern = xlNone Then .Color = CLR_HOLIDAY
-                Else
-                    If .Pattern <> xlNone Then
-                        If .Color = CLR_HOLIDAY Then .Pattern = xlNone
-                    End If
                 End If
             End With
         Next r
@@ -206,10 +197,7 @@ Public Sub WhatIsThisCell()
     Next b
 
     Dim reason As String
-    If IsDate(d) Then
-        reason = NonWorkingReason(CDate(d))
-        If Len(reason) = 0 Then reason = "稼働日"
-    End If
+    If IsDate(d) Then reason = DayNote(CDate(d))
 
     MsgBox "セル : " & Selection.Address(False, False) & vbCrLf & _
            "日付 : " & d & "  (" & reason & ")" & vbCrLf & _

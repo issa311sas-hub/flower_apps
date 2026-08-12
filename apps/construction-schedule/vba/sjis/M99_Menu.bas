@@ -224,10 +224,15 @@ Public Sub ボタン_レイアウトを検証()
     For Each b In blocks
         i = i + 1
         If i > 5 Then Exit For
-        msg = msg & "    " & b(0) & "行目  " & b(1) & "  [" & b(2) & "]  " & b(3) & vbCrLf
+        msg = msg & "    " & b(0) & "行目  " & b(1) & "  [" & b(2) & "]  " & b(3) & vbCrLf & _
+              "      基礎業者 " & IIf(Len(Trim$(CStr(b(4)))) > 0, b(4), "（空）") & _
+              " / 躯体業者 " & IIf(Len(Trim$(CStr(b(5)))) > 0, b(5), "（空）") & vbCrLf & _
+              "      本着日 " & IIf(IsDate(b(6)), Format$(b(6), "yyyy/mm/dd"), "（空）") & _
+              " / 納期 " & IIf(IsDate(b(7)), Format$(b(7), "yyyy/mm/dd"), "（空）") & vbCrLf
     Next b
 
-    msg = msg & vbCrLf & "この内容が実際のシートと合っていれば、座標設定は正しいです。"
+    msg = msg & vbCrLf & "この内容が実際のシートと合っていれば、座標設定は正しいです。" & vbCrLf & _
+          "業者名や本着日がずれている場合は M00_Config の列番号を直してください。"
     MsgBox msg, vbInformation, "レイアウト検証"
     Exit Sub
 

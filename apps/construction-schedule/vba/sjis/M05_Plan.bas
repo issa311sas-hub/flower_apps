@@ -10,22 +10,33 @@ Option Explicit
 '   3 モルタル / 4 防水 / 5 断熱 / 6 木工事 / 7 仕上げ … 順次追加
 '
 ' やること:
-'   1. M_工程データ（1物件1行）から開始日を読む
-'   2. 工程表のタイプ（例 C2E42）から坪数と建物種類を取り出す
-'   3. M_工期 の式で稼働日数を計算し、終了日を確定する
-'   4. 同じ業者が同じ日に2現場へ入らないように業者を割り当てる
-'   5. 工程表に色を塗る
+'   1. 工程表の「基礎業者」「躯体業者」欄から、その物件の業者を読む
+'   2. M_工程データ（1物件1行）から開始日を読む（空欄なら本着日を使う）
+'   3. 工程表のタイプ（例 C2E42）から坪数と建物種類を取り出す
+'   4. M_工期 の式で稼働日数を計算し、終了日を確定する
+'   5. 同じ業者が2現場に重ならないよう、後の現場を後ろへずらす
+'   6. 工程表に色を塗る
+'
+' ■ 業者はシートで決まっている（自動割り当てはしない）
+' 業者名は工程表のお客様名の右（建設地の右2列）に書いてある。
+' その名前を M_業者 の「業者名」で引いて色を決める。
+'
+' ■ 業者の順番はシートの上から
+' 1業者は同時に2現場へ入れない。シートの上にある物件を優先し、
+' 前の現場が終わった翌営業日から次の現場に入る。
+' 次の現場の開始予定日が前の現場の完了より前なら、開始日を後ろへずらす。
+' 前倒しはしない（空きがあっても予定日より早く始めない）。
 '
 ' ■ 空欄のところだけ埋める
 ' 会社やお客様の都合で日程を人が決めることがあるため、
 ' すでに値が入っているセルには一切触らない。計算して書き込むのは空欄だけ。
 '
-'   開始日 … 入っていればその日を使う。空欄で2番目以降なら前工程から決める
+'   開始日 … 入っていればその日を使う。空欄なら本着日／前工程から決める
 '   終了日 … 入っていればその日を使う。空欄なら工期の式で計算する
-'   色名   … 入っていればその業者で固定。空欄なら空いている業者を割り当てる
+'   色名   … 入っていればそれを使う。空欄なら業者名から引いて書き込む
 '   調整   … 終了日を計算するときだけ使う日数の増減
 '
-' 手入力の日程も「業者の空き」として数えるので、自動割り当てが人の予定と被らない。
+' 手入力の開始日が前の現場と重なるときは、書き換えずに警告で知らせる。
 '
 ' 日程を計算し直したいときは、その行の終了日を消してから実行する。
 ' 行をまとめて消すなら ClearPlanResultsForSelection / ClearPlanResults を使う。
@@ -72,12 +83,12 @@ End Function
 '=====================================================================
 Public Sub CalculatePlan()
     Dim ws As Worksheet, wsT As Worksheet
-    Dim blockRow As Object, blockType As Object, blockName As Object
-    Dim occupied As Object, prevEnd As Object, result As Object
+    Dim info As Object, order As Collection, taskRow As Object
+    Dim prevEnd As Object, result As Object
     Dim k As Long
     Dim warned As String, warnCount As Long
-    Dim unassigned As String, unassignedCount As Long
-    Dim derived As Long, outOfRange As Long, kept As Long
+    Dim conflicts As String, conflictCount As Long
+    Dim derived As Long, outOfRange As Long, kept As Long, delayed As Long
 
     If Not PreflightOK() Then Exit Sub
 
@@ -87,9 +98,9 @@ Public Sub CalculatePlan()
 
     Set ws = ChartSheet()
     Set wsT = ThisWorkbook.Worksheets(SH_TASK)
-    LoadBlocks ws, blockRow, blockType, blockName
+    LoadBlocks ws, info, order
+    Set taskRow = BuildTaskRowMap(wsT)
 
-    Set occupied = CreateObject("Scripting.Dictionary")
     Set prevEnd = CreateObject("Scripting.Dictionary")
     Set result = CreateObject("Scripting.Dictionary")
 
@@ -99,11 +110,9 @@ Public Sub CalculatePlan()
 
     ' 工程は順番に処理する。躯体は基礎の結果（終了日）を使うため。
     For k = 1 To TASK_COUNT
-        PlanOneTask k, wsT, _
-                    blockRow, blockType, blockName, _
-                    occupied, prevEnd, result, _
-                    warned, warnCount, _
-                    unassigned, unassignedCount, derived, outOfRange, kept
+        PlanOneTask k, wsT, info, order, taskRow, prevEnd, result, _
+                    warned, warnCount, conflicts, conflictCount, _
+                    derived, outOfRange, kept, delayed
     Next k
 
 Cleanup:
@@ -115,8 +124,8 @@ Cleanup:
         Exit Sub
     End If
 
-    ShowReport ws, result, blockName, derived, outOfRange, kept, _
-               unassigned, unassignedCount, warned, warnCount
+    ShowReport ws, result, info, derived, outOfRange, kept, delayed, _
+               conflicts, conflictCount, warned, warnCount
 End Sub
 
 '=====================================================================
@@ -128,11 +137,11 @@ End Sub
 Public Sub PaintPlan()
     Dim ws As Worksheet, wsT As Worksheet
     Dim dateMap As Object, colorMap As Object, vendors As Object
-    Dim blockRow As Object, blockType As Object, blockName As Object
+    Dim info As Object, order As Collection, taskRow As Object
     Dim k As Long, r As Long, lastRow As Long, c0 As Long
     Dim contract As String, colorName As String
     Dim dFrom As Date, dTo As Date
-    Dim painted As Long, skipped As Long
+    Dim painted As Long, skipped As Long, marks As Long
     Dim holidayMsg As String
     Dim warned As String, warnCount As Long
 
@@ -145,13 +154,15 @@ Public Sub PaintPlan()
     Application.Calculation = xlCalculationManual
     On Error GoTo Cleanup
 
-    ' 日祝を先に塗る。工程色は稼働日にしか塗らないので、あとから重ならない。
+    ' 1) 日祝を先に塗る。祝日は稼働日なので、このあと工程色が上書きする。
     holidayMsg = PaintHolidaysCore(ws)
 
     Set dateMap = BuildDateMap(ws)
     Set colorMap = LoadColorMap()
-    LoadBlocks ws, blockRow, blockType, blockName
+    LoadBlocks ws, info, order
     lastRow = wsT.Cells(wsT.Rows.Count, TASK_COL_CONTRACT).End(xlUp).Row
+
+    ' 2) 工程の色を塗る
 
     For k = 1 To TASK_COUNT
         c0 = TaskFirstCol(k)
@@ -161,10 +172,10 @@ Public Sub PaintPlan()
         For r = 2 To lastRow
             contract = Trim$(CStr(wsT.Cells(r, TASK_COL_CONTRACT).Value))
             If Len(contract) = 0 Then GoTo NextRow
-            If Not blockRow.Exists(contract) Then GoTo NextRow
+            If Not info.Exists(contract) Then GoTo NextRow
 
             ' その工程の古い色をいったん消す（外構や日祝には触らない）
-            ClearTaskPaint ws, CLng(blockRow(contract)), dateMap, vendors, colorMap, TaskRowOffsets(k)
+            ClearTaskPaint ws, BlockRowOf(info, contract), dateMap, vendors, colorMap, TaskRowOffsets(k)
 
             colorName = Trim$(CStr(wsT.Cells(r, c0 + TASK_OFS_COLOR).Value))
             If Len(colorName) = 0 Then GoTo NextRow
@@ -180,7 +191,7 @@ Public Sub PaintPlan()
 
             dFrom = CDate(wsT.Cells(r, c0 + TASK_OFS_START).Value)
             dTo = CDate(wsT.Cells(r, c0 + TASK_OFS_END).Value)
-            painted = painted + PaintTask(ws, CLng(blockRow(contract)), dateMap, _
+            painted = painted + PaintTask(ws, BlockRowOf(info, contract), dateMap, _
                                           dFrom, dTo, CLng(colorMap(colorName)), _
                                           TaskRowOffsets(k), contract)
 
@@ -190,6 +201,9 @@ NextRow:
         Next r
 NextTask:
     Next k
+
+    ' 3) 本着日（黒）とお客様納期（青）を縦に塗る。工程色より上に載せる。
+    marks = PaintMilestones(ws, info, order, dateMap)
 
 Cleanup:
     Application.Calculation = xlCalculationAutomatic
@@ -203,7 +217,8 @@ Cleanup:
     Dim msg As String
     msg = "工程表に色を塗りました。" & vbCrLf & vbCrLf & _
           "対象シート : " & ws.Name & vbCrLf & _
-          "工程の色   : " & painted & " セル" & vbCrLf & vbCrLf & _
+          "工程の色   : " & painted & " セル" & vbCrLf & _
+          "本着日・納期 : " & marks & " セル" & vbCrLf & vbCrLf & _
           holidayMsg
     If skipped > 0 Then
         msg = msg & vbCrLf & vbCrLf & _
@@ -220,20 +235,22 @@ End Sub
 ' 工程を1つ処理する
 '---------------------------------------------------------------------
 Private Sub PlanOneTask(k As Long, wsT As Worksheet, _
-                        blockRow As Object, blockType As Object, blockName As Object, _
-                        occupied As Object, prevEnd As Object, result As Object, _
+                        info As Object, order As Collection, taskRow As Object, _
+                        prevEnd As Object, result As Object, _
                         ByRef warned As String, ByRef warnCount As Long, _
-                        ByRef unassigned As String, ByRef unassignedCount As Long, _
-                        ByRef derived As Long, ByRef outOfRange As Long, ByRef kept As Long)
+                        ByRef conflicts As String, ByRef conflictCount As Long, _
+                        ByRef derived As Long, ByRef outOfRange As Long, _
+                        ByRef kept As Long, ByRef delayed As Long)
 
-    Dim vendors As Object
-    Dim plan() As Variant, n As Long, cap As Long
-    Dim r As Long, lastRow As Long, c0 As Long
-    Dim contract As String, typeCode As String, colorName As String
-    Dim dStart As Date, dEnd As Date
-    Dim days As Long, i As Long
+    Dim vendors As Object, nameMap As Object, vendorFree As Object, vendorLast As Object
+    Dim r As Long, c0 As Long
+    Dim key As Variant, contract As String, typeCode As String
+    Dim vendorName As String, colorName As String, writtenColor As String
+    Dim dWish As Date, dStart As Date, dEnd As Date
+    Dim days As Long
     Dim kind As String, floors As Long, area As Long
-    Dim taskLabel As String
+    Dim taskLabel As String, startFixed As Boolean
+    Dim v As Variant
 
     taskLabel = TaskName(k)
     c0 = TaskFirstCol(k)
@@ -245,38 +262,88 @@ Private Sub PlanOneTask(k As Long, wsT As Worksheet, _
         Exit Sub
     End If
 
-    lastRow = wsT.Cells(wsT.Rows.Count, TASK_COL_CONTRACT).End(xlUp).Row
-    cap = lastRow
-    If cap < 2 Then cap = 2
-    ReDim plan(1 To cap, 1 To 7)
-    n = 0
+    Set nameMap = BuildVendorNameMap(vendors)
+    Set vendorFree = CreateObject("Scripting.Dictionary")   ' 色名 -> 次に入れる日
+    Set vendorLast = CreateObject("Scripting.Dictionary")   ' 色名 -> 直前の現場の契約番号
 
-    '--- 1) 行を集める ------------------------------------------------
-    For r = 2 To lastRow
-        contract = Trim$(CStr(wsT.Cells(r, TASK_COL_CONTRACT).Value))
-        If Len(contract) = 0 Then GoTo NextRow
-        If Not blockRow.Exists(contract) Then
-            If k = 1 Then
-                warned = warned & "  " & contract & " : 工程表に見つかりません（" & r & "行目）" & vbCrLf
+    ' シートの上から順に処理する。これが業者の優先順位そのもの。
+    For Each key In order
+        contract = CStr(key)
+        v = info(contract)
+
+        If Not taskRow.Exists(contract) Then GoTo NextProp
+        r = CLng(taskRow(contract))
+
+        '--- 業者を決める --------------------------------------------
+        vendorName = Trim$(CStr(v(IIf(k = 1, 4, 5))))
+        writtenColor = Trim$(CStr(wsT.Cells(r, c0 + TASK_OFS_COLOR).Value))
+
+        If Len(writtenColor) > 0 Then
+            ' 手入力の色名を尊重する
+            colorName = writtenColor
+            If Not vendors.Exists(colorName) Then
+                warned = warned & "  " & InfoName(info, contract) & " [" & taskLabel & "] : 色名「" & _
+                         colorName & "」は" & taskLabel & "の業者ではありません" & vbCrLf
                 warnCount = warnCount + 1
+                GoTo NextProp
             End If
-            GoTo NextRow
+        ElseIf Len(vendorName) = 0 Then
+            warned = warned & "  " & InfoName(info, contract) & " [" & taskLabel & "] : " & _
+                     "工程表に" & taskLabel & "業者が書かれていません" & vbCrLf
+            warnCount = warnCount + 1
+            GoTo NextProp
+        ElseIf nameMap.Exists(NormalizeName(vendorName)) Then
+            colorName = CStr(nameMap(NormalizeName(vendorName)))
+        Else
+            warned = warned & "  " & InfoName(info, contract) & " [" & taskLabel & "] : 業者「" & _
+                     vendorName & "」が " & SH_VENDOR & " にありません（工種" & taskLabel & "）" & vbCrLf
+            warnCount = warnCount + 1
+            GoTo NextProp
         End If
 
-        '--- 開始日を決める ------------------------------------------
+        '--- 希望の開始日を決める ------------------------------------
         ' 入っていればその日を使う（人が決めた日程を尊重する）。
-        ' 空欄で2番目以降の工程なら、前工程の終了日から決めて書き込む。
+        ' 空欄なら、基礎は本着日から、2番目以降は前工程の終了日から決める。
+        startFixed = False
         If IsDate(wsT.Cells(r, c0 + TASK_OFS_START).Value) Then
-            dStart = AddWorkingDaysFor(contract, CDate(wsT.Cells(r, c0 + TASK_OFS_START).Value), 0)
+            dWish = CDate(wsT.Cells(r, c0 + TASK_OFS_START).Value)
+            startFixed = True
         ElseIf k > 1 And prevEnd.Exists(contract) Then
-            dStart = AddWorkingDaysFor(contract, CDate(prevEnd(contract)) + TaskInterval(k), 0)
+            dWish = CDate(prevEnd(contract)) + TaskInterval(k)
+        ElseIf k = 1 And IsDate(v(6)) Then
+            dWish = CDate(v(6))          ' 本着日
+        Else
+            GoTo NextProp                ' 開始日も本着日も無い＝まだ計画対象外
+        End If
+        dStart = AddWorkingDaysFor(contract, dWish, 0)
+
+        '--- 業者の空きに合わせて後ろへずらす ------------------------
+        ' 前の現場が終わった翌営業日から。前倒しはしない。
+        If vendorFree.Exists(colorName) Then
+            If CDate(vendorFree(colorName)) > dStart Then
+                If startFixed Then
+                    ' 手入力の開始日は書き換えない。重なることだけ知らせる。
+                    conflicts = conflicts & _
+                        "  【" & taskLabel & "】" & InfoName(info, contract) & _
+                        "  開始日 " & Format$(dStart, "yyyy/mm/dd") & vbCrLf & _
+                        "    業者「" & colorName & "」は " & _
+                        InfoName(info, CStr(vendorLast(colorName))) & " に入っています。" & vbCrLf & _
+                        "    → " & Format$(CDate(vendorFree(colorName)), "yyyy/mm/dd") & _
+                        " 以降なら入れます" & vbCrLf & vbCrLf
+                    conflictCount = conflictCount + 1
+                Else
+                    dStart = AddWorkingDaysFor(contract, CDate(vendorFree(colorName)), 0)
+                    delayed = delayed + 1
+                End If
+            End If
+        End If
+
+        If Not startFixed Then
             wsT.Cells(r, c0 + TASK_OFS_START).Value = dStart
             derived = derived + 1
-        Else
-            GoTo NextRow      ' 基礎の開始日が空＝まだ計画対象外
         End If
 
-        typeCode = blockType(contract)
+        typeCode = CStr(v(3))
 
         '--- 終了日を決める ------------------------------------------
         ' 入っていればその日を使う（人が決めた日程を尊重する）。空欄なら計算する。
@@ -287,10 +354,10 @@ Private Sub PlanOneTask(k As Long, wsT As Worksheet, _
         Else
             days = TermDays(taskLabel, typeCode)
             If days <= 0 Then
-                warned = warned & "  " & contract & " : タイプ「" & typeCode & _
+                warned = warned & "  " & InfoName(info, contract) & " : タイプ「" & typeCode & _
                          "」から" & taskLabel & "の工期を計算できません" & vbCrLf
                 warnCount = warnCount + 1
-                GoTo NextRow
+                GoTo NextProp
             End If
 
             ' 調整列の日数を足し引きする（1日を下回らないようにする）
@@ -302,6 +369,7 @@ Private Sub PlanOneTask(k As Long, wsT As Worksheet, _
             If days < 1 Then days = 1
 
             dEnd = AddWorkingDaysFor(contract, dStart, days - 1)
+            wsT.Cells(r, c0 + TASK_OFS_END).Value = dEnd
         End If
 
         ' 実測範囲（25～90坪）を外れていたら印を付ける
@@ -309,91 +377,81 @@ Private Sub PlanOneTask(k As Long, wsT As Worksheet, _
             If area < 25 Or area > 90 Then outOfRange = outOfRange + 1
         End If
 
-        n = n + 1
-        plan(n, 1) = r
-        plan(n, 2) = contract
-        plan(n, 3) = typeCode
-        plan(n, 4) = dStart
-        plan(n, 5) = dEnd
-        plan(n, 6) = Trim$(CStr(wsT.Cells(r, c0 + TASK_OFS_COLOR).Value))   ' 固定の色名
-        plan(n, 7) = blockRow(contract)
-NextRow:
-    Next r
+        '--- 業者の次の空き日を更新する ------------------------------
+        ' 終わった翌営業日から次の現場へ入る。
+        vendorFree(colorName) = AddWorkingDaysFor(contract, dEnd, 1)
+        vendorLast(colorName) = contract
 
-    If n = 0 Then Exit Sub
-
-    '--- 2) 開始日の早い順に並べる ------------------------------------
-    SortPlanByStart plan, n
-
-    '--- 3) 業者を割り当てる ------------------------------------------
-    ' 手入力で固定されている色を先に押さえる
-    For i = 1 To n
-        colorName = CStr(plan(i, 6))
-        If Len(colorName) > 0 Then
-            If vendors.Exists(colorName) Then
-                MarkOccupied occupied, colorName, CDate(plan(i, 4)), CDate(plan(i, 5)), CStr(plan(i, 2))
-            Else
-                warned = warned & "  " & plan(i, 2) & " : 色名「" & colorName & _
-                         "」は" & taskLabel & "の業者ではありません" & vbCrLf
-                warnCount = warnCount + 1
-                plan(i, 6) = ""
-            End If
-        End If
-    Next i
-
-    ' 空欄に、空いている業者を順に割り当てる
-    For i = 1 To n
-        If Len(CStr(plan(i, 6))) = 0 Then
-            colorName = FindFreeVendor(vendors, occupied, CDate(plan(i, 4)), CDate(plan(i, 5)), CStr(plan(i, 2)))
-            If Len(colorName) = 0 Then
-                Dim wd As Long, reason As String
-                Dim best As Date, bestVendor As String
-
-                wd = CountWorkDaysFor(CStr(plan(i, 2)), CDate(plan(i, 4)), CDate(plan(i, 5)))
-                reason = BlockingVendors(vendors, occupied, blockName, _
-                                         CDate(plan(i, 4)), CDate(plan(i, 5)), CStr(plan(i, 2)))
-                bestVendor = ""
-                best = EarliestStart(vendors, occupied, CDate(plan(i, 4)), wd, _
-                                     CStr(plan(i, 2)), bestVendor)
-
-                unassigned = unassigned & _
-                    "  【" & taskLabel & "】" & blockName(CStr(plan(i, 2))) & _
-                    "  " & Format$(plan(i, 4), "mm/dd") & "～" & Format$(plan(i, 5), "mm/dd") & _
-                    "（" & wd & "稼働日）" & vbCrLf & _
-                    "    この期間は" & vendors.Count & "業者すべてがふさがっています。" & vbCrLf & _
-                    reason
-                If best > 0 Then
-                    unassigned = unassigned & _
-                        "    → " & Format$(best, "yyyy/mm/dd") & " から着手すれば「" & _
-                        bestVendor & "」が空きます" & vbCrLf & vbCrLf
-                Else
-                    unassigned = unassigned & _
-                        "    → 1年先まで空きがありません。業者を増やす必要があります" & vbCrLf & vbCrLf
-                End If
-                unassignedCount = unassignedCount + 1
-            Else
-                plan(i, 6) = colorName
-                MarkOccupied occupied, colorName, CDate(plan(i, 4)), CDate(plan(i, 5)), CStr(plan(i, 2))
-            End If
-        End If
-    Next i
-
-    '--- 4) 書き戻して色を塗る ----------------------------------------
-    For i = 1 To n
-        r = CLng(plan(i, 1))
-
-        ' 空欄のところだけ埋める。すでに値が入っているセルには触らない。
-        If Not IsDate(wsT.Cells(r, c0 + TASK_OFS_END).Value) Then
-            wsT.Cells(r, c0 + TASK_OFS_END).Value = CDate(plan(i, 5))
-        End If
-        If Len(Trim$(CStr(wsT.Cells(r, c0 + TASK_OFS_COLOR).Value))) = 0 Then
-            wsT.Cells(r, c0 + TASK_OFS_COLOR).Value = CStr(plan(i, 6))
+        If Len(writtenColor) = 0 Then
+            wsT.Cells(r, c0 + TASK_OFS_COLOR).Value = colorName
         End If
 
-        prevEnd(CStr(plan(i, 2))) = CDate(plan(i, 5))
-        result(CStr(plan(i, 2)) & "|" & k) = Array(plan(i, 3), plan(i, 4), plan(i, 5), plan(i, 6))
-    Next i
+        prevEnd(contract) = dEnd
+        result(contract & "|" & k) = Array(typeCode, dStart, dEnd, colorName)
+NextProp:
+    Next key
 End Sub
+
+'---------------------------------------------------------------------
+' 邸名（分からなければ契約番号）
+'---------------------------------------------------------------------
+Private Function InfoName(info As Object, contract As String) As String
+    Dim v As Variant
+    If info.Exists(contract) Then
+        v = info(contract)
+        If Len(Trim$(CStr(v(1)))) > 0 Then
+            InfoName = Trim$(CStr(v(1)))
+            Exit Function
+        End If
+    End If
+    InfoName = contract
+End Function
+
+'---------------------------------------------------------------------
+' 契約番号 -> M_工程データ の行番号
+'---------------------------------------------------------------------
+Private Function BuildTaskRowMap(wsT As Worksheet) As Object
+    Dim map As Object, r As Long, lastRow As Long, contract As String
+    Set map = CreateObject("Scripting.Dictionary")
+    lastRow = wsT.Cells(wsT.Rows.Count, TASK_COL_CONTRACT).End(xlUp).Row
+    For r = 2 To lastRow
+        contract = Trim$(CStr(wsT.Cells(r, TASK_COL_CONTRACT).Value))
+        If Len(contract) > 0 Then
+            If Not map.Exists(contract) Then map.Add contract, r
+        End If
+    Next r
+    Set BuildTaskRowMap = map
+End Function
+
+'---------------------------------------------------------------------
+' 業者名 -> 色名 の対応表を作る
+'
+' M_業者 の「業者名」は「丸岩/KRK」のように / 区切りで別名を並べられる。
+' 表記ゆれを吸収するため、空白を落として比較する。
+'---------------------------------------------------------------------
+Private Function BuildVendorNameMap(vendors As Object) As Object
+    Dim map As Object, k As Variant, parts As Variant, i As Long, nm As String
+    Set map = CreateObject("Scripting.Dictionary")
+    For Each k In vendors.Keys
+        parts = Split(CStr(vendors(k)), "/")
+        For i = LBound(parts) To UBound(parts)
+            nm = NormalizeName(CStr(parts(i)))
+            If Len(nm) > 0 Then map(nm) = CStr(k)
+        Next i
+    Next k
+    Set BuildVendorNameMap = map
+End Function
+
+'---------------------------------------------------------------------
+' 業者名の突き合わせ用に整える（前後と途中の空白を落とす）
+'---------------------------------------------------------------------
+Private Function NormalizeName(s As String) As String
+    Dim t As String
+    t = Trim$(s)
+    t = Replace$(t, " ", "")
+    t = Replace$(t, "　", "")
+    NormalizeName = t
+End Function
 
 '=====================================================================
 ' 前提のチェック
@@ -423,9 +481,9 @@ End Function
 '=====================================================================
 ' 結果表示
 '=====================================================================
-Private Sub ShowReport(ws As Worksheet, result As Object, blockName As Object, _
-                       derived As Long, outOfRange As Long, kept As Long, _
-                       unassigned As String, unassignedCount As Long, _
+Private Sub ShowReport(ws As Worksheet, result As Object, info As Object, _
+                       derived As Long, outOfRange As Long, kept As Long, delayed As Long, _
+                       conflicts As String, conflictCount As Long, _
                        warned As String, warnCount As Long)
     Dim msg As String, key As Variant, seen As Object
     Dim contract As String, shown As Long, total As Long
@@ -441,7 +499,8 @@ Private Sub ShowReport(ws As Worksheet, result As Object, blockName As Object, _
     msg = "工程を計算しました。" & vbCrLf & vbCrLf & _
           "対象シート : " & ws.Name & vbCrLf & _
           "物件       : " & total & " 件" & vbCrLf
-    If derived > 0 Then msg = msg & "躯体開始日を自動で決めた物件 : " & derived & " 件" & vbCrLf
+    If derived > 0 Then msg = msg & "開始日を自動で決めた工程 : " & derived & " 件" & vbCrLf
+    If delayed > 0 Then msg = msg & "業者の前の現場に合わせて後ろへずらした工程 : " & delayed & " 件" & vbCrLf
     If kept > 0 Then msg = msg & "手入力の終了日をそのまま使った工程 : " & kept & " 件" & vbCrLf
 
     msg = msg & vbCrLf & "邸名 / タイプ / 基礎 / 躯体" & vbCrLf
@@ -453,7 +512,7 @@ Private Sub ShowReport(ws As Worksheet, result As Object, blockName As Object, _
             Exit For
         End If
         contract = CStr(key)
-        line = "  " & Left$(blockName(contract) & String$(11, " "), 11)
+        line = "  " & Left$(InfoName(info, contract) & String$(11, " "), 11)
         For k = 1 To TASK_COUNT
             If result.Exists(contract & "|" & k) Then
                 v = result(contract & "|" & k)
@@ -471,15 +530,15 @@ Private Sub ShowReport(ws As Worksheet, result As Object, blockName As Object, _
         msg = msg & vbCrLf & "※実測範囲外が " & outOfRange & " 件あります。" & vbCrLf & _
               "　工期の式は 25～90坪 の実績から作っています。外れる物件の日数は目安です。" & vbCrLf
     End If
-    If unassignedCount > 0 Then
+    If conflictCount > 0 Then
         msg = msg & vbCrLf & String$(50, "-") & vbCrLf & _
-              "■ 割り当てできませんでした（" & unassignedCount & "件）" & vbCrLf & vbCrLf & _
-              unassigned & _
-              "  この日程では業者が足りません。次のどれかで解消できます。" & vbCrLf & _
+              "■ その日程では業者が入れません（" & conflictCount & "件）" & vbCrLf & vbCrLf & _
+              conflicts & _
+              "  手入力の開始日は書き換えていません。次のどれかで解消できます。" & vbCrLf & _
               "    ・上に出ている日まで開始日をずらす" & vbCrLf & _
               "    ・先に入っている物件の日程を動かす" & vbCrLf & _
-              "    ・" & SH_VENDOR & " に業者を追加する" & vbCrLf & vbCrLf & _
-              "  ※この工程は終了日も色名も空欄のままで、工程表にも塗られていません。" & vbCrLf
+              "    ・工程表の業者欄を別の業者に変える" & vbCrLf & vbCrLf & _
+              "  ※このままだと同じ業者が2現場に重なります。" & vbCrLf
     End If
     If warnCount > 0 Then
         msg = msg & vbCrLf & "■ 警告:" & vbCrLf & warned
@@ -487,8 +546,8 @@ Private Sub ShowReport(ws As Worksheet, result As Object, blockName As Object, _
 
     msg = msg & vbCrLf & "続けて「ボタン_工程表に色を塗る」を実行してください。"
 
-    MsgBox msg, IIf(unassignedCount > 0 Or warnCount > 0, vbExclamation, vbInformation), _
-           IIf(unassignedCount > 0, "工程を計算する － 割り当てできない工程があります", "工程を計算する")
+    MsgBox msg, IIf(conflictCount > 0 Or warnCount > 0, vbExclamation, vbInformation), _
+           IIf(conflictCount > 0, "工程を計算する － 業者が重なっています", "工程を計算する")
 End Sub
 
 '=====================================================================
@@ -510,6 +569,51 @@ Private Function PaintTask(ws As Worksheet, blockRow As Long, dateMap As Object,
         End If
     Next d
     PaintTask = cnt
+End Function
+
+'---------------------------------------------------------------------
+' 本着日（黒）とお客様納期（青）を工程表に縦に塗る
+'
+' 工事の色より上に載せる。日付が工程表の表示期間の外なら何もしない。
+' 塗る高さは MARK_ROWS 行（物件ブロックの上から）。
+'---------------------------------------------------------------------
+Private Function PaintMilestones(ws As Worksheet, info As Object, _
+                                 order As Collection, dateMap As Object) As Long
+    Dim key As Variant, v As Variant, cnt As Long
+    Dim baseRow As Long
+
+    For Each key In order
+        v = info(CStr(key))
+        baseRow = CLng(v(0)) + MARK_OFS_FIRST
+        cnt = cnt + PaintMarkColumn(ws, baseRow, dateMap, v(6), CLR_MARK_HONCHAKU)
+        cnt = cnt + PaintMarkColumn(ws, baseRow, dateMap, v(7), CLR_MARK_NOUKI)
+    Next key
+
+    PaintMilestones = cnt
+End Function
+
+Private Function PaintMarkColumn(ws As Worksheet, baseRow As Long, dateMap As Object, _
+                                 dv As Variant, rgbVal As Long) As Long
+    Dim d As Date, col As Long, i As Long
+
+    If Not IsDate(dv) Then Exit Function
+    d = CDate(dv)
+    If Not dateMap.Exists(CLng(d)) Then Exit Function
+
+    col = CLng(dateMap(CLng(d)))
+    For i = 0 To MARK_ROWS - 1
+        ws.Cells(baseRow + i, col).Interior.Color = rgbVal
+    Next i
+    PaintMarkColumn = MARK_ROWS
+End Function
+
+'---------------------------------------------------------------------
+' その物件のブロック先頭行
+'---------------------------------------------------------------------
+Private Function BlockRowOf(info As Object, contract As String) As Long
+    Dim v As Variant
+    v = info(contract)
+    BlockRowOf = CLng(v(0))
 End Function
 
 '---------------------------------------------------------------------
@@ -540,161 +644,25 @@ Private Sub ClearTaskPaint(ws As Worksheet, blockRow As Long, dateMap As Object,
 End Sub
 
 '=====================================================================
-' 割り当てできなかったときの説明
-'=====================================================================
-
-'---------------------------------------------------------------------
-' どの業者が、いつ、誰にふさがれているかを並べる
-'---------------------------------------------------------------------
-Private Function BlockingVendors(vendors As Object, occupied As Object, _
-                                 blockName As Object, _
-                                 dFrom As Date, dTo As Date, _
-                                 contract As String) As String
-    Dim k As Variant, d As Date, s As String
-    Dim other As String, hitDay As Date, found As Boolean
-
-    For Each k In vendors.Keys
-        found = False
-        For d = dFrom To dTo
-            If Not IsNonWorkingDayFor(contract, d) Then
-                If occupied.Exists(k & "|" & CLng(d)) Then
-                    other = CStr(occupied(k & "|" & CLng(d)))
-                    hitDay = d
-                    found = True
-                    Exit For
-                End If
-            End If
-        Next d
-        If found Then
-            s = s & "      " & CStr(k) & " … " & Format$(hitDay, "mm/dd") & " から " & _
-                HolderName(blockName, other) & vbCrLf
-        End If
-    Next k
-
-    BlockingVendors = s
-End Function
-
-Private Function HolderName(blockName As Object, contract As String) As String
-    If blockName.Exists(contract) Then
-        HolderName = CStr(blockName(contract)) & " が使用中"
-    Else
-        HolderName = contract & " が使用中"
-    End If
-End Function
-
-'---------------------------------------------------------------------
-' 最短で着手できる日を探す
-'
-' 稼働日数を保ったまま開始日を1日ずつ後ろへずらし、
-' どれか1社が期間中ずっと空く最初の日を返す。
-' 1年先まで見つからなければ 0 を返す。
-'---------------------------------------------------------------------
-Private Function EarliestStart(vendors As Object, occupied As Object, _
-                               dFrom As Date, workDays As Long, _
-                               contract As String, ByRef vendorName As String) As Date
-    Dim tryStart As Date, tryEnd As Date, i As Long, nm As String
-
-    If workDays < 1 Then workDays = 1
-
-    For i = 1 To 365
-        tryStart = AddWorkingDaysFor(contract, dFrom + i, 0)
-        tryEnd = AddWorkingDaysFor(contract, tryStart, workDays - 1)
-        nm = FindFreeVendor(vendors, occupied, tryStart, tryEnd, contract)
-        If Len(nm) > 0 Then
-            vendorName = nm
-            EarliestStart = tryStart
-            Exit Function
-        End If
-    Next i
-End Function
-
-'---------------------------------------------------------------------
-' 物件ごとの稼働日数を数える
-'---------------------------------------------------------------------
-Private Function CountWorkDaysFor(contract As String, dFrom As Date, dTo As Date) As Long
-    Dim d As Date, c As Long
-    For d = dFrom To dTo
-        If Not IsNonWorkingDayFor(contract, d) Then c = c + 1
-    Next d
-    CountWorkDaysFor = c
-End Function
-
-'=====================================================================
-' 業者の割り当て
-'=====================================================================
-Private Function FindFreeVendor(vendors As Object, occupied As Object, _
-                                dFrom As Date, dTo As Date, contract As String) As String
-    Dim k As Variant, d As Date, busy As Boolean
-
-    For Each k In vendors.Keys
-        busy = False
-        For d = dFrom To dTo
-            If Not IsNonWorkingDayFor(contract, d) Then
-                If occupied.Exists(k & "|" & CLng(d)) Then
-                    busy = True
-                    Exit For
-                End If
-            End If
-        Next d
-        If Not busy Then
-            FindFreeVendor = CStr(k)
-            Exit Function
-        End If
-    Next k
-End Function
-
-Private Sub MarkOccupied(occupied As Object, colorName As String, _
-                         dFrom As Date, dTo As Date, contract As String)
-    Dim d As Date
-    For d = dFrom To dTo
-        If Not IsNonWorkingDayFor(contract, d) Then occupied(colorName & "|" & CLng(d)) = contract
-    Next d
-End Sub
-
-'=====================================================================
-' 並べ替え（単純挿入ソート。件数が少ないので十分）
-'=====================================================================
-Private Sub SortPlanByStart(plan() As Variant, n As Long)
-    Dim i As Long, j As Long, c As Long
-    Dim tmp(1 To 7) As Variant
-
-    For i = 2 To n
-        For c = 1 To 7
-            tmp(c) = plan(i, c)
-        Next c
-        j = i - 1
-        Do While j >= 1
-            If CDate(plan(j, 4)) <= CDate(tmp(4)) Then Exit Do
-            For c = 1 To 7
-                plan(j + 1, c) = plan(j, c)
-            Next c
-            j = j - 1
-        Loop
-        For c = 1 To 7
-            plan(j + 1, c) = tmp(c)
-        Next c
-    Next i
-End Sub
-
-'=====================================================================
 ' マスタの読み込み
 '=====================================================================
-Private Sub LoadBlocks(ws As Worksheet, ByRef rowMap As Object, _
-                       ByRef typeMap As Object, ByRef nameMap As Object)
+' 工程表の物件ブロックを読む
+'   info  : 契約番号 -> FindBlocks の1件分（行 / 邸名 / 契約番号 / タイプ /
+'                       基礎業者 / 躯体業者 / 本着日 / お客様納期）
+'   order : 契約番号をシートの上から順に並べたもの（＝業者の優先順位）
+Private Sub LoadBlocks(ws As Worksheet, ByRef info As Object, ByRef order As Collection)
     Dim blocks As Collection, b As Variant, key As String
 
-    Set rowMap = CreateObject("Scripting.Dictionary")
-    Set typeMap = CreateObject("Scripting.Dictionary")
-    Set nameMap = CreateObject("Scripting.Dictionary")
+    Set info = CreateObject("Scripting.Dictionary")
+    Set order = New Collection
     Set blocks = FindBlocks(ws)
 
     For Each b In blocks
         key = Trim$(CStr(b(2)))
         If Len(key) > 0 Then
-            If Not rowMap.Exists(key) Then
-                rowMap.Add key, CLng(b(0))
-                typeMap.Add key, Trim$(CStr(b(3)))
-                nameMap.Add key, Trim$(CStr(b(1)))
+            If Not info.Exists(key) Then
+                info.Add key, b
+                order.Add key
             End If
         End If
     Next b

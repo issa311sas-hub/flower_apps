@@ -29,6 +29,17 @@ Public Const COL_CONTRACT   As Long = 11         ' 契約番号      (先頭行 +1)
 Public Const COL_TYPE       As Long = 13         ' タイプ        (先頭行 +1)
 Public Const COL_TSUBO      As Long = 14         ' 坪数          (先頭行 +2)
 
+' 業者名（先頭行 +0）。実データで表記ゆれが無いことを確認済み。
+'   基礎 : 加納 / 協栄 / 龍壱 / カサハラ の4社
+'   躯体 : 丸岩・KRK / 雅建工 の2社
+Public Const COL_KISO_VENDOR  As Long = 14       ' 基礎業者      (先頭行 +0)
+Public Const COL_KUTAI_VENDOR As Long = 15       ' 躯体業者      (先頭行 +0)
+
+' 本着日とお客様納期（先頭行 +2 がラベル、+3 が値）
+Public Const ROW_OFS_DATES   As Long = 3
+Public Const COL_HONCHAKU    As Long = 11        ' 本着日
+Public Const COL_NOUKI       As Long = 12        ' お客様納期
+
 ' --- ブロック内の行オフセット (0 始まり) ----------------------------
 ' 日付エリアではオフセットごとに意味が違う。必ずこの定数経由で書く。
 Public Const OFS_KUTAI      As Long = 0          ' 躯体工事の色帯
@@ -74,6 +85,13 @@ Public Const TASK_OFS_NOTE   As Long = 4
 ' --- 色 -------------------------------------------------------------
 Public Const CLR_HOLIDAY    As Long = 39321      ' RGB(153, 204, 0)  日曜・祝日の黄緑
 Public Const CLR_BLACK      As Long = 0          ' RGB(0, 0, 0)      契約着工日 / モルタル
+
+' 本着日・お客様納期のマーカー。工程表に縦 MARK_ROWS マス塗る。
+' 業者色とは別枠で扱い、工程色より優先して上書きする。
+Public Const CLR_MARK_HONCHAKU As Long = 0        ' RGB(0, 0, 0)     黒
+Public Const CLR_MARK_NOUKI    As Long = 13395456 ' RGB(0, 102, 204) 青
+Public Const MARK_ROWS      As Long = 4          ' 縦に塗るマス数
+Public Const MARK_OFS_FIRST As Long = 0          ' 物件ブロックの先頭からの位置
 
 '---------------------------------------------------------------------
 ' 工程表シートを取得する
@@ -212,13 +230,17 @@ End Function
 '---------------------------------------------------------------------
 ' 物件ブロックの一覧を返す
 '
-' 各要素は Array(開始行, 邸名, 契約番号, タイプ) の Variant 配列。
-' 「邸」で終わるセルをブロック先頭とみなす。
+' 各要素は次の Variant 配列。「邸」で終わるセルをブロック先頭とみなす。
+'   0 開始行 / 1 邸名 / 2 契約番号 / 3 タイプ
+'   4 基礎業者 / 5 躯体業者 / 6 本着日 / 7 お客様納期
+' 並び順はシートの上から下。業者の優先順位もこの順になる。
 '---------------------------------------------------------------------
 Public Function FindBlocks(ws As Worksheet) As Collection
     Dim col As New Collection
     Dim r As Long, lastRow As Long
     Dim nm As String, contract As String, typ As String
+    Dim kisoV As String, kutaiV As String
+    Dim honchaku As Variant, nouki As Variant
 
     lastRow = ws.Cells(ws.Rows.Count, COL_NAME).End(xlUp).Row
 
@@ -228,7 +250,19 @@ Public Function FindBlocks(ws As Worksheet) As Collection
         If Len(nm) > 0 And Right$(nm, 1) = "邸" Then
             contract = Trim$(CStr(ws.Cells(r + 1, COL_CONTRACT).Value))
             typ = Trim$(CStr(ws.Cells(r + 1, COL_TYPE).Value))
-            col.Add Array(r, nm, contract, typ)
+            kisoV = Trim$(CStr(ws.Cells(r, COL_KISO_VENDOR).Value))
+            kutaiV = Trim$(CStr(ws.Cells(r, COL_KUTAI_VENDOR).Value))
+
+            honchaku = Empty
+            nouki = Empty
+            If IsDate(ws.Cells(r + ROW_OFS_DATES, COL_HONCHAKU).Value) Then
+                honchaku = CDate(ws.Cells(r + ROW_OFS_DATES, COL_HONCHAKU).Value)
+            End If
+            If IsDate(ws.Cells(r + ROW_OFS_DATES, COL_NOUKI).Value) Then
+                nouki = CDate(ws.Cells(r + ROW_OFS_DATES, COL_NOUKI).Value)
+            End If
+
+            col.Add Array(r, nm, contract, typ, kisoV, kutaiV, honchaku, nouki)
             r = r + BLOCK_ROWS
         Else
             r = r + 1

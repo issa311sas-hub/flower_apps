@@ -26,8 +26,8 @@ Public Const NENSHI_DAY     As Long = 3
 
 ' --- 物件ごとの例外日 -----------------------------------------------
 ' M_例外日 に契約番号と日付を書くと、その日は通常の判定が反転する。
-'   もともと非稼働日（日曜・祝日・お盆・年末年始）→ その物件だけ稼働日
-'   もともと稼働日（平日）                        → その物件だけ休み
+'   もともと非稼働日（日曜・お盆・年末年始）→ その物件だけ稼働日
+'   もともと稼働日（平日・祝日）            → その物件だけ休み
 ' 契約番号に「全件」と書くと全物件に適用される（会社都合の休工など）。
 '
 ' 塗りつぶしだけでなく工期の計算にも効かせるため、
@@ -79,12 +79,27 @@ Public Function CompanyClosureName(d As Date) As String
 End Function
 
 '---------------------------------------------------------------------
-' 非稼働日か（日曜 / 祝日 / 会社休業日）
+' 非稼働日か（日曜 / 会社休業日）
+'
+' 祝日は稼働日として扱う。工事店の実態として祝日は作業があり、
+' 休みなのは日曜と会社休業日（お盆・年末年始）だけ。
+' 祝日を休みにしたい物件は M_例外日 に日付を書いて反転させる。
 '---------------------------------------------------------------------
 Public Function IsNonWorkingDay(d As Date) As Boolean
     IsNonWorkingDay = (Weekday(d, vbSunday) = 1) _
-                      Or IsHoliday(d) _
                       Or IsCompanyClosure(d)
+End Function
+
+'---------------------------------------------------------------------
+' 工程表で黄緑に塗る日か（日曜 / 祝日 / 会社休業日）
+'
+' 稼働の有無とは別物。祝日は稼働日だが、現場で日程を確認するために
+' 工程表上では色を塗る。工事がある日は工程色で上書きされる。
+'---------------------------------------------------------------------
+Public Function IsPaintDay(d As Date) As Boolean
+    IsPaintDay = (Weekday(d, vbSunday) = 1) _
+                 Or IsHoliday(d) _
+                 Or IsCompanyClosure(d)
 End Function
 
 '=====================================================================
@@ -152,6 +167,17 @@ Public Function IsNonWorkingDayFor(contract As String, d As Date) As Boolean
 End Function
 
 '---------------------------------------------------------------------
+' 物件ごとの「塗る日」判定
+'
+' 日祝・会社休業日は常に塗る（祝日は稼働日だが日程確認のため塗る）。
+' 加えて、例外日で休みにした平日も塗る。
+' 剥がす処理は持たない。工事がある日は工程色で上書きされる。
+'---------------------------------------------------------------------
+Public Function IsPaintDayFor(contract As String, d As Date) As Boolean
+    IsPaintDayFor = IsPaintDay(d) Or IsNonWorkingDayFor(contract, d)
+End Function
+
+'---------------------------------------------------------------------
 ' 物件ごとに稼働日を n 日進める
 '---------------------------------------------------------------------
 Public Function AddWorkingDaysFor(contract As String, d As Date, n As Long) As Date
@@ -172,8 +198,11 @@ End Function
 '---------------------------------------------------------------------
 ' M_例外日 の「詳細」列を、日付から自動で埋める
 '
-' その日が日祝（日曜・祝日・お盆・年末年始）なら「日祝→作業」、
-' そうでなければ「平日→休み」。ユーザーは契約番号と日付だけ入力すればよい。
+' その日がもともと休み（日曜・お盆・年末年始）なら「日曜→作業」のように
+' 休みの理由を添えて作業日に、もともと稼働日なら「祝日→休み」「平日→休み」。
+' ユーザーは契約番号と日付だけ入力すればよい。
+'
+' 祝日は稼働日なので、祝日を指定すると「祝日→休み」になる点に注意。
 '---------------------------------------------------------------------
 Public Sub UpdateExceptionDetails()
     Dim ws As Worksheet, r As Long, lastRow As Long
@@ -193,7 +222,9 @@ Public Sub UpdateExceptionDetails()
         ElseIf Not IsDate(v) Then
             ws.Cells(r, 3).Value = "日付が正しくありません"
         ElseIf IsNonWorkingDay(CDate(v)) Then
-            ws.Cells(r, 3).Value = "日祝→作業"
+            ws.Cells(r, 3).Value = NonWorkingReason(CDate(v)) & "→作業"
+        ElseIf IsHoliday(CDate(v)) Then
+            ws.Cells(r, 3).Value = HolidayName(CDate(v)) & "→休み"
         Else
             ws.Cells(r, 3).Value = "平日→休み"
         End If
@@ -202,16 +233,31 @@ End Sub
 
 '---------------------------------------------------------------------
 ' 非稼働日の理由を返す。稼働日なら空文字。
+' 祝日は稼働日なのでここには出ない（DayNote で確認できる）。
 '---------------------------------------------------------------------
 Public Function NonWorkingReason(d As Date) As String
     If Weekday(d, vbSunday) = 1 Then
         NonWorkingReason = "日曜"
-    ElseIf Len(HolidayName(d)) > 0 Then
-        NonWorkingReason = HolidayName(d)
     ElseIf Len(CompanyClosureName(d)) > 0 Then
         NonWorkingReason = CompanyClosureName(d)
     Else
         NonWorkingReason = ""
+    End If
+End Function
+
+'---------------------------------------------------------------------
+' その日の説明を返す（画面表示用）
+'   例 : "日曜（休み）" / "海の日（祝日・稼働日）" / "稼働日"
+'---------------------------------------------------------------------
+Public Function DayNote(d As Date) As String
+    Dim s As String
+    s = NonWorkingReason(d)
+    If Len(s) > 0 Then
+        DayNote = s & "（休み）"
+    ElseIf Len(HolidayName(d)) > 0 Then
+        DayNote = HolidayName(d) & "（祝日・稼働日）"
+    Else
+        DayNote = "稼働日"
     End If
 End Function
 
@@ -316,7 +362,7 @@ Private Function AutumnalEquinoxDay(y As Long) As Long
 End Function
 
 '---------------------------------------------------------------------
-' 稼働日を n 日進める（日曜・祝日をスキップ）
+' 稼働日を n 日進める（日曜・会社休業日をスキップ。祝日は稼働日）
 ' n = 0 なら、d 自身が非稼働日のとき次の稼働日まで送る。
 '---------------------------------------------------------------------
 Public Function AddWorkingDays(d As Date, n As Long) As Date
@@ -366,10 +412,10 @@ Public Sub DebugListHolidays()
 
     For d = DateSerial(y, 1, 1) To DateSerial(y, 12, 31)
         If IsHoliday(d) Or IsCompanyClosure(d) Then
-            s = s & Format$(d, "yyyy/mm/dd (aaa)") & "  " & NonWorkingReason(d) & vbCrLf
+            s = s & Format$(d, "yyyy/mm/dd (aaa)") & "  " & DayNote(d) & vbCrLf
         End If
     Next d
     MsgBox y & "年の祝日・会社休業日" & vbCrLf & _
-           "（日曜を除く。日曜も非稼働日として扱われます）" & vbCrLf & vbCrLf & s, _
-           vbInformation, "非稼働日一覧"
+           "（祝日は稼働日として扱います。休みは日曜と会社休業日）" & vbCrLf & vbCrLf & s, _
+           vbInformation, "祝日・休業日一覧"
 End Sub
