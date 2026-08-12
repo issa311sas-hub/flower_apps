@@ -25,6 +25,20 @@ Option Explicit
 ' イベントの数
 Public Const EVENT_COUNT As Long = 10
 
+' 1画面で入力するユーザーフォームの名前
+' このフォームがブックにあれば1画面で、無ければ1件ずつのダイアログになる。
+' 作り方は vba/userform/F_イベント入力.txt を参照。
+Public Const EVENT_FORM_NAME As String = "F_イベント入力"
+
+' --- フォームとのやり取り -------------------------------------------
+' フォームは部品の配置だけを持ち、値はここを通してやり取りする。
+' そうするとフォーム側のコードが短くなり、貼り付けるだけで済む。
+Private mFormTitle As String
+Private mFormHeader As String
+Private mFormDefault(1 To EVENT_COUNT) As String
+Private mFormResult(1 To EVENT_COUNT) As String
+Private mFormOK As Boolean
+
 ' 文字色
 Private Const CLR_EVENT_BLACK As Long = 0          ' RGB(0, 0, 0)
 Private Const CLR_EVENT_RED   As Long = 255        ' RGB(255, 0, 0)
@@ -59,21 +73,92 @@ Public Function EventName(i As Long) As String
 End Function
 
 '=====================================================================
+' フォームから呼ばれる関数
+'
+' フォーム側は部品を並べるだけで、中身はここから受け取る。
+'=====================================================================
+Public Function EventFormCount() As Long
+    EventFormCount = EVENT_COUNT
+End Function
+
+Public Function EventFormTitle() As String
+    EventFormTitle = mFormTitle
+End Function
+
+Public Function EventFormHeader() As String
+    EventFormHeader = mFormHeader
+End Function
+
+Public Function EventFormLabel(i As Long) As String
+    EventFormLabel = EventName(i)
+End Function
+
+Public Function EventFormDefault(i As Long) As String
+    EventFormDefault = mFormDefault(i)
+End Function
+
+Public Sub EventFormSetResult(i As Long, s As String)
+    mFormResult(i) = s
+End Sub
+
+Public Sub EventFormSetOK(b As Boolean)
+    mFormOK = b
+End Sub
+
+'---------------------------------------------------------------------
+' 入力フォームがブックにあるか
+'---------------------------------------------------------------------
+Public Function EventFormExists() As Boolean
+    Dim frm As Object
+
+    On Error Resume Next
+    Set frm = VBA.UserForms.Add(EVENT_FORM_NAME)
+    On Error GoTo 0
+
+    If frm Is Nothing Then Exit Function
+
+    Unload frm
+    EventFormExists = True
+End Function
+
+'---------------------------------------------------------------------
+' 入力フォームを出す
+'
+' 戻り値 : フォームを出せたか（False なら1件ずつのダイアログに切り替える）
+' 書き込むかどうかは mFormOK を見る。
+'---------------------------------------------------------------------
+Private Function ShowEventForm() As Boolean
+    Dim frm As Object
+
+    mFormOK = False
+
+    On Error Resume Next
+    Set frm = VBA.UserForms.Add(EVENT_FORM_NAME)
+    On Error GoTo 0
+
+    If frm Is Nothing Then Exit Function     ' フォームがブックに無い
+
+    frm.Show 1
+    Unload frm
+    ShowEventForm = True
+End Function
+
+'=====================================================================
 ' メイン : イベントを入力する
 '
-' カーソルのある物件について、10個のイベントの日付を順に聞く。
-' 空欄のままEnterを押せばそのイベントは飛ばす（すでに書いてあれば消さない）。
-' 「-」を入れるとそのイベントを消す。
+' フォーム（F_イベント入力）があれば1画面で10個まとめて入力する。
+' 無ければ1件ずつ聞くダイアログに切り替える。
 '=====================================================================
 Public Sub InputEvents()
     Dim ws As Worksheet, dateMap As Object, colMap As Object
-    Dim blocks As Collection, b As Variant
+    Dim blocks As Collection
     Dim blockTop As Long, nm As String
-    Dim i As Long, ans As String
-    Dim cur As Variant, defaultText As String
+    Dim i As Long
+    Dim cur As Variant
     Dim entered As Object, removed As Object
-    Dim d As Date, msg As String
-    Dim wrote As Long, cleared As Long, outOfRange As String
+    Dim msg As String, outOfRange As String
+    Dim wrote As Long, cleared As Long
+    Dim usedForm As Boolean
 
     On Error GoTo Fail
 
@@ -99,76 +184,60 @@ Public Sub InputEvents()
     Set dateMap = BuildDateMap(ws)
     Set colMap = BuildColMap(ws)
 
-    Set entered = CreateObject("Scripting.Dictionary")
-    Set removed = CreateObject("Scripting.Dictionary")
-
-    ' --- 10個ぶん順に聞く ------------------------------------------
+    ' --- いま書かれている日付を初期値にする -------------------------
     For i = 1 To EVENT_COUNT
         cur = FindEventDate(ws, blockTop, i, colMap)
         If IsDate(cur) Then
-            defaultText = Format$(cur, "yyyy/mm/dd")
+            mFormDefault(i) = Format$(cur, "yyyy/mm/dd")
         Else
-            defaultText = ""
+            mFormDefault(i) = ""
         End If
-
-        ans = InputBox( _
-              nm & vbCrLf & vbCrLf & _
-              "【" & EventName(i) & "】の日付を入力してください。" & _
-              "  (" & i & "/" & EVENT_COUNT & ")" & vbCrLf & vbCrLf & _
-              "  空欄のまま OK … 変更しない" & vbCrLf & _
-              "  「-」を入力   … このイベントを消す" & vbCrLf & _
-              "  キャンセル     … 入力をやめる（ここまでの分は書き込まない）", _
-              "イベントを入力 － " & EventName(i), defaultText)
-
-        ' キャンセルは空文字を返す。既定値のままOKでも同じ文字が返るため、
-        ' 「キャンセルされたか」は StrPtr で判定する。
-        If StrPtr(ans) = 0 Then Exit Sub
-
-        ans = Trim$(ans)
-        If ans = "-" Then
-            removed(i) = True
-        ElseIf Len(ans) > 0 Then
-            If Not IsDate(ans) Then
-                MsgBox "「" & ans & "」を日付として読めませんでした。" & vbCrLf & _
-                       EventName(i) & " は変更しません。", vbExclamation
-            Else
-                d = CDate(ans)
-                If Not dateMap.Exists(CLng(d)) Then
-                    outOfRange = outOfRange & "  " & EventName(i) & " : " & _
-                                 Format$(d, "yyyy/mm/dd") & vbCrLf
-                Else
-                    entered(i) = d
-                End If
-            End If
-        End If
+        mFormResult(i) = ""
     Next i
+
+    Set entered = CreateObject("Scripting.Dictionary")
+    Set removed = CreateObject("Scripting.Dictionary")
+
+    mFormTitle = "イベントを入力 － " & nm
+    mFormHeader = nm & vbCrLf & _
+                  "日付を入れると書き込みます。空欄にするとそのイベントを消します。" & vbCrLf & _
+                  "（画面のとおりに工程表へ反映されます）"
+
+    usedForm = ShowEventForm()
+
+    If usedForm Then
+        If Not mFormOK Then Exit Sub
+        CollectFromForm dateMap, entered, removed, outOfRange
+    Else
+        If Not CollectFromInputBox(nm, dateMap, entered, removed, outOfRange) Then Exit Sub
+    End If
 
     If entered.Count = 0 And removed.Count = 0 Then
         If Len(outOfRange) > 0 Then
             MsgBox "工程表の表示期間の外だったため、書き込めませんでした。" & vbCrLf & vbCrLf & _
                    outOfRange, vbExclamation, "イベントを入力"
         Else
-            MsgBox "入力がなかったので、何も変更していません。", vbInformation, "イベントを入力"
+            MsgBox "変更はありませんでした。", vbInformation, "イベントを入力"
         End If
         Exit Sub
     End If
 
-    ' --- 確認 -------------------------------------------------------
-    msg = nm & " のイベントを書き込みます。" & vbCrLf & vbCrLf
-    For i = 1 To EVENT_COUNT
-        If entered.Exists(i) Then
-            msg = msg & "  " & EventName(i) & " : " & Format$(entered(i), "yyyy/mm/dd") & vbCrLf
-        ElseIf removed.Exists(i) Then
-            msg = msg & "  " & EventName(i) & " : 消す" & vbCrLf
+    ' --- 1件ずつ聞いたときは、書き込む前に確認する ------------------
+    If Not usedForm Then
+        msg = nm & " のイベントを書き込みます。" & vbCrLf & vbCrLf
+        For i = 1 To EVENT_COUNT
+            If entered.Exists(i) Then
+                msg = msg & "  " & EventName(i) & " : " & Format$(entered(i), "yyyy/mm/dd") & vbCrLf
+            ElseIf removed.Exists(i) Then
+                msg = msg & "  " & EventName(i) & " : 消す" & vbCrLf
+            End If
+        Next i
+        If Len(outOfRange) > 0 Then
+            msg = msg & vbCrLf & "※ 次は工程表の表示期間の外なので書き込めません。" & vbCrLf & outOfRange
         End If
-    Next i
-    If Len(outOfRange) > 0 Then
-        msg = msg & vbCrLf & "※ 次のイベントは工程表の表示期間の外なので書き込めません。" & vbCrLf & _
-              outOfRange
+        msg = msg & vbCrLf & "よろしいですか？"
+        If MsgBox(msg, vbYesNo + vbQuestion, "イベントを入力") <> vbYes Then Exit Sub
     End If
-    msg = msg & vbCrLf & "よろしいですか？"
-
-    If MsgBox(msg, vbYesNo + vbQuestion, "イベントを入力") <> vbYes Then Exit Sub
 
     ' --- 書き込む ---------------------------------------------------
     Application.ScreenUpdating = False
@@ -186,16 +255,98 @@ Public Sub InputEvents()
 
     Application.ScreenUpdating = True
 
-    MsgBox nm & vbCrLf & vbCrLf & _
-           "書き込み : " & wrote & " 件" & vbCrLf & _
-           "消した   : " & cleared & " 件", _
-           vbInformation, "イベントを入力"
+    msg = nm & vbCrLf & vbCrLf & _
+          "書き込み : " & wrote & " 件" & vbCrLf & _
+          "消した   : " & cleared & " 件"
+    If Len(outOfRange) > 0 Then
+        msg = msg & vbCrLf & vbCrLf & _
+              "※ 次は工程表の表示期間の外なので書き込めませんでした。" & vbCrLf & outOfRange
+    End If
+
+    MsgBox msg, vbInformation, "イベントを入力"
     Exit Sub
 
 Fail:
     Application.ScreenUpdating = True
     MsgBox "エラーが発生しました: " & Err.Description, vbCritical, "イベントを入力"
 End Sub
+
+'---------------------------------------------------------------------
+' フォームの入力を読み取る
+'
+' 画面に見えているとおりに反映する。
+'   日付が入っている … その日に書く
+'   空欄             … そのイベントを消す
+'---------------------------------------------------------------------
+Private Sub CollectFromForm(dateMap As Object, entered As Object, _
+                            removed As Object, ByRef outOfRange As String)
+    Dim i As Long, t As String, d As Date
+
+    For i = 1 To EVENT_COUNT
+        t = Trim$(mFormResult(i))
+
+        If Len(t) = 0 Then
+            ' もともと何か書いてあったときだけ「消す」
+            If Len(mFormDefault(i)) > 0 Then removed(i) = True
+        ElseIf t = mFormDefault(i) Then
+            ' 変わっていない。触らない
+        ElseIf Not IsDate(t) Then
+            outOfRange = outOfRange & "  " & EventName(i) & " : 「" & t & "」は日付として読めません" & vbCrLf
+        Else
+            d = CDate(t)
+            If Not dateMap.Exists(CLng(d)) Then
+                outOfRange = outOfRange & "  " & EventName(i) & " : " & _
+                             Format$(d, "yyyy/mm/dd") & " は工程表にありません" & vbCrLf
+            Else
+                entered(i) = d
+            End If
+        End If
+    Next i
+End Sub
+
+'---------------------------------------------------------------------
+' フォームが無いときの入力（1件ずつ聞く）
+'
+' 戻り値 : 続行してよいか（False ならキャンセルされた）
+'---------------------------------------------------------------------
+Private Function CollectFromInputBox(nm As String, dateMap As Object, _
+                                     entered As Object, removed As Object, _
+                                     ByRef outOfRange As String) As Boolean
+    Dim i As Long, ans As String, d As Date
+
+    For i = 1 To EVENT_COUNT
+        ans = InputBox( _
+              nm & vbCrLf & vbCrLf & _
+              "【" & EventName(i) & "】の日付を入力してください。" & _
+              "  (" & i & "/" & EVENT_COUNT & ")" & vbCrLf & vbCrLf & _
+              "  空欄のまま OK … 変更しない" & vbCrLf & _
+              "  「-」を入力   … このイベントを消す" & vbCrLf & _
+              "  キャンセル     … 入力をやめる（何も書き込みません）", _
+              "イベントを入力 － " & EventName(i), mFormDefault(i))
+
+        ' キャンセルされたかは StrPtr で判定する（空文字と区別できないため）
+        If StrPtr(ans) = 0 Then Exit Function
+
+        ans = Trim$(ans)
+        If ans = "-" Then
+            removed(i) = True
+        ElseIf Len(ans) > 0 And ans <> mFormDefault(i) Then
+            If Not IsDate(ans) Then
+                outOfRange = outOfRange & "  " & EventName(i) & " : 「" & ans & "」は日付として読めません" & vbCrLf
+            Else
+                d = CDate(ans)
+                If Not dateMap.Exists(CLng(d)) Then
+                    outOfRange = outOfRange & "  " & EventName(i) & " : " & _
+                                 Format$(d, "yyyy/mm/dd") & " は工程表にありません" & vbCrLf
+                Else
+                    entered(i) = d
+                End If
+            End If
+        End If
+    Next i
+
+    CollectFromInputBox = True
+End Function
 
 '=====================================================================
 ' カーソルのある物件のイベントを一覧表示する

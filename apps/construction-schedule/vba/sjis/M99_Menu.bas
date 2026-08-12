@@ -264,6 +264,14 @@ Public Sub ボタン_導入状態を確認()
         ng = ng + 1
     End If
 
+    msg = msg & vbCrLf & "■ イベント入力フォーム" & vbCrLf
+    If EventFormExists() Then
+        msg = msg & "  OK  " & EVENT_FORM_NAME & " : 1画面でまとめて入力できます" & vbCrLf
+    Else
+        msg = msg & "  ―   未作成。1件ずつ聞くダイアログになります" & vbCrLf & _
+              "      vba/userform/ の手順で作ると1画面になります" & vbCrLf
+    End If
+
     msg = msg & vbCrLf & "■ カレンダーの年" & vbCrLf
     If CalendarBaseYear() > 0 Then
         msg = msg & "  OK  先頭列を " & CalendarBaseYear() & " 年として扱う" & vbCrLf
