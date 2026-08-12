@@ -145,7 +145,7 @@ Public Sub PaintPlan(Optional clearedCount As Long = -1)
     Dim contract As String, colorName As String
     Dim dFrom As Date, dTo As Date
     Dim painted As Long, skipped As Long, marks As Long, shiftCol As Long
-    Dim holidayMsg As String
+    Dim holidayMsg As String, markMsg As String
     Dim warned As String, warnCount As Long
 
     If Not PreflightOK() Then Exit Sub
@@ -212,8 +212,11 @@ NextRow:
 NextTask:
     Next k
 
-    ' 3) 本着日（黒）とお客様納期（青）を縦に塗る。工程色より上に載せる。
-    marks = PaintMilestones(ws, info, order, dateMap)
+    ' 3) 本着日（黒）とお客様納期（青）を塗る。工程色より上に載せる。
+    marks = PaintMilestones(ws, info, order, dateMap, markMsg)
+
+    ' 4) 「2W」など、塗りつぶし無しにするイベントのセルを整える
+    marks = marks + ApplyEventFills(ws, order, info)
 
 Cleanup:
     Application.Calculation = xlCalculationAutomatic
@@ -231,8 +234,8 @@ Cleanup:
         msg = msg & "消した色   : " & clearedCount & " セル" & vbCrLf
     End If
     msg = msg & _
-          "工程の色   : " & painted & " セル" & vbCrLf & _
-          "本着日・納期 : " & marks & " セル" & vbCrLf & vbCrLf & _
+          "工程の色   : " & painted & " セル" & vbCrLf & vbCrLf & _
+          markMsg & vbCrLf & vbCrLf & _
           holidayMsg
     If skipped > 0 Then
         msg = msg & vbCrLf & vbCrLf & _
@@ -622,29 +625,65 @@ End Function
 '   お客様納期   … 物件ブロックの上から縦 MARK_ROWS マス
 '---------------------------------------------------------------------
 Private Function PaintMilestones(ws As Worksheet, info As Object, _
-                                 order As Collection, dateMap As Object) As Long
+                                 order As Collection, dateMap As Object, _
+                                 ByRef report As String) As Long
     Dim key As Variant, v As Variant, cnt As Long
-    Dim blockTop As Long
+    Dim blockTop As Long, res As Long
+    Dim hOK As Long, hNone As Long, hOut As Long, hList As String
+    Dim nOK As Long, nNone As Long, nOut As Long
 
     For Each key In order
         v = info(CStr(key))
         blockTop = CLng(v(0))
-        cnt = cnt + PaintMarkColumn(ws, blockTop + MARK_OFS_HONCHAKU, dateMap, _
-                                    v(6), CLR_MARK_HONCHAKU, 1)
-        cnt = cnt + PaintMarkColumn(ws, blockTop + MARK_OFS_FIRST, dateMap, _
-                                    v(7), CLR_MARK_NOUKI, MARK_ROWS)
+
+        res = PaintMarkColumn(ws, blockTop + MARK_OFS_HONCHAKU, dateMap, _
+                              v(6), CLR_MARK_HONCHAKU, 1)
+        Select Case res
+            Case -1: hNone = hNone + 1
+            Case -2
+                hOut = hOut + 1
+                If hOut <= 5 Then hList = hList & "    " & CStr(v(1)) & " " & _
+                                          Format$(v(6), "yyyy/mm/dd") & vbCrLf
+            Case Else: hOK = hOK + 1: cnt = cnt + res
+        End Select
+
+        res = PaintMarkColumn(ws, blockTop + MARK_OFS_FIRST, dateMap, _
+                              v(7), CLR_MARK_NOUKI, MARK_ROWS)
+        Select Case res
+            Case -1: nNone = nNone + 1
+            Case -2: nOut = nOut + 1
+            Case Else: nOK = nOK + 1: cnt = cnt + res
+        End Select
     Next key
+
+    report = "本着日（黒） : " & hOK & " 件"
+    If hNone > 0 Then report = report & " / 日付なし " & hNone & " 件"
+    If hOut > 0 Then report = report & " / 表示期間外 " & hOut & " 件" & vbCrLf & hList
+    report = report & vbCrLf & "お客様納期（青） : " & nOK & " 件"
+    If nNone > 0 Then report = report & " / 日付なし " & nNone & " 件"
+    If nOut > 0 Then report = report & " / 表示期間外 " & nOut & " 件"
 
     PaintMilestones = cnt
 End Function
 
+'---------------------------------------------------------------------
+' 縦に rowCount マス塗る
+'
+' 戻り値 : 塗ったセル数 / -1 日付が無い / -2 工程表の表示期間の外
+'---------------------------------------------------------------------
 Private Function PaintMarkColumn(ws As Worksheet, baseRow As Long, dateMap As Object, _
                                  dv As Variant, rgbVal As Long, rowCount As Long) As Long
     Dim d As Date, col As Long, i As Long
 
-    If Not IsDate(dv) Then Exit Function
+    If Not IsDate(dv) Then
+        PaintMarkColumn = -1
+        Exit Function
+    End If
     d = CDate(dv)
-    If Not dateMap.Exists(CLng(d)) Then Exit Function
+    If Not dateMap.Exists(CLng(d)) Then
+        PaintMarkColumn = -2
+        Exit Function
+    End If
 
     col = CLng(dateMap(CLng(d)))
     For i = 0 To rowCount - 1

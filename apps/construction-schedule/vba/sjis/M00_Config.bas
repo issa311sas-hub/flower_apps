@@ -52,9 +52,16 @@ Public Const COL_KISO_VENDOR  As Long = 14       ' 基礎業者      (先頭行 +0)
 Public Const COL_KUTAI_VENDOR As Long = 15       ' 躯体業者      (先頭行 +0)
 
 ' 本着日とお客様納期（先頭行 +2 がラベル、+3 が値）
+' 実際にはブックによって1行・1列ずれていることがあるため、
+' FindBlockDate がラベル（「本着」「納期」）を手がかりに探す。
+' 下の座標は、ラベルが見つからなかったときの保険。
 Public Const ROW_OFS_DATES   As Long = 3
 Public Const COL_HONCHAKU    As Long = 11        ' 本着日
 Public Const COL_NOUKI       As Long = 12        ' お客様納期
+
+' 物件の情報が入っている列の範囲（日付エリアより左側）。ラベル探索に使う。
+Public Const COL_INFO_FIRST  As Long = 8
+Public Const COL_INFO_LAST   As Long = 16        ' = COL_DATE_FIRST - 1
 
 ' --- ブロック内の行オフセット (0 始まり) ----------------------------
 ' 日付エリアではオフセットごとに意味が違う。必ずこの定数経由で書く。
@@ -298,6 +305,65 @@ Public Function SheetNameList() As String
 End Function
 
 '---------------------------------------------------------------------
+' 物件ブロックから、ラベル付きの日付を探す
+'
+' 本着日・お客様納期は、ブロックの左側（日付エリアより左）に
+' 「本着」「お客様納期」のラベルと日付が並んでいる。
+' ブックによって行や列が1つずれていることがあるため、
+' 決め打ちにせずラベルを手がかりに探す。
+'
+'   1) ラベルの入ったセルを、ブロックの範囲から探す
+'   2) そのセル自身 → 下 → 右 → 右下 の順に日付を探す
+'   3) 見つからなければ、決め打ちの座標（fallbackCol）で読む
+'
+' 見つからなければ Empty を返す。
+'---------------------------------------------------------------------
+Public Function FindBlockDate(ws As Worksheet, topRow As Long, _
+                              label As String, fallbackCol As Long) As Variant
+    Dim off As Long, c As Long, r As Long
+    Dim t As String, v As Variant
+
+    For off = 0 To BLOCK_ROWS - 1
+        r = topRow + off
+        For c = COL_INFO_FIRST To COL_INFO_LAST
+            t = Trim$(CStr(ws.Cells(r, c).Value))
+            If Len(t) > 0 Then
+                If InStr(1, t, label) > 0 Then
+                    v = FirstDateAround(ws, r, c)
+                    If IsDate(v) Then
+                        FindBlockDate = CDate(v)
+                        Exit Function
+                    End If
+                End If
+            End If
+        Next c
+    Next off
+
+    ' ラベルが見つからないときは決め打ちの座標で読む
+    v = ws.Cells(topRow + ROW_OFS_DATES, fallbackCol).Value
+    If IsDate(v) Then FindBlockDate = CDate(v)
+End Function
+
+'---------------------------------------------------------------------
+' そのセルとその周り（下・右・右下）から最初に見つかる日付を返す
+'---------------------------------------------------------------------
+Private Function FirstDateAround(ws As Worksheet, r As Long, c As Long) As Variant
+    Dim cand As Variant, i As Long
+    Dim rr As Variant, cc As Variant
+
+    rr = Array(0, 1, 0, 1, 2)
+    cc = Array(0, 0, 1, 1, 0)
+
+    For i = LBound(rr) To UBound(rr)
+        cand = ws.Cells(r + CLng(rr(i)), c + CLng(cc(i))).Value
+        If IsDate(cand) Then
+            FirstDateAround = CDate(cand)
+            Exit Function
+        End If
+    Next i
+End Function
+
+'---------------------------------------------------------------------
 ' 列番号 -> 日付 の対応表を作る
 '
 ' 月の変わり目に日付の入っていない区切り列が挟まるため、
@@ -386,14 +452,8 @@ Public Function FindBlocks(ws As Worksheet) As Collection
             kisoV = Trim$(CStr(ws.Cells(r, COL_KISO_VENDOR).Value))
             kutaiV = Trim$(CStr(ws.Cells(r, COL_KUTAI_VENDOR).Value))
 
-            honchaku = Empty
-            nouki = Empty
-            If IsDate(ws.Cells(r + ROW_OFS_DATES, COL_HONCHAKU).Value) Then
-                honchaku = CDate(ws.Cells(r + ROW_OFS_DATES, COL_HONCHAKU).Value)
-            End If
-            If IsDate(ws.Cells(r + ROW_OFS_DATES, COL_NOUKI).Value) Then
-                nouki = CDate(ws.Cells(r + ROW_OFS_DATES, COL_NOUKI).Value)
-            End If
+            honchaku = FindBlockDate(ws, r, "本着", COL_HONCHAKU)
+            nouki = FindBlockDate(ws, r, "納期", COL_NOUKI)
 
             col.Add Array(r, nm, contract, typ, kisoV, kutaiV, honchaku, nouki)
             r = r + BLOCK_ROWS
