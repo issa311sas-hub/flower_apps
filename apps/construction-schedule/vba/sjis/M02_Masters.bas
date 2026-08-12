@@ -135,32 +135,56 @@ Private Sub SetupVendorSheet()
 End Sub
 
 '---------------------------------------------------------------------
-' M_例外日 : 物件ごとの祝日例外
+' M_例外日 : 物件ごとの例外日
 '
-' 区分:
-'   非祝日扱い … その物件だけ、その日を稼働日として扱う（塗らない）
-'   臨時休工   … その物件だけ、平日でも休みとして塗る
+' 入力するのは 契約番号 と 日付 の2列だけ。
+' 「詳細」はマクロが日付から判定して書き込む。
+'   その日が日祝（日曜・祝日・お盆・年末年始）… 日祝→作業
+'   それ以外（平日）                          … 平日→休み
+'
+' 契約番号に「全件」と書くと、全物件に適用される（会社都合の休工など）。
 '---------------------------------------------------------------------
 Private Sub SetupExceptionSheet()
     Dim ws As Worksheet, isNew As Boolean
     Set ws = GetOrCreateSheet(SH_EXCEPT)
     isNew = (Len(Trim$(CStr(ws.Cells(1, 1).Value))) = 0)
 
-    WriteHeader ws, Array("契約番号", "日付", "区分", "備考")
+    ' 旧形式（区分・備考の4列）が残っていたら退避して作り直す
+    If Not isNew Then
+        If Not ExceptionSheetIsCurrent() Then
+            BackupSheet ws
+            Set ws = GetOrCreateSheet(SH_EXCEPT)
+            isNew = True
+        End If
+    End If
+
+    WriteHeader ws, Array("契約番号", "日付", "詳細")
     If Not isNew Then Exit Sub
 
-    ' 区分列にプルダウンを設定
-    With ws.Range("C2:C1000").Validation
-        .Delete
-        .Add Type:=xlValidateList, AlertStyle:=xlValidAlertStop, _
-             Operator:=xlBetween, Formula1:="非祝日扱い,臨時休工"
-        .IgnoreBlank = True
-        .InCellDropdown = True
-    End With
+    On Error Resume Next
+    ws.Range("A1").AddComment "入力。契約番号。「" & EXCEPT_ALL & "」と書くと全物件に適用されます"
+    ws.Range("B1").AddComment "入力。例外にしたい日付"
+    ws.Range("C1").AddComment "出力。日付から自動で判定されます"
+    On Error GoTo 0
 
     ws.Range("B2:B1000").NumberFormatLocal = "yyyy/mm/dd"
-    ws.Columns("A:D").ColumnWidth = 16
+    ws.Range("C1:C1000").Interior.Color = RGB(242, 242, 242)
+    ws.Columns("A:B").ColumnWidth = 16
+    ws.Columns("C:C").ColumnWidth = 18
 End Sub
+
+'---------------------------------------------------------------------
+' M_例外日 が新形式（契約番号・日付・詳細の3列）かどうか
+'---------------------------------------------------------------------
+Public Function ExceptionSheetIsCurrent() As Boolean
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(SH_EXCEPT)
+    On Error GoTo 0
+    If ws Is Nothing Then Exit Function
+
+    ExceptionSheetIsCurrent = (Trim$(CStr(ws.Cells(1, 3).Value)) = "詳細")
+End Function
 
 '---------------------------------------------------------------------
 ' M_工期 : 標準工期マスタ

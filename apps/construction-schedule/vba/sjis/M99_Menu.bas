@@ -34,6 +34,15 @@ Public Sub ボタン_工程の計算結果をクリア()
     ClearPlanResults
 End Sub
 
+'---------------------------------------------------------------------
+' 工程表から工程の色だけを消す
+'
+' M_工程データ の日付は残るので、「工程を作る」で塗り直せる。
+'---------------------------------------------------------------------
+Public Sub ボタン_工程の色をクリア()
+    ClearTaskColors
+End Sub
+
 ' 「色を塗り直す」は「工程を作る」に統合した。
 ' 開始日を直して ボタン_工程を作る を実行すれば塗り直される。
 
@@ -123,6 +132,12 @@ Public Sub ボタン_導入状態を確認()
         msg = msg & "  OK  " & SH_TASK & " : 1物件1行の横並び" & vbCrLf
     Else
         msg = msg & "  NG  " & SH_TASK & " : 古い形式。「ボタン_初期セットアップ」を実行してください" & vbCrLf
+        ng = ng + 1
+    End If
+    If ExceptionSheetIsCurrent() Then
+        msg = msg & "  OK  " & SH_EXCEPT & " : 契約番号・日付・詳細の3列" & vbCrLf
+    Else
+        msg = msg & "  NG  " & SH_EXCEPT & " : 古い形式。「ボタン_初期セットアップ」を実行してください" & vbCrLf
         ng = ng + 1
     End If
 

@@ -4,10 +4,9 @@ Option Explicit
 '=====================================================================
 ' M03_PaintHolidays : 日曜・祝日の自動塗りつぶし
 '
-' ・日曜と祝日を黄緑 RGB(153,204,0) で塗る
+' ・日曜・祝日・お盆・年末年始を黄緑 RGB(153,204,0) で塗る
 ' ・物件ごとの例外を M_例外日 シートで受け付ける
-'     非祝日扱い … その物件だけ稼働日として扱う（塗らない）
-'     臨時休工   … その物件だけ平日でも休みとして塗る
+'   （その日の判定が反転する。判定は M01_Holiday に集約してある）
 ' ・すでに工程色が入っているセルは塗りつぶさず、報告だけする
 '   （実データに、日曜へ社内行事の色を載せている例があるため）
 '
@@ -19,20 +18,22 @@ Option Explicit
 '---------------------------------------------------------------------
 Public Sub PaintHolidays()
     Dim ws As Worksheet
-    Dim colMap As Object, exMap As Object
+    Dim colMap As Object
     Dim blocks As Collection, b As Variant
     Dim c As Variant, d As Date
     Dim r As Long, off As Long
-    Dim baseOff As Boolean, eff As Boolean
-    Dim key As String, kind As String
+    Dim eff As Boolean
     Dim painted As Long, cleared As Long, skipped As Long
     Dim skipList As String, skipCount As Long
     Dim cell As Range
 
+    ' 例外日を読み直してから判定する
+    ResetExceptionCache
+    UpdateExceptionDetails
+
     Set ws = ChartSheet()
     Set colMap = BuildColMap(ws)
     Set blocks = FindBlocks(ws)
-    Set exMap = LoadExceptions()
 
     If blocks.Count = 0 Then
         MsgBox "物件ブロックが見つかりませんでした。" & vbCrLf & _
@@ -47,16 +48,9 @@ Public Sub PaintHolidays()
 
     For Each c In colMap.Keys
         d = colMap(c)
-        baseOff = IsNonWorkingDay(d)
 
         For Each b In blocks
-            key = BlockKey(b) & "|" & CLng(d)
-            kind = ""
-            If exMap.Exists(key) Then kind = exMap(key)
-
-            eff = baseOff
-            If kind = "非祝日扱い" Then eff = False
-            If kind = "臨時休工" Then eff = True
+            eff = IsNonWorkingDayFor(BlockKey(b), d)
 
             For off = 0 To BLOCK_ROWS - 1
                 r = CLng(b(0)) + off
@@ -134,39 +128,6 @@ Private Sub PaintHeaderHolidays(ws As Worksheet, colMap As Object)
         Next r
     Next c
 End Sub
-
-'---------------------------------------------------------------------
-' M_例外日 を読み込む
-' キー: 契約番号 & "|" & 日付シリアル   値: 区分
-'---------------------------------------------------------------------
-Private Function LoadExceptions() As Object
-    Dim ws As Worksheet, map As Object
-    Dim r As Long, lastRow As Long
-    Dim contract As String, kind As String
-    Dim v As Variant
-
-    Set map = CreateObject("Scripting.Dictionary")
-
-    On Error Resume Next
-    Set ws = ThisWorkbook.Worksheets(SH_EXCEPT)
-    On Error GoTo 0
-    If ws Is Nothing Then
-        Set LoadExceptions = map
-        Exit Function
-    End If
-
-    lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
-    For r = 2 To lastRow
-        contract = Trim$(CStr(ws.Cells(r, 1).Value))
-        v = ws.Cells(r, 2).Value
-        kind = Trim$(CStr(ws.Cells(r, 3).Value))
-        If Len(contract) > 0 And IsDate(v) And Len(kind) > 0 Then
-            map(contract & "|" & CLng(CDate(v))) = kind
-        End If
-    Next r
-
-    Set LoadExceptions = map
-End Function
 
 '---------------------------------------------------------------------
 ' ブロックのキー。契約番号を優先し、無ければ邸名を使う。

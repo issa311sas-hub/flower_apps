@@ -24,6 +24,19 @@ Public Const NENMATSU_DAY   As Long = 30
 Public Const NENSHI_MONTH   As Long = 1    ' 年始（1/1～1/3）
 Public Const NENSHI_DAY     As Long = 3
 
+' --- 物件ごとの例外日 -----------------------------------------------
+' M_例外日 に契約番号と日付を書くと、その日は通常の判定が反転する。
+'   もともと非稼働日（日曜・祝日・お盆・年末年始）→ その物件だけ稼働日
+'   もともと稼働日（平日）                        → その物件だけ休み
+' 契約番号に「全件」と書くと全物件に適用される（会社都合の休工など）。
+'
+' 塗りつぶしだけでなく工期の計算にも効かせるため、
+' 日数を数える処理はすべて IsNonWorkingDayFor / AddWorkingDaysFor を通す。
+Public Const EXCEPT_ALL As String = "全件"
+
+Private mExcept As Object          ' key: 契約番号|日付シリアル
+Private mExceptLoaded As Boolean
+
 '---------------------------------------------------------------------
 ' 祝日か（振替休日・国民の休日を含む。会社休業日は含まない）
 '---------------------------------------------------------------------
@@ -73,6 +86,119 @@ Public Function IsNonWorkingDay(d As Date) As Boolean
                       Or IsHoliday(d) _
                       Or IsCompanyClosure(d)
 End Function
+
+'=====================================================================
+' 物件ごとの例外日
+'=====================================================================
+
+'---------------------------------------------------------------------
+' 例外日の読み込みキャッシュを捨てる
+' M_例外日 を書き換えたあとに呼ぶ（各ボタンの先頭で呼んでいる）
+'---------------------------------------------------------------------
+Public Sub ResetExceptionCache()
+    Set mExcept = Nothing
+    mExceptLoaded = False
+End Sub
+
+Private Sub EnsureExceptions()
+    Dim ws As Worksheet, r As Long, lastRow As Long
+    Dim contract As String, v As Variant
+
+    If mExceptLoaded Then Exit Sub
+    Set mExcept = CreateObject("Scripting.Dictionary")
+
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(SH_EXCEPT)
+    On Error GoTo 0
+
+    If Not ws Is Nothing Then
+        lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+        For r = 2 To lastRow
+            contract = Trim$(CStr(ws.Cells(r, 1).Value))
+            v = ws.Cells(r, 2).Value
+            If Len(contract) > 0 And IsDate(v) Then
+                mExcept(contract & "|" & CLng(CDate(v))) = True
+            End If
+        Next r
+    End If
+
+    mExceptLoaded = True
+End Sub
+
+'---------------------------------------------------------------------
+' その物件・その日に例外の指定があるか（「全件」を含む）
+'---------------------------------------------------------------------
+Public Function HasException(contract As String, d As Date) As Boolean
+    EnsureExceptions
+
+    If mExcept.Exists(EXCEPT_ALL & "|" & CLng(d)) Then
+        HasException = True
+        Exit Function
+    End If
+    If Len(contract) > 0 Then
+        HasException = mExcept.Exists(contract & "|" & CLng(d))
+    End If
+End Function
+
+'---------------------------------------------------------------------
+' 物件ごとの非稼働日判定。例外があれば通常の判定を反転する。
+'---------------------------------------------------------------------
+Public Function IsNonWorkingDayFor(contract As String, d As Date) As Boolean
+    If HasException(contract, d) Then
+        IsNonWorkingDayFor = Not IsNonWorkingDay(d)
+    Else
+        IsNonWorkingDayFor = IsNonWorkingDay(d)
+    End If
+End Function
+
+'---------------------------------------------------------------------
+' 物件ごとに稼働日を n 日進める
+'---------------------------------------------------------------------
+Public Function AddWorkingDaysFor(contract As String, d As Date, n As Long) As Date
+    Dim cur As Date, i As Long
+    cur = d
+    Do While IsNonWorkingDayFor(contract, cur)
+        cur = cur + 1
+    Loop
+    For i = 1 To n
+        cur = cur + 1
+        Do While IsNonWorkingDayFor(contract, cur)
+            cur = cur + 1
+        Loop
+    Next i
+    AddWorkingDaysFor = cur
+End Function
+
+'---------------------------------------------------------------------
+' M_例外日 の「詳細」列を、日付から自動で埋める
+'
+' その日が日祝（日曜・祝日・お盆・年末年始）なら「日祝→作業」、
+' そうでなければ「平日→休み」。ユーザーは契約番号と日付だけ入力すればよい。
+'---------------------------------------------------------------------
+Public Sub UpdateExceptionDetails()
+    Dim ws As Worksheet, r As Long, lastRow As Long
+    Dim contract As String, v As Variant
+
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(SH_EXCEPT)
+    On Error GoTo 0
+    If ws Is Nothing Then Exit Sub
+
+    lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+    For r = 2 To lastRow
+        contract = Trim$(CStr(ws.Cells(r, 1).Value))
+        v = ws.Cells(r, 2).Value
+        If Len(contract) = 0 Then
+            ws.Cells(r, 3).ClearContents
+        ElseIf Not IsDate(v) Then
+            ws.Cells(r, 3).Value = "日付が正しくありません"
+        ElseIf IsNonWorkingDay(CDate(v)) Then
+            ws.Cells(r, 3).Value = "日祝→作業"
+        Else
+            ws.Cells(r, 3).Value = "平日→休み"
+        End If
+    Next r
+End Sub
 
 '---------------------------------------------------------------------
 ' 非稼働日の理由を返す。稼働日なら空文字。
