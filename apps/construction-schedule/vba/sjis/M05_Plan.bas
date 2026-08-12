@@ -16,12 +16,19 @@ Option Explicit
 '   4. 同じ業者が同じ日に2現場へ入らないように業者を割り当てる
 '   5. 工程表に色を塗る
 '
-' 開始日を直して再実行すれば、後ろの工程まで丸ごと計算し直される。
-' 雨で基礎がずれた場合は、基礎開始日を書き換えて実行するだけでよい。
+' ■ 空欄のところだけ埋める
+' 会社やお客様の都合で日程を人が決めることがあるため、
+' すでに値が入っているセルには一切触らない。計算して書き込むのは空欄だけ。
 '
-'   終了日     … 出力。毎回かならず計算し直して上書きする
-'   躯体開始日 … 空欄なら基礎終了日から自動。前回自動で入れた値も追随して更新する
-'   調整       … 工期に足し引きする日数。日数の微調整はここで行う
+'   開始日 … 入っていればその日を使う。空欄で2番目以降なら前工程から決める
+'   終了日 … 入っていればその日を使う。空欄なら工期の式で計算する
+'   色名   … 入っていればその業者で固定。空欄なら空いている業者を割り当てる
+'   調整   … 終了日を計算するときだけ使う日数の増減
+'
+' 手入力の日程も「業者の空き」として数えるので、自動割り当てが人の予定と被らない。
+'
+' 日程を計算し直したいときは、その行の終了日を消してから実行する。
+' 行をまとめて消すなら ClearPlanResultsForSelection / ClearPlanResults を使う。
 '
 ' 何度実行しても同じ結果になる（冪等）。
 '=====================================================================
@@ -89,12 +96,6 @@ Public Sub GeneratePlan()
     Set prevEnd = CreateObject("Scripting.Dictionary")
     Set result = CreateObject("Scripting.Dictionary")
 
-    ' 前回の終了日を先に控える。
-    ' これが無いと「2番目以降の開始日が前回の自動値か手入力か」を見分けられず、
-    ' 前工程がずれても後工程が追随しない。
-    Dim oldEnd As Object
-    Set oldEnd = SnapshotEndDates(wsT)
-
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
     On Error GoTo Cleanup
@@ -103,7 +104,7 @@ Public Sub GeneratePlan()
     For k = 1 To TASK_COUNT
         PlanOneTask k, ws, wsT, dateMap, colorMap, _
                     blockRow, blockType, blockName, _
-                    occupied, prevEnd, result, oldEnd, _
+                    occupied, prevEnd, result, _
                     painted, warned, warnCount, _
                     unassigned, unassignedCount, derived, outOfRange, kept
     Next k
@@ -128,7 +129,6 @@ Private Sub PlanOneTask(k As Long, ws As Worksheet, wsT As Worksheet, _
                         dateMap As Object, colorMap As Object, _
                         blockRow As Object, blockType As Object, blockName As Object, _
                         occupied As Object, prevEnd As Object, result As Object, _
-                        oldEnd As Object, _
                         ByRef painted As Long, ByRef warned As String, ByRef warnCount As Long, _
                         ByRef unassigned As String, ByRef unassignedCount As Long, _
                         ByRef derived As Long, ByRef outOfRange As Long, ByRef kept As Long)
@@ -155,7 +155,7 @@ Private Sub PlanOneTask(k As Long, ws As Worksheet, wsT As Worksheet, _
     lastRow = wsT.Cells(wsT.Rows.Count, TASK_COL_CONTRACT).End(xlUp).Row
     cap = lastRow
     If cap < 2 Then cap = 2
-    ReDim plan(1 To cap, 1 To 8)
+    ReDim plan(1 To cap, 1 To 7)
     n = 0
 
     '--- 1) 行を集める ------------------------------------------------
@@ -171,67 +171,49 @@ Private Sub PlanOneTask(k As Long, ws As Worksheet, wsT As Worksheet, _
         End If
 
         '--- 開始日を決める ------------------------------------------
-        ' 2番目以降は「前工程の終了日 + インターバル」が既定値。
-        ' セルに入っている値が前回その式で入れたものなら、自動値とみなして
-        ' 新しい前工程終了日から入れ直す。手で書いた値はそのまま残す。
-        Dim autoStart As Date, hasAuto As Boolean
-        hasAuto = False
-        If k > 1 Then
-            If prevEnd.Exists(contract) Then
-                autoStart = AddWorkingDaysFor(contract, CDate(prevEnd(contract)) + TaskInterval(k), 0)
-                hasAuto = True
-            End If
-        End If
-
-        If Not IsDate(wsT.Cells(r, c0 + TASK_OFS_START).Value) Then
-            If Not hasAuto Then GoTo NextRow    ' 基礎の開始日が空＝まだ計画対象外
-            dStart = autoStart
-            wsT.Cells(r, c0 + TASK_OFS_START).Value = dStart
-            derived = derived + 1
-        ElseIf hasAuto And WasAutoStart(wsT, r, c0, k, contract, oldEnd) Then
-            dStart = autoStart
+        ' 入っていればその日を使う（人が決めた日程を尊重する）。
+        ' 空欄で2番目以降の工程なら、前工程の終了日から決めて書き込む。
+        If IsDate(wsT.Cells(r, c0 + TASK_OFS_START).Value) Then
+            dStart = AddWorkingDaysFor(contract, CDate(wsT.Cells(r, c0 + TASK_OFS_START).Value), 0)
+        ElseIf k > 1 And prevEnd.Exists(contract) Then
+            dStart = AddWorkingDaysFor(contract, CDate(prevEnd(contract)) + TaskInterval(k), 0)
             wsT.Cells(r, c0 + TASK_OFS_START).Value = dStart
             derived = derived + 1
         Else
-            dStart = AddWorkingDaysFor(contract, CDate(wsT.Cells(r, c0 + TASK_OFS_START).Value), 0)
+            GoTo NextRow      ' 基礎の開始日が空＝まだ計画対象外
         End If
 
         typeCode = blockType(contract)
 
-        '--- 終了日を決める（毎回かならず計算し直す） -----------------
-        days = TermDays(taskLabel, typeCode)
-        If days <= 0 Then
-            warned = warned & "  " & contract & " : タイプ「" & typeCode & _
-                     "」から" & taskLabel & "の工期を計算できません" & vbCrLf
-            warnCount = warnCount + 1
-            GoTo NextRow
-        End If
-
-        ' 調整列の日数を足し引きする（1日を下回らないようにする）
-        If IsNumeric(wsT.Cells(r, c0 + TASK_OFS_ADJUST).Value) Then
-            If Len(Trim$(CStr(wsT.Cells(r, c0 + TASK_OFS_ADJUST).Value))) > 0 Then
-                days = days + CLng(wsT.Cells(r, c0 + TASK_OFS_ADJUST).Value)
+        '--- 終了日を決める ------------------------------------------
+        ' 入っていればその日を使う（人が決めた日程を尊重する）。空欄なら計算する。
+        If IsDate(wsT.Cells(r, c0 + TASK_OFS_END).Value) Then
+            dEnd = CDate(wsT.Cells(r, c0 + TASK_OFS_END).Value)
+            If dEnd < dStart Then dEnd = dStart
+            kept = kept + 1
+        Else
+            days = TermDays(taskLabel, typeCode)
+            If days <= 0 Then
+                warned = warned & "  " & contract & " : タイプ「" & typeCode & _
+                         "」から" & taskLabel & "の工期を計算できません" & vbCrLf
+                warnCount = warnCount + 1
+                GoTo NextRow
             End If
-        End If
-        If days < 1 Then days = 1
 
-        dEnd = AddWorkingDaysFor(contract, dStart, days - 1)
+            ' 調整列の日数を足し引きする（1日を下回らないようにする）
+            If IsNumeric(wsT.Cells(r, c0 + TASK_OFS_ADJUST).Value) Then
+                If Len(Trim$(CStr(wsT.Cells(r, c0 + TASK_OFS_ADJUST).Value))) > 0 Then
+                    days = days + CLng(wsT.Cells(r, c0 + TASK_OFS_ADJUST).Value)
+                End If
+            End If
+            If days < 1 Then days = 1
+
+            dEnd = AddWorkingDaysFor(contract, dStart, days - 1)
+        End If
 
         ' 実測範囲（25～90坪）を外れていたら印を付ける
         If ParseType(typeCode, kind, floors, area) Then
             If area < 25 Or area > 90 Then outOfRange = outOfRange + 1
-        End If
-
-        ' すでに同じ内容で計算済みなら触らない。
-        ' 終了日が計算結果と一致し、色名も入っていれば「変更なし」とみなす。
-        Dim unchanged As Boolean
-        unchanged = False
-        If IsDate(wsT.Cells(r, c0 + TASK_OFS_END).Value) Then
-            If CDate(wsT.Cells(r, c0 + TASK_OFS_END).Value) = dEnd Then
-                If Len(Trim$(CStr(wsT.Cells(r, c0 + TASK_OFS_COLOR).Value))) > 0 Then
-                    unchanged = True
-                End If
-            End If
         End If
 
         n = n + 1
@@ -242,7 +224,6 @@ Private Sub PlanOneTask(k As Long, ws As Worksheet, wsT As Worksheet, _
         plan(n, 5) = dEnd
         plan(n, 6) = Trim$(CStr(wsT.Cells(r, c0 + TASK_OFS_COLOR).Value))   ' 固定の色名
         plan(n, 7) = blockRow(contract)
-        plan(n, 8) = unchanged
 NextRow:
     Next r
 
@@ -287,16 +268,13 @@ NextRow:
     For i = 1 To n
         r = CLng(plan(i, 1))
 
-        ' 前回と同じ内容なら、シートも工程表も触らない
-        If CBool(plan(i, 8)) Then
-            kept = kept + 1
-            prevEnd(CStr(plan(i, 2))) = CDate(plan(i, 5))
-            result(CStr(plan(i, 2)) & "|" & k) = Array(plan(i, 3), plan(i, 4), plan(i, 5), plan(i, 6))
-            GoTo NextWrite
+        ' 空欄のところだけ埋める。すでに値が入っているセルには触らない。
+        If Not IsDate(wsT.Cells(r, c0 + TASK_OFS_END).Value) Then
+            wsT.Cells(r, c0 + TASK_OFS_END).Value = CDate(plan(i, 5))
         End If
-
-        wsT.Cells(r, c0 + TASK_OFS_END).Value = CDate(plan(i, 5))
-        wsT.Cells(r, c0 + TASK_OFS_COLOR).Value = CStr(plan(i, 6))
+        If Len(Trim$(CStr(wsT.Cells(r, c0 + TASK_OFS_COLOR).Value))) = 0 Then
+            wsT.Cells(r, c0 + TASK_OFS_COLOR).Value = CStr(plan(i, 6))
+        End If
 
         ClearTaskPaint ws, CLng(plan(i, 7)), dateMap, vendors, colorMap, TaskRowOffsets(k)
         If Len(CStr(plan(i, 6))) > 0 Then
@@ -305,58 +283,10 @@ NextRow:
                                           CLng(colorMap(CStr(plan(i, 6)))), TaskRowOffsets(k), CStr(plan(i, 2)))
         End If
 
-        ' 次の工程が参照できるよう結果を残す
         prevEnd(CStr(plan(i, 2))) = CDate(plan(i, 5))
         result(CStr(plan(i, 2)) & "|" & k) = Array(plan(i, 3), plan(i, 4), plan(i, 5), plan(i, 6))
-NextWrite:
     Next i
 End Sub
-
-'---------------------------------------------------------------------
-' 実行前の終了日を控える
-'
-' キー: 契約番号 & "|" & 工程番号
-'---------------------------------------------------------------------
-Private Function SnapshotEndDates(wsT As Worksheet) As Object
-    Dim map As Object, r As Long, lastRow As Long, k As Long, c0 As Long
-    Dim contract As String
-
-    Set map = CreateObject("Scripting.Dictionary")
-    lastRow = wsT.Cells(wsT.Rows.Count, TASK_COL_CONTRACT).End(xlUp).Row
-
-    For r = 2 To lastRow
-        contract = Trim$(CStr(wsT.Cells(r, TASK_COL_CONTRACT).Value))
-        If Len(contract) > 0 Then
-            For k = 1 To TASK_COUNT
-                c0 = TaskFirstCol(k)
-                If IsDate(wsT.Cells(r, c0 + TASK_OFS_END).Value) Then
-                    map(contract & "|" & k) = CDate(wsT.Cells(r, c0 + TASK_OFS_END).Value)
-                End If
-            Next k
-        End If
-    Next r
-
-    Set SnapshotEndDates = map
-End Function
-
-'---------------------------------------------------------------------
-' その開始日は、前回このマクロが自動で入れたものか
-'
-' 「前回の前工程終了日 + インターバル」と一致すれば自動値とみなす。
-' 手で書いた日付とは一致しないので、手入力は温存される。
-'---------------------------------------------------------------------
-Private Function WasAutoStart(wsT As Worksheet, r As Long, c0 As Long, _
-                              k As Long, contract As String, oldEnd As Object) As Boolean
-    Dim prevKey As String, expected As Date
-
-    If k <= 1 Then Exit Function
-    prevKey = contract & "|" & (k - 1)
-    If Not oldEnd.Exists(prevKey) Then Exit Function
-    If Not IsDate(wsT.Cells(r, c0 + TASK_OFS_START).Value) Then Exit Function
-
-    expected = AddWorkingDaysFor(contract, CDate(oldEnd(prevKey)) + TaskInterval(k), 0)
-    WasAutoStart = (CDate(wsT.Cells(r, c0 + TASK_OFS_START).Value) = expected)
-End Function
 
 '=====================================================================
 ' 前提のチェック
@@ -406,7 +336,7 @@ Private Sub ShowReport(ws As Worksheet, result As Object, blockName As Object, _
           "物件       : " & total & " 件" & vbCrLf & _
           "塗ったセル : " & painted & vbCrLf
     If derived > 0 Then msg = msg & "躯体開始日を自動で決めた物件 : " & derived & " 件" & vbCrLf
-    If kept > 0 Then msg = msg & "前回と同じで手を触れなかった工程 : " & kept & " 件" & vbCrLf
+    If kept > 0 Then msg = msg & "手入力の終了日をそのまま使った工程 : " & kept & " 件" & vbCrLf
 
     msg = msg & vbCrLf & "邸名 / タイプ / 基礎 / 躯体" & vbCrLf
 
@@ -532,21 +462,21 @@ End Sub
 '=====================================================================
 Private Sub SortPlanByStart(plan() As Variant, n As Long)
     Dim i As Long, j As Long, c As Long
-    Dim tmp(1 To 8) As Variant
+    Dim tmp(1 To 7) As Variant
 
     For i = 2 To n
-        For c = 1 To 8
+        For c = 1 To 7
             tmp(c) = plan(i, c)
         Next c
         j = i - 1
         Do While j >= 1
             If CDate(plan(j, 4)) <= CDate(tmp(4)) Then Exit Do
-            For c = 1 To 8
+            For c = 1 To 7
                 plan(j + 1, c) = plan(j, c)
             Next c
             j = j - 1
         Loop
-        For c = 1 To 8
+        For c = 1 To 7
             plan(j + 1, c) = tmp(c)
         Next c
     Next i
@@ -760,7 +690,62 @@ Public Sub ClearTaskColors()
 End Sub
 
 '=====================================================================
-' 計算結果をクリアする（割り当てをやり直したいとき）
+' 選択した行だけ計算結果をクリアする
+'
+' 雨で日程がずれた行を選んで実行 → 開始日を直して「工程を作る」で計算し直す。
+'=====================================================================
+Public Sub ClearPlanResultsForSelection()
+    Dim wsT As Worksheet, cell As Range, rows As Object
+    Dim r As Variant, k As Long, c0 As Long, cnt As Long
+
+    If Not TaskSheetIsCurrent() Then
+        MsgBox SH_TASK & " シートが古い形式です。" & vbCrLf & _
+               "「ボタン_初期セットアップ」を実行してください。", vbExclamation
+        Exit Sub
+    End If
+
+    Set wsT = ThisWorkbook.Worksheets(SH_TASK)
+    If ActiveSheet.Name <> wsT.Name Then
+        MsgBox SH_TASK & " シート上で、対象の行を選択してから実行してください。", vbExclamation
+        Exit Sub
+    End If
+
+    ' 選択されている行番号を集める
+    Set rows = CreateObject("Scripting.Dictionary")
+    For Each cell In Selection.Cells
+        If cell.Row >= 2 Then
+            If Len(Trim$(CStr(wsT.Cells(cell.Row, TASK_COL_CONTRACT).Value))) > 0 Then
+                rows(cell.Row) = True
+            End If
+        End If
+    Next cell
+
+    If rows.Count = 0 Then
+        MsgBox "契約番号の入っている行が選択されていません。", vbExclamation
+        Exit Sub
+    End If
+
+    If MsgBox(rows.Count & " 件の物件について、計算結果を消します。" & vbCrLf & vbCrLf & _
+              "消すもの : 終了日 / 色名 / 2番目以降の開始日" & vbCrLf & _
+              "残るもの : 基礎開始日 / 調整 / 備考" & vbCrLf & vbCrLf & _
+              "よろしいですか？", vbYesNo + vbQuestion) <> vbYes Then Exit Sub
+
+    For Each r In rows.Keys
+        For k = 1 To TASK_COUNT
+            c0 = TaskFirstCol(k)
+            wsT.Cells(CLng(r), c0 + TASK_OFS_END).ClearContents
+            wsT.Cells(CLng(r), c0 + TASK_OFS_COLOR).ClearContents
+            If k > 1 Then wsT.Cells(CLng(r), c0 + TASK_OFS_START).ClearContents
+        Next k
+        cnt = cnt + 1
+    Next r
+
+    MsgBox cnt & " 件をクリアしました。" & vbCrLf & _
+           "開始日を直してから「ボタン_工程を作る」を実行してください。", vbInformation
+End Sub
+
+'=====================================================================
+' 計算結果をすべてクリアする（割り当てをやり直したいとき）
 '
 ' 開始日は残し、終了日と色名だけ消す。
 '=====================================================================
