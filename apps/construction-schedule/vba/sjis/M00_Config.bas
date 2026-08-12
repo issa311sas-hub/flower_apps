@@ -19,6 +19,9 @@ Public Const SH_VENDOR  As String = "M_業者"
 Public Const SH_EXCEPT  As String = "M_例外日"
 Public Const SH_TASK    As String = "M_工程データ"
 
+' イベント入力の一時シート。入力が終わると削除される。
+Public Const SH_EVENT_INPUT As String = "イベント入力"
+
 ' 使わなくなったシート。中身はマクロに取り込んだので、初期セットアップで削除する。
 Public Const SH_SETTING As String = "M_設定"
 Public Const SH_TERM    As String = "M_工期"
@@ -284,7 +287,7 @@ End Function
 '---------------------------------------------------------------------
 Public Function IsMasterSheet(sheetName As String) As Boolean
     Select Case sheetName
-        Case SH_SETTING, SH_VENDOR, SH_EXCEPT, SH_TERM, SH_TASK
+        Case SH_SETTING, SH_VENDOR, SH_EXCEPT, SH_TERM, SH_TASK, SH_EVENT_INPUT
             IsMasterSheet = True
         Case Else
             IsMasterSheet = False
