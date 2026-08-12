@@ -253,9 +253,30 @@ NextRow:
         If Len(CStr(plan(i, 6))) = 0 Then
             colorName = FindFreeVendor(vendors, occupied, CDate(plan(i, 4)), CDate(plan(i, 5)), CStr(plan(i, 2)))
             If Len(colorName) = 0 Then
-                unassigned = unassigned & "  [" & taskLabel & "] " & _
-                             blockName(CStr(plan(i, 2))) & "  " & _
-                             Format$(plan(i, 4), "mm/dd") & "～" & Format$(plan(i, 5), "mm/dd") & vbCrLf
+                Dim wd As Long, reason As String
+                Dim best As Date, bestVendor As String
+
+                wd = CountWorkDaysFor(CStr(plan(i, 2)), CDate(plan(i, 4)), CDate(plan(i, 5)))
+                reason = BlockingVendors(vendors, occupied, blockName, _
+                                         CDate(plan(i, 4)), CDate(plan(i, 5)), CStr(plan(i, 2)))
+                bestVendor = ""
+                best = EarliestStart(vendors, occupied, CDate(plan(i, 4)), wd, _
+                                     CStr(plan(i, 2)), bestVendor)
+
+                unassigned = unassigned & _
+                    "  【" & taskLabel & "】" & blockName(CStr(plan(i, 2))) & _
+                    "  " & Format$(plan(i, 4), "mm/dd") & "～" & Format$(plan(i, 5), "mm/dd") & _
+                    "（" & wd & "稼働日）" & vbCrLf & _
+                    "    この期間は" & vendors.Count & "業者すべてがふさがっています。" & vbCrLf & _
+                    reason
+                If best > 0 Then
+                    unassigned = unassigned & _
+                        "    → " & Format$(best, "yyyy/mm/dd") & " から着手すれば「" & _
+                        bestVendor & "」が空きます" & vbCrLf & vbCrLf
+                Else
+                    unassigned = unassigned & _
+                        "    → 1年先まで空きがありません。業者を増やす必要があります" & vbCrLf & vbCrLf
+                End If
                 unassignedCount = unassignedCount + 1
             Else
                 plan(i, 6) = colorName
@@ -366,15 +387,21 @@ Private Sub ShowReport(ws As Worksheet, result As Object, blockName As Object, _
               "　工期の式は 25～90坪 の実績から作っています。外れる物件の日数は目安です。" & vbCrLf
     End If
     If unassignedCount > 0 Then
-        msg = msg & vbCrLf & "■ 業者が足りず割り当てられなかった工程 (" & unassignedCount & "件):" & vbCrLf & _
-              unassigned & "　" & SH_VENDOR & " に業者を追加するか、開始日をずらしてください。" & vbCrLf
+        msg = msg & vbCrLf & String$(50, "-") & vbCrLf & _
+              "■ 割り当てできませんでした（" & unassignedCount & "件）" & vbCrLf & vbCrLf & _
+              unassigned & _
+              "  この日程では業者が足りません。次のどれかで解消できます。" & vbCrLf & _
+              "    ・上に出ている日まで開始日をずらす" & vbCrLf & _
+              "    ・先に入っている物件の日程を動かす" & vbCrLf & _
+              "    ・" & SH_VENDOR & " に業者を追加する" & vbCrLf & vbCrLf & _
+              "  ※この工程は終了日も色名も空欄のままで、工程表にも塗られていません。" & vbCrLf
     End If
     If warnCount > 0 Then
         msg = msg & vbCrLf & "■ 警告:" & vbCrLf & warned
     End If
 
     MsgBox msg, IIf(unassignedCount > 0 Or warnCount > 0, vbExclamation, vbInformation), _
-           "工程を作る"
+           IIf(unassignedCount > 0, "工程を作る － 割り当てできない工程があります", "工程を作る")
 End Sub
 
 '=====================================================================
@@ -426,6 +453,86 @@ Private Sub ClearTaskPaint(ws As Worksheet, blockRow As Long, dateMap As Object,
 End Sub
 
 '=====================================================================
+' 割り当てできなかったときの説明
+'=====================================================================
+
+'---------------------------------------------------------------------
+' どの業者が、いつ、誰にふさがれているかを並べる
+'---------------------------------------------------------------------
+Private Function BlockingVendors(vendors As Object, occupied As Object, _
+                                 blockName As Object, _
+                                 dFrom As Date, dTo As Date, _
+                                 contract As String) As String
+    Dim k As Variant, d As Date, s As String
+    Dim other As String, hitDay As Date, found As Boolean
+
+    For Each k In vendors.Keys
+        found = False
+        For d = dFrom To dTo
+            If Not IsNonWorkingDayFor(contract, d) Then
+                If occupied.Exists(k & "|" & CLng(d)) Then
+                    other = CStr(occupied(k & "|" & CLng(d)))
+                    hitDay = d
+                    found = True
+                    Exit For
+                End If
+            End If
+        Next d
+        If found Then
+            s = s & "      " & CStr(k) & " … " & Format$(hitDay, "mm/dd") & " から " & _
+                HolderName(blockName, other) & vbCrLf
+        End If
+    Next k
+
+    BlockingVendors = s
+End Function
+
+Private Function HolderName(blockName As Object, contract As String) As String
+    If blockName.Exists(contract) Then
+        HolderName = CStr(blockName(contract)) & " が使用中"
+    Else
+        HolderName = contract & " が使用中"
+    End If
+End Function
+
+'---------------------------------------------------------------------
+' 最短で着手できる日を探す
+'
+' 稼働日数を保ったまま開始日を1日ずつ後ろへずらし、
+' どれか1社が期間中ずっと空く最初の日を返す。
+' 1年先まで見つからなければ 0 を返す。
+'---------------------------------------------------------------------
+Private Function EarliestStart(vendors As Object, occupied As Object, _
+                               dFrom As Date, workDays As Long, _
+                               contract As String, ByRef vendorName As String) As Date
+    Dim tryStart As Date, tryEnd As Date, i As Long, nm As String
+
+    If workDays < 1 Then workDays = 1
+
+    For i = 1 To 365
+        tryStart = AddWorkingDaysFor(contract, dFrom + i, 0)
+        tryEnd = AddWorkingDaysFor(contract, tryStart, workDays - 1)
+        nm = FindFreeVendor(vendors, occupied, tryStart, tryEnd, contract)
+        If Len(nm) > 0 Then
+            vendorName = nm
+            EarliestStart = tryStart
+            Exit Function
+        End If
+    Next i
+End Function
+
+'---------------------------------------------------------------------
+' 物件ごとの稼働日数を数える
+'---------------------------------------------------------------------
+Private Function CountWorkDaysFor(contract As String, dFrom As Date, dTo As Date) As Long
+    Dim d As Date, c As Long
+    For d = dFrom To dTo
+        If Not IsNonWorkingDayFor(contract, d) Then c = c + 1
+    Next d
+    CountWorkDaysFor = c
+End Function
+
+'=====================================================================
 ' 業者の割り当て
 '=====================================================================
 Private Function FindFreeVendor(vendors As Object, occupied As Object, _
@@ -453,7 +560,7 @@ Private Sub MarkOccupied(occupied As Object, colorName As String, _
                          dFrom As Date, dTo As Date, contract As String)
     Dim d As Date
     For d = dFrom To dTo
-        If Not IsNonWorkingDayFor(contract, d) Then occupied(colorName & "|" & CLng(d)) = True
+        If Not IsNonWorkingDayFor(contract, d) Then occupied(colorName & "|" & CLng(d)) = contract
     Next d
 End Sub
 
