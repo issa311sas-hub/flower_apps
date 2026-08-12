@@ -37,14 +37,29 @@ Public Sub SetupMasters()
     SetupTermSheet
     SetupTaskSheet
 
+    ' 工程表シートが分かっていれば、この場で日祝も塗ってしまう
+    Dim holidayMsg As String
+    If Len(ChartSheetName()) > 0 Then
+        On Error Resume Next
+        holidayMsg = PaintHolidaysCore(ChartSheet())
+        If Err.Number <> 0 Then
+            holidayMsg = "日祝 : 塗れませんでした（" & Err.Description & "）"
+            Err.Clear
+        End If
+        On Error GoTo 0
+    Else
+        holidayMsg = "日祝 : 工程表シートが未設定のため塗っていません"
+    End If
+
     Application.ScreenUpdating = True
     MsgBox "マスタシートを作成しました。" & vbCrLf & vbCrLf & _
            SH_SETTING & " : 工程表シートの指定" & vbCrLf & _
            SH_VENDOR & " : 業者と色の対応" & vbCrLf & _
-           SH_EXCEPT & " : 物件ごとの祝日例外" & vbCrLf & _
+           SH_EXCEPT & " : 例外日" & vbCrLf & _
            SH_TERM & " : 標準工期" & vbCrLf & _
            SH_TASK & " : 工程データ（色塗りの元データ）" & vbCrLf & vbCrLf & _
-           "工程表シート : " & IIf(Len(ChartSheetName()) > 0, ChartSheetName(), "（未設定）"), _
+           "工程表シート : " & IIf(Len(ChartSheetName()) > 0, ChartSheetName(), "（未設定）") & vbCrLf & vbCrLf & _
+           holidayMsg, _
            vbInformation, "セットアップ完了"
 End Sub
 

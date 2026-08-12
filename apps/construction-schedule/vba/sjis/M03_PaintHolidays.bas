@@ -10,14 +10,18 @@ Option Explicit
 ' ・すでに工程色が入っているセルは塗りつぶさず、報告だけする
 '   （実データに、日曜へ社内行事の色を載せている例があるため）
 '
+' 単独のボタンは用意していない。色を塗る処理（工程表に色を塗る・初期セットアップ）
+' から PaintHolidaysCore が呼ばれ、そのついでに塗られる。
+'
 ' 何度実行しても同じ結果になる（冪等）。
 '=====================================================================
 
 '---------------------------------------------------------------------
-' メイン : 日祝を塗り直す
+' 日祝を塗り直して、結果のサマリを返す
+'
+' メッセージは出さない。呼び出し側が自分の報告にまとめて載せる。
 '---------------------------------------------------------------------
-Public Sub PaintHolidays()
-    Dim ws As Worksheet
+Public Function PaintHolidaysCore(ws As Worksheet) As String
     Dim colMap As Object
     Dim blocks As Collection, b As Variant
     Dim c As Variant, d As Date
@@ -31,18 +35,13 @@ Public Sub PaintHolidays()
     ResetExceptionCache
     UpdateExceptionDetails
 
-    Set ws = ChartSheet()
     Set colMap = BuildColMap(ws)
     Set blocks = FindBlocks(ws)
 
     If blocks.Count = 0 Then
-        MsgBox "物件ブロックが見つかりませんでした。" & vbCrLf & _
-               "M00_Config の ROW_BLOCK_1ST / COL_NAME を確認してください。", vbExclamation
-        Exit Sub
+        PaintHolidaysCore = "日祝 : 物件ブロックが見つかりませんでした"
+        Exit Function
     End If
-
-    Application.ScreenUpdating = False
-    Application.Calculation = xlCalculationManual
 
     On Error GoTo Cleanup
 
@@ -86,27 +85,21 @@ Public Sub PaintHolidays()
     PaintHeaderHolidays ws, colMap
 
 Cleanup:
-    Application.Calculation = xlCalculationAutomatic
-    Application.ScreenUpdating = True
-
     If Err.Number <> 0 Then
-        MsgBox "エラーが発生しました: " & Err.Description, vbCritical
-        Exit Sub
+        PaintHolidaysCore = "日祝 : エラー " & Err.Description
+        Exit Function
     End If
 
     Dim msg As String
-    msg = "日曜・祝日の塗りつぶしが完了しました。" & vbCrLf & vbCrLf & _
-          "対象シート : " & ws.Name & vbCrLf & _
-          "物件       : " & blocks.Count & " 件" & vbCrLf & vbCrLf & _
-          "塗った   : " & painted & " セル" & vbCrLf & _
-          "消した   : " & cleared & " セル" & vbCrLf & _
-          "見送った : " & skipped & " セル（工程色が入っていたため）"
+    msg = "日祝（日曜・祝日・お盆・年末年始）" & vbCrLf & _
+          "  塗った " & painted & " セル / 消した " & cleared & " セル"
     If skipped > 0 Then
-        msg = msg & vbCrLf & vbCrLf & "見送った箇所（先頭20件）:" & vbCrLf & skipList
-        If skipped > skipCount Then msg = msg & "  ... 他 " & (skipped - skipCount) & " 件"
+        msg = msg & " / 見送り " & skipped & " セル（工程色が入っていたため）" & vbCrLf & _
+              "  見送った箇所（先頭20件）:" & vbCrLf & skipList
+        If skipped > skipCount Then msg = msg & "    ... 他 " & (skipped - skipCount) & " 件" & vbCrLf
     End If
-    MsgBox msg, vbInformation, "日祝の塗りつぶし"
-End Sub
+    PaintHolidaysCore = msg
+End Function
 
 '---------------------------------------------------------------------
 ' 日付ヘッダ行の日祝も塗る（物件ごとの例外は適用しない）

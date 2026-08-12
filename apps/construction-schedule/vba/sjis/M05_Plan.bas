@@ -68,14 +68,13 @@ Private Function TaskFirstCol(k As Long) As Long
 End Function
 
 '=====================================================================
-' メイン
+' メイン1 : 表の上で計算する（工程表には触らない）
 '=====================================================================
-Public Sub GeneratePlan()
+Public Sub CalculatePlan()
     Dim ws As Worksheet, wsT As Worksheet
-    Dim dateMap As Object, colorMap As Object
     Dim blockRow As Object, blockType As Object, blockName As Object
     Dim occupied As Object, prevEnd As Object, result As Object
-    Dim k As Long, painted As Long
+    Dim k As Long
     Dim warned As String, warnCount As Long
     Dim unassigned As String, unassignedCount As Long
     Dim derived As Long, outOfRange As Long, kept As Long
@@ -88,8 +87,6 @@ Public Sub GeneratePlan()
 
     Set ws = ChartSheet()
     Set wsT = ThisWorkbook.Worksheets(SH_TASK)
-    Set dateMap = BuildDateMap(ws)
-    Set colorMap = LoadColorMap()
     LoadBlocks ws, blockRow, blockType, blockName
 
     Set occupied = CreateObject("Scripting.Dictionary")
@@ -102,10 +99,10 @@ Public Sub GeneratePlan()
 
     ' 工程は順番に処理する。躯体は基礎の結果（終了日）を使うため。
     For k = 1 To TASK_COUNT
-        PlanOneTask k, ws, wsT, dateMap, colorMap, _
+        PlanOneTask k, wsT, _
                     blockRow, blockType, blockName, _
                     occupied, prevEnd, result, _
-                    painted, warned, warnCount, _
+                    warned, warnCount, _
                     unassigned, unassignedCount, derived, outOfRange, kept
     Next k
 
@@ -118,18 +115,114 @@ Cleanup:
         Exit Sub
     End If
 
-    ShowReport ws, result, blockName, painted, derived, outOfRange, kept, _
+    ShowReport ws, result, blockName, derived, outOfRange, kept, _
                unassigned, unassignedCount, warned, warnCount
+End Sub
+
+'=====================================================================
+' メイン2 : 工程表に色を塗る（計算はしない）
+'
+' M_工程データ に入っている 開始日・終了日・色名 をそのまま塗る。
+' 日祝の塗りつぶしも、このなかで一緒に行う。
+'=====================================================================
+Public Sub PaintPlan()
+    Dim ws As Worksheet, wsT As Worksheet
+    Dim dateMap As Object, colorMap As Object, vendors As Object
+    Dim blockRow As Object, blockType As Object, blockName As Object
+    Dim k As Long, r As Long, lastRow As Long, c0 As Long
+    Dim contract As String, colorName As String
+    Dim dFrom As Date, dTo As Date
+    Dim painted As Long, skipped As Long
+    Dim holidayMsg As String
+    Dim warned As String, warnCount As Long
+
+    If Not PreflightOK() Then Exit Sub
+
+    Set ws = ChartSheet()
+    Set wsT = ThisWorkbook.Worksheets(SH_TASK)
+
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+    On Error GoTo Cleanup
+
+    ' 日祝を先に塗る。工程色は稼働日にしか塗らないので、あとから重ならない。
+    holidayMsg = PaintHolidaysCore(ws)
+
+    Set dateMap = BuildDateMap(ws)
+    Set colorMap = LoadColorMap()
+    LoadBlocks ws, blockRow, blockType, blockName
+    lastRow = wsT.Cells(wsT.Rows.Count, TASK_COL_CONTRACT).End(xlUp).Row
+
+    For k = 1 To TASK_COUNT
+        c0 = TaskFirstCol(k)
+        Set vendors = LoadVendorsByKind(TaskName(k))
+        If vendors.Count = 0 Then GoTo NextTask
+
+        For r = 2 To lastRow
+            contract = Trim$(CStr(wsT.Cells(r, TASK_COL_CONTRACT).Value))
+            If Len(contract) = 0 Then GoTo NextRow
+            If Not blockRow.Exists(contract) Then GoTo NextRow
+
+            ' その工程の古い色をいったん消す（外構や日祝には触らない）
+            ClearTaskPaint ws, CLng(blockRow(contract)), dateMap, vendors, colorMap, TaskRowOffsets(k)
+
+            colorName = Trim$(CStr(wsT.Cells(r, c0 + TASK_OFS_COLOR).Value))
+            If Len(colorName) = 0 Then GoTo NextRow
+            If Not IsDate(wsT.Cells(r, c0 + TASK_OFS_START).Value) Then GoTo NextRow
+            If Not IsDate(wsT.Cells(r, c0 + TASK_OFS_END).Value) Then GoTo NextRow
+
+            If Not colorMap.Exists(colorName) Then
+                warned = warned & "  " & contract & " [" & TaskName(k) & "] : 色名「" & _
+                         colorName & "」が " & SH_VENDOR & " にありません" & vbCrLf
+                warnCount = warnCount + 1
+                GoTo NextRow
+            End If
+
+            dFrom = CDate(wsT.Cells(r, c0 + TASK_OFS_START).Value)
+            dTo = CDate(wsT.Cells(r, c0 + TASK_OFS_END).Value)
+            painted = painted + PaintTask(ws, CLng(blockRow(contract)), dateMap, _
+                                          dFrom, dTo, CLng(colorMap(colorName)), _
+                                          TaskRowOffsets(k), contract)
+
+            ' 工程表の表示期間から外れている日は塗れない
+            If Not dateMap.Exists(CLng(dFrom)) Then skipped = skipped + 1
+NextRow:
+        Next r
+NextTask:
+    Next k
+
+Cleanup:
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+
+    If Err.Number <> 0 Then
+        MsgBox "エラーが発生しました: " & Err.Description, vbCritical
+        Exit Sub
+    End If
+
+    Dim msg As String
+    msg = "工程表に色を塗りました。" & vbCrLf & vbCrLf & _
+          "対象シート : " & ws.Name & vbCrLf & _
+          "工程の色   : " & painted & " セル" & vbCrLf & vbCrLf & _
+          holidayMsg
+    If skipped > 0 Then
+        msg = msg & vbCrLf & vbCrLf & _
+              "※ " & skipped & " 件は開始日が工程表の表示期間の外にあり、塗られていません。"
+    End If
+    If warnCount > 0 Then
+        msg = msg & vbCrLf & vbCrLf & "■ 警告:" & vbCrLf & warned
+    End If
+
+    MsgBox msg, IIf(warnCount > 0, vbExclamation, vbInformation), "工程表に色を塗る"
 End Sub
 
 '---------------------------------------------------------------------
 ' 工程を1つ処理する
 '---------------------------------------------------------------------
-Private Sub PlanOneTask(k As Long, ws As Worksheet, wsT As Worksheet, _
-                        dateMap As Object, colorMap As Object, _
+Private Sub PlanOneTask(k As Long, wsT As Worksheet, _
                         blockRow As Object, blockType As Object, blockName As Object, _
                         occupied As Object, prevEnd As Object, result As Object, _
-                        ByRef painted As Long, ByRef warned As String, ByRef warnCount As Long, _
+                        ByRef warned As String, ByRef warnCount As Long, _
                         ByRef unassigned As String, ByRef unassignedCount As Long, _
                         ByRef derived As Long, ByRef outOfRange As Long, ByRef kept As Long)
 
@@ -297,13 +390,6 @@ NextRow:
             wsT.Cells(r, c0 + TASK_OFS_COLOR).Value = CStr(plan(i, 6))
         End If
 
-        ClearTaskPaint ws, CLng(plan(i, 7)), dateMap, vendors, colorMap, TaskRowOffsets(k)
-        If Len(CStr(plan(i, 6))) > 0 Then
-            painted = painted + PaintTask(ws, CLng(plan(i, 7)), dateMap, _
-                                          CDate(plan(i, 4)), CDate(plan(i, 5)), _
-                                          CLng(colorMap(CStr(plan(i, 6)))), TaskRowOffsets(k), CStr(plan(i, 2)))
-        End If
-
         prevEnd(CStr(plan(i, 2))) = CDate(plan(i, 5))
         result(CStr(plan(i, 2)) & "|" & k) = Array(plan(i, 3), plan(i, 4), plan(i, 5), plan(i, 6))
     Next i
@@ -338,7 +424,7 @@ End Function
 ' 結果表示
 '=====================================================================
 Private Sub ShowReport(ws As Worksheet, result As Object, blockName As Object, _
-                       painted As Long, derived As Long, outOfRange As Long, kept As Long, _
+                       derived As Long, outOfRange As Long, kept As Long, _
                        unassigned As String, unassignedCount As Long, _
                        warned As String, warnCount As Long)
     Dim msg As String, key As Variant, seen As Object
@@ -352,10 +438,9 @@ Private Sub ShowReport(ws As Worksheet, result As Object, blockName As Object, _
     Next key
     total = seen.Count
 
-    msg = "工程を作成しました。" & vbCrLf & vbCrLf & _
+    msg = "工程を計算しました。" & vbCrLf & vbCrLf & _
           "対象シート : " & ws.Name & vbCrLf & _
-          "物件       : " & total & " 件" & vbCrLf & _
-          "塗ったセル : " & painted & vbCrLf
+          "物件       : " & total & " 件" & vbCrLf
     If derived > 0 Then msg = msg & "躯体開始日を自動で決めた物件 : " & derived & " 件" & vbCrLf
     If kept > 0 Then msg = msg & "手入力の終了日をそのまま使った工程 : " & kept & " 件" & vbCrLf
 
@@ -400,8 +485,10 @@ Private Sub ShowReport(ws As Worksheet, result As Object, blockName As Object, _
         msg = msg & vbCrLf & "■ 警告:" & vbCrLf & warned
     End If
 
+    msg = msg & vbCrLf & "続けて「ボタン_工程表に色を塗る」を実行してください。"
+
     MsgBox msg, IIf(unassignedCount > 0 Or warnCount > 0, vbExclamation, vbInformation), _
-           IIf(unassignedCount > 0, "工程を作る － 割り当てできない工程があります", "工程を作る")
+           IIf(unassignedCount > 0, "工程を計算する － 割り当てできない工程があります", "工程を計算する")
 End Sub
 
 '=====================================================================
