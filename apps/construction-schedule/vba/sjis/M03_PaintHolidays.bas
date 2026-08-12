@@ -61,7 +61,7 @@ Public Function PaintHolidaysCore(ws As Worksheet) As String
                     If cell.Interior.Pattern = xlNone Then
                         cell.Interior.Color = CLR_HOLIDAY
                         painted = painted + 1
-                    ElseIf cell.Interior.Color = CLR_HOLIDAY Then
+                    ElseIf IsHolidayColor(CLng(cell.Interior.Color)) Then
                         ' 既に塗られている。何もしない
                     Else
                         ' 別の色が入っている。上書きせず報告に回す
@@ -146,7 +146,7 @@ Public Sub ClearAllHolidayFill()
                 r = CLng(b(0)) + off
                 With ws.Cells(r, CLng(c)).Interior
                     If .Pattern <> xlNone Then
-                        If .Color = CLR_HOLIDAY Then
+                        If IsHolidayColor(CLng(.Color)) Then
                             .Pattern = xlNone
                             cleared = cleared + 1
                         End If
@@ -190,7 +190,7 @@ Public Sub WhatIsThisCell()
                 Case OFS_NOTE:      ofsName = "補助メモ"
                 Case OFS_MORTAR:    ofsName = "モルタル（黒帯）"
                 Case OFS_KISO:      ofsName = "基礎（色帯）／外構"
-                Case OFS_KISO_SUB:  ofsName = "基礎（補助）／契約着工日"
+                Case OFS_KISO_SUB:  ofsName = "基礎（補助）／本着日の黒1マス"
             End Select
             Exit For
         End If

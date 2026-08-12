@@ -13,7 +13,7 @@ Option Explicit
 '   1. 工程表の「基礎業者」「躯体業者」欄から、その物件の業者を読む
 '   2. M_工程データ（1物件1行）から開始日を読む（空欄なら本着日を使う）
 '   3. 工程表のタイプ（例 C2E42）から坪数と建物種類を取り出す
-'   4. M_工期 の式で稼働日数を計算し、終了日を確定する
+'   4. 工期の式（M02_Masters の TermDays）で稼働日数を計算し、終了日を確定する
 '   5. 同じ業者が2現場に重ならないよう、後の現場を後ろへずらす
 '   6. 工程表に色を塗る
 '
@@ -141,7 +141,7 @@ Public Sub PaintPlan()
     Dim k As Long, r As Long, lastRow As Long, c0 As Long
     Dim contract As String, colorName As String
     Dim dFrom As Date, dTo As Date
-    Dim painted As Long, skipped As Long, marks As Long
+    Dim painted As Long, skipped As Long, marks As Long, shiftCol As Long
     Dim holidayMsg As String
     Dim warned As String, warnCount As Long
 
@@ -191,9 +191,16 @@ Public Sub PaintPlan()
 
             dFrom = CDate(wsT.Cells(r, c0 + TASK_OFS_START).Value)
             dTo = CDate(wsT.Cells(r, c0 + TASK_OFS_END).Value)
+            ' 基礎は本着日の黒と行がぶつかるので、その列だけ1行上へずらす
+            If k = 1 Then
+                shiftCol = HonchakuCol(info, contract, dateMap)
+            Else
+                shiftCol = 0
+            End If
+
             painted = painted + PaintTask(ws, BlockRowOf(info, contract), dateMap, _
                                           dFrom, dTo, CLng(colorMap(colorName)), _
-                                          TaskRowOffsets(k), contract)
+                                          TaskRowOffsets(k), contract, shiftCol)
 
             ' 工程表の表示期間から外れている日は塗れない
             If Not dateMap.Exists(CLng(dFrom)) Then skipped = skipped + 1
@@ -469,9 +476,10 @@ Private Function PreflightOK() As Boolean
                vbExclamation, "工程を作る"
         Exit Function
     End If
-    If Not TermSheetIsCurrent() Then
-        MsgBox SH_TERM & " シートが古い形式です。" & vbCrLf & vbCrLf & _
-               "「ボタン_初期セットアップ」を実行してください。", _
+    If Not VendorSheetIsCurrent() Then
+        MsgBox SH_VENDOR & " シートが古い色設定です。" & vbCrLf & vbCrLf & _
+               "「ボタン_初期セットアップ」を実行してください。" & vbCrLf & _
+               "古いシートは " & SH_VENDOR & "_旧1 という名前で残ります。", _
                vbExclamation, "工程を作る"
         Exit Function
     End If
@@ -555,15 +563,28 @@ End Sub
 '=====================================================================
 Private Function PaintTask(ws As Worksheet, blockRow As Long, dateMap As Object, _
                            dFrom As Date, dTo As Date, rgbVal As Long, _
-                           offsets As Variant, contract As String) As Long
+                           offsets As Variant, contract As String, _
+                           shiftCol As Long) As Long
     Dim d As Date, col As Long, cnt As Long, off As Variant
+    Dim use As Variant
+
     For d = dFrom To dTo
         If Not IsNonWorkingDayFor(contract, d) Then
             If dateMap.Exists(CLng(d)) Then
                 col = dateMap(CLng(d))
-                For Each off In offsets
-                    ws.Cells(blockRow + CLng(off), col).Interior.Color = rgbVal
-                    cnt = cnt + 1
+
+                ' 本着日の列だけ、黒に場所を譲って1行上へ逃がす
+                If shiftCol > 0 And col = shiftCol Then
+                    use = ShiftedOffsets(offsets)
+                Else
+                    use = offsets
+                End If
+
+                For Each off In use
+                    If blockRow + CLng(off) >= blockRow Then
+                        ws.Cells(blockRow + CLng(off), col).Interior.Color = rgbVal
+                        cnt = cnt + 1
+                    End If
                 Next off
             End If
         End If
@@ -572,28 +593,32 @@ Private Function PaintTask(ws As Worksheet, blockRow As Long, dateMap As Object,
 End Function
 
 '---------------------------------------------------------------------
-' 本着日（黒）とお客様納期（青）を工程表に縦に塗る
+' 本着日（黒）とお客様納期（青）を工程表に塗る
 '
 ' 工事の色より上に載せる。日付が工程表の表示期間の外なら何もしない。
-' 塗る高さは MARK_ROWS 行（物件ブロックの上から）。
+'   本着日       … 基礎の下の行に1マスだけ（MARK_OFS_HONCHAKU）
+'                   その列の基礎の色帯は1行上へずらして塗ってある
+'   お客様納期   … 物件ブロックの上から縦 MARK_ROWS マス
 '---------------------------------------------------------------------
 Private Function PaintMilestones(ws As Worksheet, info As Object, _
                                  order As Collection, dateMap As Object) As Long
     Dim key As Variant, v As Variant, cnt As Long
-    Dim baseRow As Long
+    Dim blockTop As Long
 
     For Each key In order
         v = info(CStr(key))
-        baseRow = CLng(v(0)) + MARK_OFS_FIRST
-        cnt = cnt + PaintMarkColumn(ws, baseRow, dateMap, v(6), CLR_MARK_HONCHAKU)
-        cnt = cnt + PaintMarkColumn(ws, baseRow, dateMap, v(7), CLR_MARK_NOUKI)
+        blockTop = CLng(v(0))
+        cnt = cnt + PaintMarkColumn(ws, blockTop + MARK_OFS_HONCHAKU, dateMap, _
+                                    v(6), CLR_MARK_HONCHAKU, 1)
+        cnt = cnt + PaintMarkColumn(ws, blockTop + MARK_OFS_FIRST, dateMap, _
+                                    v(7), CLR_MARK_NOUKI, MARK_ROWS)
     Next key
 
     PaintMilestones = cnt
 End Function
 
 Private Function PaintMarkColumn(ws As Worksheet, baseRow As Long, dateMap As Object, _
-                                 dv As Variant, rgbVal As Long) As Long
+                                 dv As Variant, rgbVal As Long, rowCount As Long) As Long
     Dim d As Date, col As Long, i As Long
 
     If Not IsDate(dv) Then Exit Function
@@ -601,10 +626,39 @@ Private Function PaintMarkColumn(ws As Worksheet, baseRow As Long, dateMap As Ob
     If Not dateMap.Exists(CLng(d)) Then Exit Function
 
     col = CLng(dateMap(CLng(d)))
-    For i = 0 To MARK_ROWS - 1
+    For i = 0 To rowCount - 1
         ws.Cells(baseRow + i, col).Interior.Color = rgbVal
     Next i
-    PaintMarkColumn = MARK_ROWS
+    PaintMarkColumn = rowCount
+End Function
+
+'---------------------------------------------------------------------
+' 本着日の列だけ、色帯を1行上へずらす
+'
+' 本着日はその物件の基礎の下1マスを黒で使う。同じマスに基礎の色を塗ると
+' 消えてしまうため、その列に限って基礎の色帯を1行上へ逃がす。
+' 基礎以外の工程は本着日と行が重ならないので、そのまま。
+'---------------------------------------------------------------------
+Private Function ShiftedOffsets(offsets As Variant) As Variant
+    Dim res As Variant, i As Long
+    res = offsets
+    For i = LBound(res) To UBound(res)
+        res(i) = CLng(res(i)) - 1
+    Next i
+    ShiftedOffsets = res
+End Function
+
+'---------------------------------------------------------------------
+' その物件の本着日が入っている列。無ければ 0。
+'---------------------------------------------------------------------
+Private Function HonchakuCol(info As Object, contract As String, dateMap As Object) As Long
+    Dim v As Variant, d As Date
+    If Not info.Exists(contract) Then Exit Function
+    v = info(contract)
+    If Not IsDate(v(6)) Then Exit Function
+    d = CDate(v(6))
+    If Not dateMap.Exists(CLng(d)) Then Exit Function
+    HonchakuCol = CLng(dateMap(CLng(d)))
 End Function
 
 '---------------------------------------------------------------------
@@ -633,15 +687,41 @@ Private Sub ClearTaskPaint(ws As Worksheet, blockRow As Long, dateMap As Object,
     Next k
     If rgbSet.Count = 0 Then Exit Sub
 
+    ' 本着日の列で1行上へ逃がした分も消えるよう、1行上まで対象にする
+    Dim allOffsets As Variant
+    allOffsets = WithShifted(offsets)
+
     For Each c In dateMap.Items
-        For Each off In offsets
+        For Each off In allOffsets
+            If blockRow + CLng(off) < blockRow Then GoTo NextOffset
             Set cell = ws.Cells(blockRow + CLng(off), CLng(c))
             If cell.Interior.Pattern <> xlNone Then
                 If rgbSet.Exists(CLng(cell.Interior.Color)) Then cell.Interior.Pattern = xlNone
             End If
+NextOffset:
         Next off
     Next c
 End Sub
+
+'---------------------------------------------------------------------
+' 色帯の行オフセットに、1行上へずらした分を足したもの
+'---------------------------------------------------------------------
+Private Function WithShifted(offsets As Variant) As Variant
+    Dim d As Object, i As Long, res() As Variant, k As Variant, n As Long
+
+    Set d = CreateObject("Scripting.Dictionary")
+    For i = LBound(offsets) To UBound(offsets)
+        d(CLng(offsets(i))) = True
+        d(CLng(offsets(i)) - 1) = True
+    Next i
+
+    ReDim res(0 To d.Count - 1)
+    For Each k In d.Keys
+        res(n) = CLng(k)
+        n = n + 1
+    Next k
+    WithShifted = res
+End Function
 
 '=====================================================================
 ' マスタの読み込み
@@ -816,7 +896,7 @@ Public Sub ClearTaskColors()
     ' 消す対象の RGB を集める（日祝の黄緑は除外する）
     Set rgbSet = CreateObject("Scripting.Dictionary")
     For Each k In colorMap.Keys
-        If CLng(colorMap(k)) <> CLR_HOLIDAY Then rgbSet(CLng(colorMap(k))) = True
+        If Not IsHolidayColor(CLng(colorMap(k))) Then rgbSet(CLng(colorMap(k))) = True
     Next k
 
     If rgbSet.Count = 0 Then

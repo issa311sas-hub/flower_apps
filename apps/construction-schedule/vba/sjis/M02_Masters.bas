@@ -9,14 +9,9 @@ Option Explicit
 ' 既存シートがある場合、見出しだけ整えて中身は消さない。
 '=====================================================================
 
-' --- M_工期 シートの構造 --------------------------------------------
-' VBA はモジュールレベルの宣言を先頭にまとめる必要があるため、
-' 使う場所（SetupTermSheet / TermDays）から離れているがここに置く。
-Public Const TERM_ROW_FORMULA As Long = 2    ' 基準式ブロックの先頭行
-Public Const TERM_ROW_CORRECT As Long = 8    ' 種類補正ブロックの先頭行
-
-' 新形式であることの目印。A1 にこの文字が入っている。
-Private Const TERM_MARKER As String = "基準式"
+' --- M_業者 シートの版 ----------------------------------------------
+' 色や業者名を変えたら上げる。古い版のシートは退避して作り直す。
+Private Const VENDOR_VERSION As String = "v14"
 
 '---------------------------------------------------------------------
 ' すべてのマスタシートを作成／初期化する（初回セットアップ用）
@@ -31,10 +26,13 @@ Public Sub SetupMasters()
 
     Application.ScreenUpdating = False
 
-    SetupSettingSheet activeName
+    If Len(activeName) > 0 Then SaveSetting CFG_CHART_SHEET, activeName
+
+    Dim removed As String
+    removed = RemoveObsoleteSheets()
+
     SetupVendorSheet
     SetupExceptionSheet
-    SetupTermSheet
     SetupTaskSheet
 
     ' 工程表シートが分かっていれば、この場で日祝も塗ってしまう
@@ -53,62 +51,54 @@ Public Sub SetupMasters()
 
     Application.ScreenUpdating = True
     MsgBox "マスタシートを作成しました。" & vbCrLf & vbCrLf & _
-           SH_SETTING & " : 工程表シートの指定" & vbCrLf & _
            SH_VENDOR & " : 業者と色の対応" & vbCrLf & _
            SH_EXCEPT & " : 例外日" & vbCrLf & _
-           SH_TERM & " : 標準工期" & vbCrLf & _
            SH_TASK & " : 工程データ（色塗りの元データ）" & vbCrLf & vbCrLf & _
-           "工程表シート : " & IIf(Len(ChartSheetName()) > 0, ChartSheetName(), "（未設定）") & vbCrLf & vbCrLf & _
+           "工程表シート : " & IIf(Len(ChartSheetName()) > 0, ChartSheetName(), "（未設定）") & vbCrLf & _
+           "カレンダーの年 : " & IIf(CalendarBaseYear() > 0, _
+                                     CStr(CalendarBaseYear()) & " 年から", _
+                                     "（シートの値をそのまま使う）") & vbCrLf & _
+           removed & vbCrLf & _
            holidayMsg, _
            vbInformation, "セットアップ完了"
 End Sub
 
 '---------------------------------------------------------------------
-' M_設定 : どのシートを工程表として扱うか
+' 使わなくなったシートを片づける
 '
-' ブックによって工程表シートの名前が違う（"1" / "工程表実データ" 等）ため、
-' 決め打ちにせずここで指定する。
+' M_設定（工程表シート名）と M_工期（標準工期）は、利用者が触ることが
+' 無いのでマクロの中に取り込んだ。シートが増えると迷うため削除する。
+' M_設定 に入っていたシート名は、消す前にブックの設定へ移す。
 '---------------------------------------------------------------------
-Private Sub SetupSettingSheet(defaultChartName As String)
-    Dim ws As Worksheet, isNew As Boolean
-    Set ws = GetOrCreateSheet(SH_SETTING)
-    isNew = (Len(Trim$(CStr(ws.Cells(1, 1).Value))) = 0)
+Private Function RemoveObsoleteSheets() As String
+    Dim ws As Worksheet, nm As String, msg As String
 
-    With ws.Range("A1")
-        .Value = "工程表シート名"
-        .Font.Bold = True
-        .Interior.Color = RGB(217, 217, 217)
-    End With
-    ws.Range("C1").Value = "← 色を塗る対象のシート。空欄なら開いているシートを使う"
-
-    If isNew And Len(defaultChartName) > 0 Then
-        ws.Range("B1").Value = defaultChartName
+    ' M_設定 の指定を引き継ぐ
+    If SheetExists(SH_SETTING) Then
+        Set ws = ThisWorkbook.Worksheets(SH_SETTING)
+        nm = Trim$(CStr(ws.Range("B1").Value))
+        If Len(nm) > 0 And Len(GetSetting(CFG_CHART_SHEET)) = 0 Then
+            If SheetExists(nm) Then SaveSetting CFG_CHART_SHEET, nm
+        End If
     End If
 
-    ' ブック内のシート名から選べるようにする
-    Dim src As Worksheet, list As String
-    For Each src In ThisWorkbook.Worksheets
-        If Not IsMasterSheet(src.Name) Then
-            If Len(list) > 0 Then list = list & ","
-            list = list & src.Name
-        End If
-    Next src
+    msg = DeleteSheetIfExists(SH_SETTING)
+    msg = msg & DeleteSheetIfExists(SH_TERM)
 
+    If Len(msg) > 0 Then
+        RemoveObsoleteSheets = "不要になったシートを削除しました : " & Left$(msg, Len(msg) - 1)
+    End If
+End Function
+
+Private Function DeleteSheetIfExists(sheetName As String) As String
+    If Not SheetExists(sheetName) Then Exit Function
+    Application.DisplayAlerts = False
     On Error Resume Next
-    With ws.Range("B1").Validation
-        .Delete
-        If Len(list) > 0 And Len(list) < 255 Then
-            .Add Type:=xlValidateList, AlertStyle:=xlValidAlertStop, _
-                 Operator:=xlBetween, Formula1:=list
-            .IgnoreBlank = True
-            .InCellDropdown = True
-        End If
-    End With
+    ThisWorkbook.Worksheets(sheetName).Delete
     On Error GoTo 0
-
-    ws.Columns("A:A").ColumnWidth = 18
-    ws.Columns("B:B").ColumnWidth = 24
-End Sub
+    Application.DisplayAlerts = True
+    If Not SheetExists(sheetName) Then DeleteSheetIfExists = sheetName & " "
+End Function
 
 '---------------------------------------------------------------------
 ' M_業者 : 色と業者の対応表
@@ -118,26 +108,34 @@ End Sub
 '---------------------------------------------------------------------
 Private Sub SetupVendorSheet()
     Dim ws As Worksheet, isNew As Boolean
+
     Set ws = GetOrCreateSheet(SH_VENDOR)
     isNew = (Len(Trim$(CStr(ws.Cells(1, 1).Value))) = 0)
 
-    WriteHeader ws, Array("色名", "R", "G", "B", "工種", "業者名", "備考")
+    ' 色や業者名を直した版が出たら、古いシートは退避して作り直す
+    If Not isNew Then
+        If Not VendorSheetIsCurrent() Then
+            BackupSheet ws
+            Set ws = GetOrCreateSheet(SH_VENDOR)
+            isNew = True
+        End If
+    End If
+
+    WriteHeader ws, Array("色名", "R", "G", "B", "工種", "業者名", "備考", "版")
     If Not isNew Then Exit Sub
 
-    ' 過去の工程表から実測した色と、そこから読み取った業者名。
-    ' 業者名は工程表シートの「基礎業者」「躯体業者」欄の表記と一致させること。
-    ' 表記ゆれがある業者は「丸岩/KRK」のように / 区切りで並べれば両方に効く。
+    ' 色は工事店さまの指定値。業者名は工程表の「基礎業者」「躯体業者」欄の
+    ' 表記と一致させること。表記ゆれは「丸岩/KRK」のように / で並べられる。
     Dim rows As Variant, i As Long
     rows = Array( _
         Array("茶", 153, 51, 0, "躯体", "雅建工", "躯体チームA"), _
-        Array("薄紫", 204, 153, 255, "躯体", "丸岩/KRK/丸岩KRK", "躯体チームB / 外構フェーズ2でも使用"), _
-        Array("青", 0, 102, 204, "基礎", "協栄", ""), _
-        Array("赤桃", 255, 128, 128, "基礎", "", ""), _
-        Array("緑", 0, 128, 0, "基礎", "加納", ""), _
+        Array("薄紫", 204, 153, 255, "躯体", "丸岩/KRK/丸岩KRK/丸岩・KRK", "躯体チームB / 外構フェーズ2でも使用"), _
+        Array("青", 0, 102, 204, "基礎", "協栄", "お客様納期の青と同じ色。塗る位置で区別する"), _
+        Array("緑", 51, 153, 102, "基礎", "加納", ""), _
         Array("桃", 255, 0, 255, "基礎", "カサハラ", ""), _
-        Array("黄", 255, 255, 0, "基礎", "龍壱", ""), _
+        Array("薄橙", 255, 204, 153, "基礎", "龍壱", ""), _
         Array("水色", 153, 204, 255, "外構", "", "外構フェーズ1"), _
-        Array("黒", 0, 0, 0, "モルタル", "", "契約着工日(1日)にも使用。行で区別する"), _
+        Array("黒", 0, 0, 0, "モルタル", "", "本着日(1マス)にも使用。行で区別する"), _
         Array("淡水", 204, 255, 255, "足場", "", "内部足場を含む"), _
         Array("金", 255, 204, 0, "行事", "", "社内行事・タイル工事"), _
         Array("白", 255, 255, 255, "単発", "", "家具搬入・器具・CL 等") _
@@ -148,8 +146,22 @@ Private Sub SetupVendorSheet()
         ws.Cells(i + 2, 1).Interior.Color = RGB(rows(i)(1), rows(i)(2), rows(i)(3))
     Next i
 
-    ws.Columns("A:G").AutoFit
+    ws.Range("H2").Value = VENDOR_VERSION
+    ws.Columns("A:H").AutoFit
 End Sub
+
+'---------------------------------------------------------------------
+' M_業者 が現行版かどうか（H2 の版で判定する）
+'---------------------------------------------------------------------
+Public Function VendorSheetIsCurrent() As Boolean
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(SH_VENDOR)
+    On Error GoTo 0
+    If ws Is Nothing Then Exit Function
+
+    VendorSheetIsCurrent = (Trim$(CStr(ws.Range("H2").Value)) = VENDOR_VERSION)
+End Function
 
 '---------------------------------------------------------------------
 ' M_例外日 : 物件ごとの例外日
@@ -205,107 +217,6 @@ Public Function ExceptionSheetIsCurrent() As Boolean
 End Function
 
 '---------------------------------------------------------------------
-' M_工期 : 標準工期マスタ
-'
-' 工期は次の式で計算する。
-'
-'     稼働日数 = ROUND(基準日数 + 坪係数 × 坪数) + 種類補正
-'
-' 基準日数・坪係数は C 種 29 件の回帰、種類補正はその残差から求めた。
-' 工事店さまの確認後にこの表を直せば、以降の自動計算に反映される。
-'
-' 行位置の定数 TERM_ROW_FORMULA / TERM_ROW_CORRECT はモジュール冒頭にある。
-'---------------------------------------------------------------------
-Private Sub SetupTermSheet()
-    Dim ws As Worksheet, isNew As Boolean
-    Dim i As Long, r As Long, rows As Variant
-
-    Set ws = GetOrCreateSheet(SH_TERM)
-    isNew = (Len(Trim$(CStr(ws.Cells(1, 1).Value))) = 0)
-
-    ' 旧形式（坪帯ごとの一覧表）が残っていたら、退避して作り直す。
-    ' 計算式は旧形式では表現できないため、そのままでは工期を計算できない。
-    If Not isNew Then
-        If Not TermSheetIsCurrent() Then
-            BackupSheet ws
-            Set ws = GetOrCreateSheet(SH_TERM)
-            isNew = True
-        End If
-    End If
-
-    If Not isNew Then Exit Sub
-
-    ' --- 基準式（C 種基準） ---
-    ws.Range("A1").Value = "■ 基準式：稼働日数 = ROUND(基準日数 + 坪係数 × 坪数) + 種類補正"
-    ws.Range("A1").Font.Bold = True
-
-    WriteHeaderAt ws, TERM_ROW_FORMULA, Array("工程", "基準日数", "坪係数", "備考")
-    rows = Array( _
-        Array("基礎", 6.37, 0.1075, "C種29件の回帰。平均絶対誤差 2.2日"), _
-        Array("躯体", -0.21, 0.1103, "C種29件の回帰。平均絶対誤差 0.6日（Phase2で使用）"), _
-        Array("基礎_暦日", 17.59, 0.0976, "参考値。養生等の中断を含む実績スパン。誤差が大きく自動計算には未使用") _
-    )
-    For i = LBound(rows) To UBound(rows)
-        WriteRow ws, TERM_ROW_FORMULA + 1 + i, rows(i)
-    Next i
-
-    ' --- 種類補正 ---
-    r = TERM_ROW_CORRECT
-    ws.Cells(r - 1, 1).Value = "■ 建物種類による補正（日数に加算）"
-    ws.Cells(r - 1, 1).Font.Bold = True
-
-    WriteHeaderAt ws, r, Array("種類", "基礎補正", "躯体補正", "件数", "根拠")
-    rows = Array( _
-        Array("C", 0, 0, 29, "基準"), _
-        Array("R", 3, 1, 6, "工事店確認済：基礎・躯体ともC より長い。実測 +2.6 / +0.5"), _
-        Array("P", 0, 1, 1, "工事店確認済：基礎はCと同じ、躯体だけ長い"), _
-        Array("D", 1, 0, 5, "実測のみ +1.4 / +0.1"), _
-        Array("DY", -2, 0, 3, "実測のみ -1.6 / +0.2　※要確認"), _
-        Array("M", 5, -2, 2, "実測のみ。大規模は別扱いの可能性　※要確認"), _
-        Array("V", 0, 0, 0, "データなし。Cと同じ扱い　※要確認") _
-    )
-    For i = LBound(rows) To UBound(rows)
-        WriteRow ws, r + 1 + i, rows(i)
-    Next i
-
-    ' --- 工程間インターバル（Phase2 用の参考値） ---
-    r = r + UBound(rows) + 3
-    ws.Cells(r, 1).Value = "■ 工程間インターバル（暦日・Phase2 で使用）"
-    ws.Cells(r, 1).Font.Bold = True
-    WriteHeaderAt ws, r + 1, Array("区間", "日数", "", "", "備考")
-    ws.Cells(r + 2, 1).Value = "契約着工日→基礎着手"
-    ws.Cells(r + 2, 2).Value = 2
-    ws.Cells(r + 2, 5).Value = "実測 1～7日、中央値2日"
-    ws.Cells(r + 3, 1).Value = "基礎完了→躯体着手"
-    ws.Cells(r + 3, 2).Value = 4
-    ws.Cells(r + 3, 5).Value = "実測 2～11日、中央値4日"
-    ws.Cells(r + 4, 1).Value = "躯体完了→モルタル着手"
-    ws.Cells(r + 4, 2).Value = 2
-    ws.Cells(r + 4, 5).Value = "間に穴明け1日が入る"
-
-    ws.Columns("A:E").AutoFit
-End Sub
-
-'---------------------------------------------------------------------
-' M_工期 が新形式（計算式ベース）かどうか
-'
-' 旧版のマクロで作られた坪帯ごとの一覧表だと工期を計算できないため、
-' 実行前にこれで判定する。
-'---------------------------------------------------------------------
-Public Function TermSheetIsCurrent() As Boolean
-    Dim ws As Worksheet
-    On Error Resume Next
-    Set ws = ThisWorkbook.Worksheets(SH_TERM)
-    On Error GoTo 0
-    If ws Is Nothing Then Exit Function
-
-    If InStr(1, CStr(ws.Range("A1").Value), TERM_MARKER) = 0 Then Exit Function
-    If Trim$(CStr(ws.Cells(TERM_ROW_FORMULA + 1, 1).Value)) <> "基礎" Then Exit Function
-
-    TermSheetIsCurrent = True
-End Function
-
-'---------------------------------------------------------------------
 ' シートを退避する（M_工期_旧1 のように連番を付けて改名）
 '---------------------------------------------------------------------
 Private Sub BackupSheet(ws As Worksheet)
@@ -322,78 +233,93 @@ Private Sub BackupSheet(ws As Worksheet)
     On Error GoTo 0
 End Sub
 
+'=====================================================================
+' 標準工期
+'
+'     稼働日数 = ROUND(基準日数 + 坪係数 × 坪数) + 種類補正
+'
+' 基準日数・坪係数は C 種 29 件の回帰、種類補正はその残差から求めた。
+' 以前は M_工期 シートに書き出していたが、利用者が触るものではないので
+' マクロの中に取り込んだ。値を直すのはここ。
+'
+'   基礎 : 6.37 + 0.1075 × 坪   平均絶対誤差 2.2日
+'   躯体 : -0.21 + 0.1103 × 坪  平均絶対誤差 0.6日
+'
+' 種類補正（基礎 / 躯体）
+'   C   0 /  0  基準（29件）
+'   R   3 /  1  工事店確認済：基礎・躯体ともCより長い（6件）
+'   P   0 /  1  工事店確認済：基礎はCと同じ、躯体だけ長い（1件）
+'   D   1 /  0  実測のみ（5件）
+'   DY -2 /  0  実測のみ ※要確認（3件）
+'   M   5 / -2  実測のみ ※要確認（2件）
+'   V   0 /  0  データなし。Cと同じ扱い ※要確認
+'=====================================================================
+
 '---------------------------------------------------------------------
-' M_工期 から、指定タイプの稼働日数を計算する
+' 指定タイプの稼働日数を計算する
 '
 ' taskName : "基礎" または "躯体"
 ' 戻り値   : 稼働日数（1 未満にはならない）。タイプが読めなければ 0
 '---------------------------------------------------------------------
 Public Function TermDays(taskName As String, typeCode As String) As Long
-    Dim ws As Worksheet
     Dim kind As String, floors As Long, area As Long
     Dim baseDays As Double, coef As Double, corr As Long
-    Dim r As Long, found As Boolean
 
     If Not ParseType(typeCode, kind, floors, area) Then Exit Function
 
-    On Error Resume Next
-    Set ws = ThisWorkbook.Worksheets(SH_TERM)
-    On Error GoTo 0
-    If ws Is Nothing Then Exit Function
+    Select Case taskName
+        Case "基礎"
+            baseDays = 6.37: coef = 0.1075
+        Case "躯体"
+            baseDays = -0.21: coef = 0.1103
+        Case Else
+            Exit Function
+    End Select
 
-    ' 基準式を探す
-    For r = TERM_ROW_FORMULA + 1 To TERM_ROW_FORMULA + 5
-        If Trim$(CStr(ws.Cells(r, 1).Value)) = taskName Then
-            baseDays = CDbl(ws.Cells(r, 2).Value)
-            coef = CDbl(ws.Cells(r, 3).Value)
-            found = True
-            Exit For
-        End If
-    Next r
-    If Not found Then Exit Function
-
-    ' 種類補正を探す（見つからなければ 0 のまま）
-    For r = TERM_ROW_CORRECT + 1 To TERM_ROW_CORRECT + 20
-        If Trim$(CStr(ws.Cells(r, 1).Value)) = kind Then
-            If taskName = "躯体" Then
-                corr = CLng(ws.Cells(r, 3).Value)
-            Else
-                corr = CLng(ws.Cells(r, 2).Value)
-            End If
-            Exit For
-        End If
-    Next r
+    corr = TypeCorrection(taskName, kind)
 
     TermDays = CLng(Application.WorksheetFunction.Round(baseDays + coef * area, 0)) + corr
     If TermDays < 1 Then TermDays = 1
 End Function
 
 '---------------------------------------------------------------------
-' M_工期 の「工程間インターバル」から日数（暦日）を読む
+' 建物種類による補正日数
+'---------------------------------------------------------------------
+Private Function TypeCorrection(taskName As String, kind As String) As Long
+    Dim kiso As Long, kutai As Long
+
+    Select Case UCase$(Trim$(kind))
+        Case "C":  kiso = 0:  kutai = 0
+        Case "R":  kiso = 3:  kutai = 1
+        Case "P":  kiso = 0:  kutai = 1
+        Case "D":  kiso = 1:  kutai = 0
+        Case "DY": kiso = -2: kutai = 0
+        Case "M":  kiso = 5:  kutai = -2
+        Case "V":  kiso = 0:  kutai = 0
+        Case Else: kiso = 0:  kutai = 0
+    End Select
+
+    If taskName = "躯体" Then
+        TypeCorrection = kutai
+    Else
+        TypeCorrection = kiso
+    End If
+End Function
+
+'---------------------------------------------------------------------
+' 工程間インターバル（暦日）
 '
-' 見出しの文字列で A 列を検索する。見つからなければ既定値を返す。
+'   契約着工日→基礎着手   2 日（実測 1～7日、中央値2日）
+'   基礎完了→躯体着手     4 日（実測 2～11日、中央値4日）
+'   躯体完了→モルタル着手 2 日（間に穴明け1日が入る）
 '---------------------------------------------------------------------
 Public Function TermInterval(label As String, defaultDays As Long) As Long
-    Dim ws As Worksheet, r As Long, lastRow As Long
-
-    TermInterval = defaultDays
-
-    On Error Resume Next
-    Set ws = ThisWorkbook.Worksheets(SH_TERM)
-    On Error GoTo 0
-    If ws Is Nothing Then Exit Function
-
-    lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
-    For r = 2 To lastRow
-        If Trim$(CStr(ws.Cells(r, 1).Value)) = label Then
-            If IsNumeric(ws.Cells(r, 2).Value) Then
-                If Len(Trim$(CStr(ws.Cells(r, 2).Value))) > 0 Then
-                    TermInterval = CLng(ws.Cells(r, 2).Value)
-                End If
-            End If
-            Exit Function
-        End If
-    Next r
+    Select Case label
+        Case "契約着工日→基礎着手":   TermInterval = 2
+        Case "基礎完了→躯体着手":     TermInterval = 4
+        Case "躯体完了→モルタル着手": TermInterval = 2
+        Case Else:                     TermInterval = defaultDays
+    End Select
 End Function
 
 '---------------------------------------------------------------------

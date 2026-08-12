@@ -87,13 +87,69 @@ Public Sub ボタン_このシートを工程表に設定()
         Exit Sub
     End If
 
-    Set ws = GetOrCreateSheet(SH_SETTING)
-    ws.Range("A1").Value = "工程表シート名"
-    ws.Range("B1").Value = nm
+    SaveSetting CFG_CHART_SHEET, nm
 
-    MsgBox "工程表シートを「" & nm & "」に設定しました。" & vbCrLf & vbCrLf & _
+    MsgBox "工程表シートを「" & nm & "」に設定しました。" & vbCrLf & _
+           "（設定はブックの中に保存されます。設定用のシートは作りません）" & vbCrLf & vbCrLf & _
            "続けて「ボタン_レイアウトを検証」で座標を確認してください。", _
            vbInformation, "工程表シートの設定"
+End Sub
+
+'---------------------------------------------------------------------
+' カレンダーの年を設定する
+'
+' 前年の表を作り替えて使っていると、日付セルの「年」が実際と違うことがある。
+' 日付エリアの先頭列の年をここで指定すると、以降は月日だけをシートから読み、
+' 年はマクロが振り直す（12月→1月で1年繰り上げ）。
+'---------------------------------------------------------------------
+Public Sub ボタン_カレンダーの年を設定()
+    Dim ans As String, y As Long, ws As Worksheet
+    Dim colMap As Object, c As Variant, minC As Long
+    Dim shown As String
+
+    On Error Resume Next
+    Set ws = ChartSheet()
+    On Error GoTo 0
+
+    If Not ws Is Nothing Then
+        Set colMap = BuildColMap(ws)
+        minC = 999999
+        For Each c In colMap.Keys
+            If CLng(c) < minC Then minC = CLng(c)
+        Next c
+        If colMap.Count > 0 Then
+            shown = "いま先頭列は " & Format$(colMap(minC), "yyyy/mm/dd") & " と読めています。" & vbCrLf & vbCrLf
+        End If
+    End If
+
+    ans = InputBox(shown & _
+                   "日付エリアの先頭列は何年ですか。" & vbCrLf & _
+                   "（0 を入れると補正をやめ、シートの値をそのまま使います）", _
+                   "カレンダーの年", CStr(Year(Date)))
+    If Len(Trim$(ans)) = 0 Then Exit Sub
+    If Not IsNumeric(ans) Then
+        MsgBox "年を数値で入力してください。", vbExclamation
+        Exit Sub
+    End If
+
+    y = CLng(ans)
+    If y = 0 Then
+        SaveSetting CFG_BASE_YEAR, ""
+        MsgBox "年の補正をやめました。シートに入っている日付をそのまま使います。", _
+               vbInformation, "カレンダーの年"
+        Exit Sub
+    End If
+
+    If y < 1980 Or y > 2099 Then
+        MsgBox "1980～2099 の範囲で入力してください。", vbExclamation
+        Exit Sub
+    End If
+
+    SaveSetting CFG_BASE_YEAR, CStr(y)
+    MsgBox "先頭列を " & y & " 年として扱います。" & vbCrLf & _
+           "月が戻ったところ（12月→1月）で年を1つ繰り上げます。" & vbCrLf & vbCrLf & _
+           "「ボタン_レイアウトを検証」で日付を確認してください。", _
+           vbInformation, "カレンダーの年"
 End Sub
 
 Public Sub ボタン_このセルは何()
@@ -132,17 +188,19 @@ Public Sub ボタン_導入状態を確認()
     Dim msg As String, ng As Long
 
     msg = "■ マスタシート" & vbCrLf
-    msg = msg & CheckSheet(SH_SETTING, ng)
     msg = msg & CheckSheet(SH_VENDOR, ng)
     msg = msg & CheckSheet(SH_EXCEPT, ng)
-    msg = msg & CheckSheet(SH_TERM, ng)
     msg = msg & CheckSheet(SH_TASK, ng)
+    If SheetExists(SH_SETTING) Or SheetExists(SH_TERM) Then
+        msg = msg & "  ―   " & SH_SETTING & " / " & SH_TERM & " は使いません。" & _
+              "「ボタン_初期セットアップ」で削除されます" & vbCrLf
+    End If
 
     msg = msg & vbCrLf & "■ シートの形式" & vbCrLf
-    If TermSheetIsCurrent() Then
-        msg = msg & "  OK  " & SH_TERM & " : 計算式ベース" & vbCrLf
+    If VendorSheetIsCurrent() Then
+        msg = msg & "  OK  " & SH_VENDOR & " : 現行の色設定" & vbCrLf
     Else
-        msg = msg & "  NG  " & SH_TERM & " : 古い形式。「ボタン_初期セットアップ」を実行してください" & vbCrLf
+        msg = msg & "  NG  " & SH_VENDOR & " : 古い色設定。「ボタン_初期セットアップ」を実行してください" & vbCrLf
         ng = ng + 1
     End If
     If TaskSheetIsCurrent() Then
@@ -164,6 +222,14 @@ Public Sub ボタン_導入状態を確認()
     Else
         msg = msg & "  NG  未設定。「ボタン_このシートを工程表に設定」を実行してください" & vbCrLf
         ng = ng + 1
+    End If
+
+    msg = msg & vbCrLf & "■ カレンダーの年" & vbCrLf
+    If CalendarBaseYear() > 0 Then
+        msg = msg & "  OK  先頭列を " & CalendarBaseYear() & " 年として扱う" & vbCrLf
+    Else
+        msg = msg & "  ―   シートに入っている年をそのまま使う" & vbCrLf & _
+              "      年がずれているときは「ボタン_カレンダーの年を設定」" & vbCrLf
     End If
 
     If ng = 0 Then
@@ -214,8 +280,12 @@ Public Sub ボタン_レイアウトを検証()
           "■ 日付エリア" & vbCrLf & _
           "  日付の行     : " & ROW_DATE & " 行目" & vbCrLf & _
           "  日付の列数   : " & colMap.Count & " 列" & vbCrLf & _
-          "  先頭         : " & minC & " 列目 = " & firstDate & vbCrLf & _
-          "  末尾         : " & maxC & " 列目 = " & lastDate & vbCrLf & vbCrLf & _
+          "  先頭         : " & minC & " 列目 = " & Format$(firstDate, "yyyy/mm/dd") & vbCrLf & _
+          "  末尾         : " & maxC & " 列目 = " & Format$(lastDate, "yyyy/mm/dd") & vbCrLf & _
+          "  年の扱い     : " & IIf(CalendarBaseYear() > 0, _
+                                    CalendarBaseYear() & " 年から振り直し", _
+                                    "シートの値をそのまま使用") & vbCrLf & _
+          "  シートの生値 : " & CStr(ws.Cells(ROW_DATE, minC).Value) & vbCrLf & vbCrLf & _
           "■ 物件ブロック" & vbCrLf & _
           "  検出件数     : " & blocks.Count & " 件" & vbCrLf & vbCrLf & _
           "  先頭5件:" & vbCrLf
@@ -232,7 +302,8 @@ Public Sub ボタン_レイアウトを検証()
     Next b
 
     msg = msg & vbCrLf & "この内容が実際のシートと合っていれば、座標設定は正しいです。" & vbCrLf & _
-          "業者名や本着日がずれている場合は M00_Config の列番号を直してください。"
+          "業者名や本着日がずれている場合は M00_Config の列番号を直してください。" & vbCrLf & _
+          "年だけ違う場合は「ボタン_カレンダーの年を設定」で直せます。"
     MsgBox msg, vbInformation, "レイアウト検証"
     Exit Sub
 

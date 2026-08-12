@@ -8,15 +8,25 @@ Option Explicit
 ' レイアウトが変わったらこのモジュールだけ直せば済むようにしておく。
 '=====================================================================
 
+'--- 二重引用符（文字列の中に " を書くため） ------------------------
+Public Const QT As String = """"
+
 ' --- シート名 -------------------------------------------------------
 ' 工程表シートの名前はブックによって変わる（"1" だったり "工程表実データ" だったり）。
-' M_設定 シートの B1 で指定し、未設定なら既定名 → アクティブシートの順に探す。
+' 「ボタン_このシートを工程表に設定」で指定し、未設定なら既定名 → アクティブシートの順に探す。
 Public Const SH_CHART_DEFAULT As String = "1"    ' 工程表本体の既定名
-Public Const SH_SETTING As String = "M_設定"
 Public Const SH_VENDOR  As String = "M_業者"
 Public Const SH_EXCEPT  As String = "M_例外日"
-Public Const SH_TERM    As String = "M_工期"
 Public Const SH_TASK    As String = "M_工程データ"
+
+' 使わなくなったシート。中身はマクロに取り込んだので、初期セットアップで削除する。
+Public Const SH_SETTING As String = "M_設定"
+Public Const SH_TERM    As String = "M_工期"
+
+' --- 設定の保存キー -------------------------------------------------
+' 設定シートは作らない。ブックに埋め込む「名前」（非表示）に保存する。
+Public Const CFG_CHART_SHEET As String = "cfgChartSheet"   ' 工程表シート名
+Public Const CFG_BASE_YEAR   As String = "cfgBaseYear"     ' カレンダー先頭列の年
 
 ' --- 工程表の座標 (すべて Excel の 1 始まり) ------------------------
 Public Const ROW_DATE       As Long = 3          ' 日付が入っている行
@@ -83,15 +93,74 @@ Public Const TASK_OFS_COLOR  As Long = 3
 Public Const TASK_OFS_NOTE   As Long = 4
 
 ' --- 色 -------------------------------------------------------------
-Public Const CLR_HOLIDAY    As Long = 39321      ' RGB(153, 204, 0)  日曜・祝日の黄緑
+Public Const CLR_HOLIDAY     As Long = 52377     ' RGB(153, 204, 0)  日曜・祝日の黄緑
+' v13 以前は RGB(153,153,0) で塗っていた。古い塗りも日祝として認識するために残す。
+Public Const CLR_HOLIDAY_OLD As Long = 39321     ' RGB(153, 153, 0)
 Public Const CLR_BLACK      As Long = 0          ' RGB(0, 0, 0)      契約着工日 / モルタル
 
 ' 本着日・お客様納期のマーカー。工程表に縦 MARK_ROWS マス塗る。
 ' 業者色とは別枠で扱い、工程色より優先して上書きする。
 Public Const CLR_MARK_HONCHAKU As Long = 0        ' RGB(0, 0, 0)     黒
 Public Const CLR_MARK_NOUKI    As Long = 13395456 ' RGB(0, 102, 204) 青
+' 本着日は基礎工事の下の1マスだけ塗る。その列の基礎の色帯は1行上へずらす。
+Public Const MARK_OFS_HONCHAKU As Long = 5       ' = OFS_KISO_SUB
+' お客様納期は物件ブロックの上から縦に塗る
 Public Const MARK_ROWS      As Long = 4          ' 縦に塗るマス数
 Public Const MARK_OFS_FIRST As Long = 0          ' 物件ブロックの先頭からの位置
+
+'---------------------------------------------------------------------
+' 日祝の黄緑か（古い版で塗った色も含む）
+'---------------------------------------------------------------------
+Public Function IsHolidayColor(c As Long) As Boolean
+    IsHolidayColor = (c = CLR_HOLIDAY) Or (c = CLR_HOLIDAY_OLD)
+End Function
+
+'=====================================================================
+' 設定の保存先
+'
+' 設定シートは使わない。利用者が触るシートを増やさないため、
+' ブックに埋め込む「名前」（非表示）に保存する。
+' Excel の画面には出ないが、ブックを保存すれば残る。
+'=====================================================================
+'---------------------------------------------------------------------
+' 設定を読む。無ければ空文字。
+'---------------------------------------------------------------------
+Public Function GetSetting(key As String) As String
+    Dim s As String
+    On Error Resume Next
+    s = CStr(ThisWorkbook.Names(key).RefersTo)
+    On Error GoTo 0
+    If Len(s) = 0 Then Exit Function
+
+    ' RefersTo は ="値" の形で返る。= と引用符を外す。
+    If Left$(s, 1) = "=" Then s = Mid$(s, 2)
+    If Len(s) >= 2 Then
+        If Left$(s, 1) = QT And Right$(s, 1) = QT Then s = Mid$(s, 2, Len(s) - 2)
+    End If
+    GetSetting = Replace$(s, QT & QT, QT)
+End Function
+
+'---------------------------------------------------------------------
+' 設定を書く
+'---------------------------------------------------------------------
+Public Sub SaveSetting(key As String, val As String)
+    On Error Resume Next
+    ThisWorkbook.Names(key).Delete
+    On Error GoTo 0
+    ThisWorkbook.Names.Add Name:=key, _
+        RefersTo:="=" & QT & Replace$(val, QT, QT & QT) & QT, Visible:=False
+End Sub
+
+'---------------------------------------------------------------------
+' カレンダーの基準年（日付エリアの先頭列の年）。0 なら補正しない。
+'---------------------------------------------------------------------
+Public Function CalendarBaseYear() As Long
+    Dim s As String
+    s = GetSetting(CFG_BASE_YEAR)
+    If Len(s) = 0 Then Exit Function
+    If Not IsNumeric(s) Then Exit Function
+    CalendarBaseYear = CLng(s)
+End Function
 
 '---------------------------------------------------------------------
 ' 工程表シートを取得する
@@ -104,7 +173,7 @@ Public Function ChartSheet() As Worksheet
         Err.Raise vbObjectError + 1, "ChartSheet", _
                   "どのシートが工程表か分かりません。" & vbCrLf & vbCrLf & _
                   "工程表シートを開いた状態で「ボタン_このシートを工程表に設定」を" & vbCrLf & _
-                  "実行するか、" & SH_SETTING & " シートの B1 にシート名を入力してください。" & vbCrLf & vbCrLf & _
+                  "実行してください。" & vbCrLf & vbCrLf & _
                   "このブックのシート:" & vbCrLf & SheetNameList()
     End If
 
@@ -115,14 +184,24 @@ End Function
 '---------------------------------------------------------------------
 ' 工程表シートの名前を決める
 '
-' 1) M_設定 の B1 に入っていて、そのシートが実在すればそれ
-' 2) 既定名 "1" のシートがあればそれ
-' 3) いま開いているシートがマスタ以外ならそれ
+' 1) ブックに保存した設定（ボタン_このシートを工程表に設定 で書く）
+' 2) 旧版の M_設定 シートが残っていればその B1
+' 3) 既定名 "1" のシートがあればそれ
+' 4) いま開いているシートがマスタ以外ならそれ
 ' どれにも当たらなければ空文字を返す。
 '---------------------------------------------------------------------
 Public Function ChartSheetName() As String
     Dim ws As Worksheet, nm As String
 
+    nm = Trim$(GetSetting(CFG_CHART_SHEET))
+    If Len(nm) > 0 Then
+        If SheetExists(nm) Then
+            ChartSheetName = nm
+            Exit Function
+        End If
+    End If
+
+    ' 旧版からの移行用。M_設定 が残っていれば読む。
     On Error Resume Next
     Set ws = ThisWorkbook.Worksheets(SH_SETTING)
     On Error GoTo 0
@@ -187,22 +266,59 @@ Public Function SheetNameList() As String
 End Function
 
 '---------------------------------------------------------------------
-' 日付 -> 列番号 の対応表を作る
+' 列番号 -> 日付 の対応表を作る
 '
 ' 月の変わり目に日付の入っていない区切り列が挟まるため、
 ' 列番号から日付を計算してはいけない。必ず ROW_DATE の実値を読む。
-' キーは CLng(日付) の日付シリアル値。
+'
+' ■ 年の補正
+' カレンダーのセルに入っている「年」が実際と違うことがある
+' （前年の表を作り替えて使っている場合など）。
+' 「ボタン_カレンダーの年を設定」で先頭列の年を指定しておくと、
+' 月日だけをシートから読み、年はこちらで振り直す。
+' 月が戻ったところ（12月→1月）で年を1つ繰り上げる。
+' 未設定なら、シートに入っている値をそのまま使う。
 '---------------------------------------------------------------------
-Public Function BuildDateMap(ws As Worksheet) As Object
+Public Function BuildColMap(ws As Worksheet) As Object
     Dim map As Object, c As Long, lastCol As Long, v As Variant
+    Dim d As Date, baseYear As Long, y As Long, prevMonth As Long
+
     Set map = CreateObject("Scripting.Dictionary")
+    baseYear = CalendarBaseYear()
+    y = baseYear
+    prevMonth = 0
 
     lastCol = ws.Cells(ROW_DATE, ws.Columns.Count).End(xlToLeft).Column
     For c = COL_DATE_FIRST To lastCol
         v = ws.Cells(ROW_DATE, c).Value
         If IsDate(v) Then
-            If Not map.Exists(CLng(CDate(v))) Then map.Add CLng(CDate(v)), c
+            d = CDate(v)
+            If baseYear > 0 Then
+                If prevMonth > 0 Then
+                    If Month(d) < prevMonth Then y = y + 1
+                End If
+                prevMonth = Month(d)
+                d = DateSerial(y, Month(d), Day(d))
+            End If
+            map(c) = d
         End If
+    Next c
+    Set BuildColMap = map
+End Function
+
+'---------------------------------------------------------------------
+' 日付 -> 列番号 の対応表 (逆引き)
+' キーは CLng(日付) の日付シリアル値。
+'---------------------------------------------------------------------
+Public Function BuildDateMap(ws As Worksheet) As Object
+    Dim map As Object, colMap As Object, c As Variant, key As Long
+
+    Set map = CreateObject("Scripting.Dictionary")
+    Set colMap = BuildColMap(ws)
+
+    For Each c In colMap.Keys
+        key = CLng(CDate(colMap(c)))
+        If Not map.Exists(key) Then map.Add key, CLng(c)
     Next c
 
     If map.Count = 0 Then
@@ -210,21 +326,6 @@ Public Function BuildDateMap(ws As Worksheet) As Object
                   ROW_DATE & "行目に日付が見つかりません。ROW_DATE / COL_DATE_FIRST を確認してください。"
     End If
     Set BuildDateMap = map
-End Function
-
-'---------------------------------------------------------------------
-' 列番号 -> 日付 の対応表 (逆引き)
-'---------------------------------------------------------------------
-Public Function BuildColMap(ws As Worksheet) As Object
-    Dim map As Object, c As Long, lastCol As Long, v As Variant
-    Set map = CreateObject("Scripting.Dictionary")
-
-    lastCol = ws.Cells(ROW_DATE, ws.Columns.Count).End(xlToLeft).Column
-    For c = COL_DATE_FIRST To lastCol
-        v = ws.Cells(ROW_DATE, c).Value
-        If IsDate(v) Then map(c) = CDate(v)
-    Next c
-    Set BuildColMap = map
 End Function
 
 '---------------------------------------------------------------------
