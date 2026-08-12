@@ -27,18 +27,20 @@ Option Explicit
 ' 次の現場の開始予定日が前の現場の完了より前なら、開始日を後ろへずらす。
 ' 前倒しはしない（空きがあっても予定日より早く始めない）。
 '
-' ■ 空欄のところだけ埋める
-' 会社やお客様の都合で日程を人が決めることがあるため、
-' すでに値が入っているセルには一切触らない。計算して書き込むのは空欄だけ。
+' ■ 手入力（黒字）は触らない・自動（青字）は毎回決め直す
+' 会社やお客様の都合で日程を人が決めることがあるため、人が入力した値には触らない。
+' マクロが計算して入れた値は青字にしておき、次の計算で決め直す。
 '
-'   開始日 … 入っていればその日を使う。空欄なら本着日／前工程から決める
-'   終了日 … 入っていればその日を使う。空欄なら工期の式で計算する
-'   色名   … 入っていればそれを使う。空欄なら業者名から引いて書き込む
-'   調整   … 終了日を計算するときだけ使う日数の増減
+'   開始日 … 黒字ならその日を使う。青字・空欄なら本着日／前工程から決め直す
+'   終了日 … 黒字ならその日を使う。青字・空欄なら工期の式で計算し直す
+'   色名   … 黒字ならその色。青字・空欄なら工程表の業者欄から引き直す
+'   調整   … 入力。終了日を計算するときに足し引きする日数
 '
-' 手入力の開始日が前の現場と重なるときは、書き換えずに警告で知らせる。
+' 青字を決め直すので、あとから調整を入れたり業者を変えたりしても、
+' 「ボタン_工程を計算する」を実行するだけで後続の現場までずれる。
+' 手入力（黒字）の開始日が前の現場と重なるときは、書き換えずに警告で知らせる。
 '
-' 日程を計算し直したいときは、その行の終了日を消してから実行する。
+' 手入力の値を自動に戻したいときは、そのセルを消す（または黒字→空欄にする）。
 ' 行をまとめて消すなら ClearPlanResultsForSelection / ClearPlanResults を使う。
 '
 ' 何度実行しても同じ結果になる（冪等）。
@@ -134,7 +136,8 @@ End Sub
 ' M_工程データ に入っている 開始日・終了日・色名 をそのまま塗る。
 ' 日祝の塗りつぶしも、このなかで一緒に行う。
 '=====================================================================
-Public Sub PaintPlan()
+' clearedCount : 塗る前に消したセル数。RepaintPlan から渡す。単独実行なら -1。
+Public Sub PaintPlan(Optional clearedCount As Long = -1)
     Dim ws As Worksheet, wsT As Worksheet
     Dim dateMap As Object, colorMap As Object, vendors As Object
     Dim info As Object, order As Collection, taskRow As Object
@@ -223,7 +226,11 @@ Cleanup:
 
     Dim msg As String
     msg = "工程表に色を塗りました。" & vbCrLf & vbCrLf & _
-          "対象シート : " & ws.Name & vbCrLf & _
+          "対象シート : " & ws.Name & vbCrLf
+    If clearedCount >= 0 Then
+        msg = msg & "消した色   : " & clearedCount & " セル" & vbCrLf
+    End If
+    msg = msg & _
           "工程の色   : " & painted & " セル" & vbCrLf & _
           "本着日・納期 : " & marks & " セル" & vbCrLf & vbCrLf & _
           holidayMsg
@@ -256,8 +263,9 @@ Private Sub PlanOneTask(k As Long, wsT As Worksheet, _
     Dim dWish As Date, dStart As Date, dEnd As Date
     Dim days As Long
     Dim kind As String, floors As Long, area As Long
-    Dim taskLabel As String, startFixed As Boolean
+    Dim taskLabel As String, startFixed As Boolean, endFixed As Boolean
     Dim v As Variant
+    Dim cStart As Range, cEnd As Range, cColor As Range
 
     taskLabel = TaskName(k)
     c0 = TaskFirstCol(k)
@@ -281,9 +289,16 @@ Private Sub PlanOneTask(k As Long, wsT As Worksheet, _
         If Not taskRow.Exists(contract) Then GoTo NextProp
         r = CLng(taskRow(contract))
 
+        Set cStart = wsT.Cells(r, c0 + TASK_OFS_START)
+        Set cEnd = wsT.Cells(r, c0 + TASK_OFS_END)
+        Set cColor = wsT.Cells(r, c0 + TASK_OFS_COLOR)
+
         '--- 業者を決める --------------------------------------------
+        ' 手入力（黒字）の色名だけ尊重する。
+        ' 自前で入れた（青字）色名は、工程表の業者欄から引き直す。
         vendorName = Trim$(CStr(v(IIf(k = 1, 4, 5))))
-        writtenColor = Trim$(CStr(wsT.Cells(r, c0 + TASK_OFS_COLOR).Value))
+        writtenColor = Trim$(CStr(cColor.Value))
+        If IsAutoCell(cColor) Then writtenColor = ""
 
         If Len(writtenColor) > 0 Then
             ' 手入力の色名を尊重する
@@ -311,9 +326,12 @@ Private Sub PlanOneTask(k As Long, wsT As Worksheet, _
         '--- 希望の開始日を決める ------------------------------------
         ' 入っていればその日を使う（人が決めた日程を尊重する）。
         ' 空欄なら、基礎は本着日から、2番目以降は前工程の終了日から決める。
+        ' 手入力（黒字）の開始日だけ動かさない。
+        ' 自前で入れた（青字）開始日は、毎回決め直す。
+        ' こうしないと、前の現場の工期が伸びたときに後ろがずれない。
         startFixed = False
-        If IsDate(wsT.Cells(r, c0 + TASK_OFS_START).Value) Then
-            dWish = CDate(wsT.Cells(r, c0 + TASK_OFS_START).Value)
+        If IsDate(cStart.Value) And Not IsAutoCell(cStart) Then
+            dWish = CDate(cStart.Value)
             startFixed = True
         ElseIf k > 1 And prevEnd.Exists(contract) Then
             dWish = CDate(prevEnd(contract)) + TaskInterval(k)
@@ -346,7 +364,7 @@ Private Sub PlanOneTask(k As Long, wsT As Worksheet, _
         End If
 
         If Not startFixed Then
-            wsT.Cells(r, c0 + TASK_OFS_START).Value = dStart
+            WriteAuto cStart, dStart
             derived = derived + 1
         End If
 
@@ -354,8 +372,11 @@ Private Sub PlanOneTask(k As Long, wsT As Worksheet, _
 
         '--- 終了日を決める ------------------------------------------
         ' 入っていればその日を使う（人が決めた日程を尊重する）。空欄なら計算する。
-        If IsDate(wsT.Cells(r, c0 + TASK_OFS_END).Value) Then
-            dEnd = CDate(wsT.Cells(r, c0 + TASK_OFS_END).Value)
+        ' 手入力（黒字）の終了日だけそのまま使う。
+        ' 自前で入れた（青字）終了日は、調整の変更を拾えるよう計算し直す。
+        endFixed = (IsDate(cEnd.Value) And Not IsAutoCell(cEnd))
+        If endFixed Then
+            dEnd = CDate(cEnd.Value)
             If dEnd < dStart Then dEnd = dStart
             kept = kept + 1
         Else
@@ -376,7 +397,7 @@ Private Sub PlanOneTask(k As Long, wsT As Worksheet, _
             If days < 1 Then days = 1
 
             dEnd = AddWorkingDaysFor(contract, dStart, days - 1)
-            wsT.Cells(r, c0 + TASK_OFS_END).Value = dEnd
+            WriteAuto cEnd, dEnd
         End If
 
         ' 実測範囲（25～90坪）を外れていたら印を付ける
@@ -390,7 +411,7 @@ Private Sub PlanOneTask(k As Long, wsT As Worksheet, _
         vendorLast(colorName) = contract
 
         If Len(writtenColor) = 0 Then
-            wsT.Cells(r, c0 + TASK_OFS_COLOR).Value = colorName
+            WriteAuto cColor, colorName
         End If
 
         prevEnd(contract) = dEnd
@@ -875,11 +896,7 @@ End Sub
 ' M_工程データ の日付は消えないので、「工程を作る」で塗り直せる。
 '=====================================================================
 Public Sub ClearTaskColors()
-    Dim ws As Worksheet, colorMap As Object, dateMap As Object
-    Dim blocks As Collection, b As Variant
-    Dim rgbSet As Object, k As Variant, c As Variant
-    Dim off As Long, r As Long, cleared As Long
-    Dim cell As Range
+    Dim ws As Worksheet, cleared As Long
 
     Set ws = ChartSheet()
 
@@ -888,6 +905,24 @@ Public Sub ClearTaskColors()
               "残るもの   : 日祝の黄緑、手で塗った色、" & SH_TASK & " の日付" & vbCrLf & vbCrLf & _
               "元に戻す（Ctrl+Z）は効きません。よろしいですか？", _
               vbYesNo + vbExclamation, "工程の色をクリア") <> vbYes Then Exit Sub
+
+    cleared = ClearTaskColorsCore(ws)
+
+    MsgBox cleared & " セルの色を消しました。" & vbCrLf & vbCrLf & _
+           "「ボタン_工程表に色を塗る」で塗り直せます。" & vbCrLf & _
+           "日程から作り直したい場合は「ボタン_工程の計算結果をクリア」を先に実行してください。", _
+           vbInformation, "工程の色をクリア"
+End Sub
+
+'---------------------------------------------------------------------
+' 工程の色を消す本体（確認も報告もしない）
+'---------------------------------------------------------------------
+Private Function ClearTaskColorsCore(ws As Worksheet) As Long
+    Dim colorMap As Object, dateMap As Object
+    Dim blocks As Collection, b As Variant
+    Dim rgbSet As Object, k As Variant, c As Variant
+    Dim off As Long, r As Long, cleared As Long
+    Dim cell As Range
 
     Set colorMap = LoadColorMap()
     Set dateMap = BuildDateMap(ws)
@@ -899,10 +934,7 @@ Public Sub ClearTaskColors()
         If Not IsHolidayColor(CLng(colorMap(k))) Then rgbSet(CLng(colorMap(k))) = True
     Next k
 
-    If rgbSet.Count = 0 Then
-        MsgBox SH_VENDOR & " に色が登録されていません。", vbExclamation
-        Exit Sub
-    End If
+    If rgbSet.Count = 0 Then Exit Function
 
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
@@ -925,10 +957,31 @@ Public Sub ClearTaskColors()
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
 
-    MsgBox cleared & " セルの色を消しました。" & vbCrLf & vbCrLf & _
-           "「ボタン_工程を作る」で塗り直せます。" & vbCrLf & _
-           "日程から作り直したい場合は「ボタン_工程の計算結果をクリア」を先に実行してください。", _
-           vbInformation, "工程の色をクリア"
+    ClearTaskColorsCore = cleared
+End Function
+
+'=====================================================================
+' 工程表を塗り直す（消してから塗る）
+'
+' 実務で使うのはこのボタン。工程の色をいったん全部消してから塗り直すので、
+' 日程を変えたあとに古い色が残らない。
+' 「色をクリア」「色を塗る」の2つはデバッグ用に残してある。
+'=====================================================================
+Public Sub RepaintPlan()
+    Dim ws As Worksheet, cleared As Long
+
+    If Not PreflightOK() Then Exit Sub
+
+    Set ws = ChartSheet()
+
+    If MsgBox("「" & ws.Name & "」の工程の色を、いったん消してから塗り直します。" & vbCrLf & vbCrLf & _
+              "消えるもの : " & SH_VENDOR & " に登録されている色" & vbCrLf & _
+              "残るもの   : 日祝の黄緑、手で塗った色" & vbCrLf & vbCrLf & _
+              "元に戻す（Ctrl+Z）は効きません。よろしいですか？", _
+              vbYesNo + vbQuestion, "工程表を塗り直す") <> vbYes Then Exit Sub
+
+    cleared = ClearTaskColorsCore(ws)
+    PaintPlan cleared
 End Sub
 
 '=====================================================================
@@ -968,17 +1021,12 @@ Public Sub ClearPlanResultsForSelection()
     End If
 
     If MsgBox(rows.Count & " 件の物件について、計算結果を消します。" & vbCrLf & vbCrLf & _
-              "消すもの : 終了日 / 色名 / 2番目以降の開始日" & vbCrLf & _
-              "残るもの : 基礎開始日 / 調整 / 備考" & vbCrLf & vbCrLf & _
+              "消すもの : マクロが入れた値（青字の 開始日 / 終了日 / 色名）" & vbCrLf & _
+              "残るもの : 手入力した値（黒字）/ 調整 / 備考" & vbCrLf & vbCrLf & _
               "よろしいですか？", vbYesNo + vbQuestion) <> vbYes Then Exit Sub
 
     For Each r In rows.Keys
-        For k = 1 To TASK_COUNT
-            c0 = TaskFirstCol(k)
-            wsT.Cells(CLng(r), c0 + TASK_OFS_END).ClearContents
-            wsT.Cells(CLng(r), c0 + TASK_OFS_COLOR).ClearContents
-            If k > 1 Then wsT.Cells(CLng(r), c0 + TASK_OFS_START).ClearContents
-        Next k
+        ClearAutoOutputs wsT, CLng(r)
         cnt = cnt + 1
     Next r
 
@@ -996,27 +1044,156 @@ Public Sub ClearPlanResults()
     Dim k As Long, c0 As Long, cnt As Long
 
     If MsgBox(SH_TASK & " から、計算結果を消します。" & vbCrLf & vbCrLf & _
-              "消すもの : 終了日 / 色名 / 2番目以降の開始日" & vbCrLf & _
-              "残るもの : 基礎開始日 / 調整 / 備考" & vbCrLf & vbCrLf & _
+              "消すもの : マクロが入れた値（青字の 開始日 / 終了日 / 色名）" & vbCrLf & _
+              "残るもの : 手入力した値（黒字）/ 調整 / 備考" & vbCrLf & vbCrLf & _
               "よろしいですか？", vbYesNo + vbQuestion) <> vbYes Then Exit Sub
 
     Set wsT = ThisWorkbook.Worksheets(SH_TASK)
     lastRow = wsT.Cells(wsT.Rows.Count, TASK_COL_CONTRACT).End(xlUp).Row
 
-    For k = 1 To TASK_COUNT
-        c0 = TaskFirstCol(k)
-        For r = 2 To lastRow
-            If Len(Trim$(CStr(wsT.Cells(r, TASK_COL_CONTRACT).Value))) > 0 Then
-                wsT.Cells(r, c0 + TASK_OFS_END).ClearContents
-                wsT.Cells(r, c0 + TASK_OFS_COLOR).ClearContents
-                ' 2番目以降の開始日は自動で決まるので消してよい。
-                ' 残すと、前工程がずれたときに追随できなくなる。
-                If k > 1 Then wsT.Cells(r, c0 + TASK_OFS_START).ClearContents
-                cnt = cnt + 1
-            End If
-        Next r
-    Next k
+    For r = 2 To lastRow
+        If Len(Trim$(CStr(wsT.Cells(r, TASK_COL_CONTRACT).Value))) > 0 Then
+            cnt = cnt + ClearAutoOutputs(wsT, r)
+        End If
+    Next r
 
     MsgBox cnt & " 箇所をクリアしました。" & vbCrLf & _
            "「ボタン_工程を作る」で計算し直せます。", vbInformation
+End Sub
+
+'---------------------------------------------------------------------
+' その行の「マクロが入れた値」だけ消す（手入力は残す）
+'
+' 戻り値は消したセル数。
+'---------------------------------------------------------------------
+Private Function ClearAutoOutputs(wsT As Worksheet, r As Long) As Long
+    Dim k As Long, c0 As Long, cnt As Long
+
+    For k = 1 To TASK_COUNT
+        c0 = TaskFirstCol(k)
+        If ClearIfAuto(wsT.Cells(r, c0 + TASK_OFS_START)) Then cnt = cnt + 1
+        If ClearIfAuto(wsT.Cells(r, c0 + TASK_OFS_END)) Then cnt = cnt + 1
+        If ClearIfAuto(wsT.Cells(r, c0 + TASK_OFS_COLOR)) Then cnt = cnt + 1
+    Next k
+
+    ClearAutoOutputs = cnt
+End Function
+
+'=====================================================================
+' 選択した行と、その影響を受ける行を計算し直す
+'
+' あとから調整を入れたときに使う。選んだ物件と、
+' 「同じ業者を使っていて、工程表で下にある物件」をまとめて計算し直す。
+' 業者は前の現場が終わってから次に移るので、影響が出るのはこの範囲だけ。
+'
+' 手入力（黒字）の値は消さないので、人が決めた日程は残る。
+'=====================================================================
+Public Sub RecalcFromSelection()
+    Dim wsT As Worksheet, ws As Worksheet
+    Dim cell As Range, picked As Object, target As Object
+    Dim info As Object, order As Collection, taskRow As Object
+    Dim idx As Object, key As Variant, contract As String
+    Dim k As Long, i As Long, n As Long
+    Dim v As Variant, vendorName As String
+    Dim pickedVendors As Object
+    Dim listMsg As String, cleared As Long
+
+    If Not PreflightOK() Then Exit Sub
+
+    Set wsT = ThisWorkbook.Worksheets(SH_TASK)
+    If ActiveSheet.Name <> wsT.Name Then
+        MsgBox SH_TASK & " シート上で、計算し直したい行を選択してから実行してください。", _
+               vbExclamation, "選択行と後続を再計算"
+        Exit Sub
+    End If
+
+    ' 選択されている契約番号を集める
+    Set picked = CreateObject("Scripting.Dictionary")
+    For Each cell In Selection.Cells
+        If cell.Row >= 2 Then
+            contract = Trim$(CStr(wsT.Cells(cell.Row, TASK_COL_CONTRACT).Value))
+            If Len(contract) > 0 Then picked(contract) = True
+        End If
+    Next cell
+
+    If picked.Count = 0 Then
+        MsgBox "契約番号の入っている行が選択されていません。", vbExclamation
+        Exit Sub
+    End If
+
+    Set ws = ChartSheet()
+    LoadBlocks ws, info, order
+    Set taskRow = BuildTaskRowMap(wsT)
+
+    ' 工程表の並び順（＝業者の優先順位）での位置
+    Set idx = CreateObject("Scripting.Dictionary")
+    i = 0
+    For Each key In order
+        idx(CStr(key)) = i
+        i = i + 1
+    Next key
+
+    Set target = CreateObject("Scripting.Dictionary")
+
+    For k = 1 To TASK_COUNT
+        ' 選んだ物件が使っている業者を集める
+        Set pickedVendors = CreateObject("Scripting.Dictionary")
+        For Each key In picked.Keys
+            contract = CStr(key)
+            If info.Exists(contract) Then
+                v = info(contract)
+                vendorName = NormalizeName(CStr(v(IIf(k = 1, 4, 5))))
+                If Len(vendorName) > 0 Then
+                    pickedVendors(vendorName) = idx(contract)
+                    target(contract) = True
+                End If
+            End If
+        Next key
+
+        ' 同じ業者で、選んだ物件より下にある物件も対象にする
+        For Each key In order
+            contract = CStr(key)
+            If Not target.Exists(contract) Then
+                v = info(contract)
+                vendorName = NormalizeName(CStr(v(IIf(k = 1, 4, 5))))
+                If pickedVendors.Exists(vendorName) Then
+                    If CLng(idx(contract)) > CLng(pickedVendors(vendorName)) Then
+                        target(contract) = True
+                    End If
+                End If
+            End If
+        Next key
+    Next k
+
+    ' 対象の一覧を作る（工程表の並び順）
+    For Each key In order
+        contract = CStr(key)
+        If target.Exists(contract) Then
+            n = n + 1
+            If n <= 15 Then
+                listMsg = listMsg & "  " & InfoName(info, contract) & _
+                          IIf(picked.Exists(contract), "  ← 選択", "") & vbCrLf
+            End If
+        End If
+    Next key
+    If n > 15 Then listMsg = listMsg & "  ... 他 " & (n - 15) & " 件" & vbCrLf
+
+    If MsgBox(n & " 件を計算し直します。" & vbCrLf & vbCrLf & _
+              listMsg & vbCrLf & _
+              "選んだ物件と、同じ業者を使っていて工程表で下にある物件が対象です。" & vbCrLf & vbCrLf & _
+              "消すもの : マクロが入れた値（青字）" & vbCrLf & _
+              "残るもの : 手入力した値（黒字）/ 調整 / 備考" & vbCrLf & vbCrLf & _
+              "よろしいですか？", vbYesNo + vbQuestion, "選択行と後続を再計算") <> vbYes Then Exit Sub
+
+    Application.ScreenUpdating = False
+    For Each key In target.Keys
+        contract = CStr(key)
+        If taskRow.Exists(contract) Then
+            cleared = cleared + ClearAutoOutputs(wsT, CLng(taskRow(contract)))
+        End If
+    Next key
+    Application.ScreenUpdating = True
+
+    ' そのまま計算する。青字は毎回決め直すので、対象外の物件は結果が変わらない。
+    CalculatePlan
 End Sub

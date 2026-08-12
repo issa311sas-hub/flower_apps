@@ -23,6 +23,12 @@ Public Const SH_TASK    As String = "M_工程データ"
 Public Const SH_SETTING As String = "M_設定"
 Public Const SH_TERM    As String = "M_工期"
 
+' --- 自動で書き込んだセルの文字色 -----------------------------------
+' マクロが計算して入れた値は青字、人が入力した値は黒字。
+' 青字のセルは次の計算でマクロが自由に上書きし直す。
+' 黒字（手入力）のセルには触らない。
+Public Const CLR_AUTO_FONT As Long = 12611584    ' RGB(0, 112, 192) 青
+
 ' --- 設定の保存キー -------------------------------------------------
 ' 設定シートは作らない。ブックに埋め込む「名前」（非表示）に保存する。
 Public Const CFG_CHART_SHEET As String = "cfgChartSheet"   ' 工程表シート名
@@ -74,11 +80,11 @@ Public Const OFS_KISO_SUB   As Long = 5          ' 基礎行の補助 (契約着工日の黒1
 '   躯体: H 開始日  I 調整  J 終了日  K 色名  L 備考
 ' 工程を足すときは右へ 5 列ずつ伸ばす。
 '
-' 各列の役割（開始日を直したら全部計算し直せるよう、入力と出力を分けてある）
-'   開始日 … 入力。2番目以降の工程は空欄なら前工程の終了日から自動で決まる
+' 各列の役割。手入力（黒字）と自動（青字）で扱いが変わる。
+'   開始日 … 黒字ならその日を使う。青字・空欄なら本着日／前工程から決め直す
 '   調整   … 入力。工期に足し引きする日数（+1 / -2 など）。空欄は 0
-'   終了日 … 出力。実行のたびに必ず計算し直して上書きする
-'   色名   … 空欄なら自動割り当て。入っていればその業者で固定
+'   終了日 … 黒字ならその日を使う。青字・空欄なら工期の式で計算し直す
+'   色名   … 黒字ならその色。青字・空欄なら工程表の業者欄から引き直す
 '   備考   … 自由記入。マクロは読み書きしない
 Public Const TASK_COL_CONTRACT As Long = 1
 Public Const TASK_COL_NAME     As Long = 2
@@ -107,6 +113,32 @@ Public Const MARK_OFS_HONCHAKU As Long = 5       ' = OFS_KISO_SUB
 ' お客様納期は物件ブロックの上から縦に塗る
 Public Const MARK_ROWS      As Long = 4          ' 縦に塗るマス数
 Public Const MARK_OFS_FIRST As Long = 0          ' 物件ブロックの先頭からの位置
+
+'---------------------------------------------------------------------
+' マクロが計算して入れたセルか（青字なら自動）
+'---------------------------------------------------------------------
+Public Function IsAutoCell(cell As Range) As Boolean
+    IsAutoCell = (CLng(cell.Font.Color) = CLR_AUTO_FONT)
+End Function
+
+'---------------------------------------------------------------------
+' 計算結果を書き込む（青字にして「自動で入れた」印を付ける）
+'---------------------------------------------------------------------
+Public Sub WriteAuto(cell As Range, v As Variant)
+    cell.Value = v
+    cell.Font.Color = CLR_AUTO_FONT
+End Sub
+
+'---------------------------------------------------------------------
+' 自動で入れたセルだけ消す（手入力は残す）
+'---------------------------------------------------------------------
+Public Function ClearIfAuto(cell As Range) As Boolean
+    If Len(Trim$(CStr(cell.Value))) = 0 Then Exit Function
+    If Not IsAutoCell(cell) Then Exit Function
+    cell.ClearContents
+    cell.Font.ColorIndex = xlColorIndexAutomatic
+    ClearIfAuto = True
+End Function
 
 '---------------------------------------------------------------------
 ' 日祝の黄緑か（古い版で塗った色も含む）
