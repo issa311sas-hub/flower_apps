@@ -51,7 +51,7 @@ tools/
   analyze_chart.py             ← 過去の工程表を解析して工期を実測する
   make_import_bas.py           ← vba/ から vba/sjis/ を生成する
 archive/                       ← 版ごとの保管（README.md に一覧と復元手順）
-  2026-08-11/v1〜v18/
+  2026-08-11/v1〜v19/
 ```
 
 > **Excel に取り込むときは `vba/sjis/` を使ってください。**

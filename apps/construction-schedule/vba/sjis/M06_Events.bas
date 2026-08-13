@@ -18,7 +18,7 @@ Option Explicit
 '
 ' 「上から◯マス目」は物件の6行のなかの位置（1 始まり）。
 '
-'   M0 / M1              上から4マス目          黒・横書き
+'   M0 / M1              上から5マス目          黒・横書き
 '   M2 / M3 / M4 / M5    上から2マス目          黒・横書き
 '   家具搬入             上から2～3マス目を結合  赤・太字・縦書き
 '   CL                   上から2～3マス目を結合  赤・縦書き
@@ -70,13 +70,13 @@ Private mFormOK As Boolean
 ' 戻り値 : Array(名前, 行オフセット, 行数, 文字色, 太字, 縦書き, 塗りを消す)
 '
 '   行オフセット … 物件ブロックの先頭からの位置（0 始まり）
-'                   「上から2マス目」= 1、「上から4マス目」= 3
+'                   「上から2マス目」= 1、「上から5マス目」= 4
 '   行数         … 縦にいくつのマスを使うか。2以上なら結合して書く
 '---------------------------------------------------------------------
 Public Function EventDef(i As Long) As Variant
     Select Case i
-        Case 1:  EventDef = Array("M0", 3, 1, CLR_EVENT_BLACK, False, False, False)
-        Case 2:  EventDef = Array("M1", 3, 1, CLR_EVENT_BLACK, False, False, False)
+        Case 1:  EventDef = Array("M0", 4, 1, CLR_EVENT_BLACK, False, False, False)
+        Case 2:  EventDef = Array("M1", 4, 1, CLR_EVENT_BLACK, False, False, False)
         Case 3:  EventDef = Array("M2", 1, 1, CLR_EVENT_BLACK, False, False, False)
         Case 4:  EventDef = Array("M3", 1, 1, CLR_EVENT_BLACK, False, False, False)
         Case 5:  EventDef = Array("M4", 1, 1, CLR_EVENT_BLACK, False, False, False)
