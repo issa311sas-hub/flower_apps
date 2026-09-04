@@ -1,0 +1,4438 @@
+'=====================================================================
+' 工程表マクロ － 全モジュールをまとめたファイル
+'
+' このファイルは直接インポートできません。
+' Excel で「ボタン_マクロを更新」を実行し、このファイルを選んでください。
+' （M90_Loader モジュールを最初に1回だけ取り込んでおく必要があります）
+'
+' モジュール : 8 個 / ユーザーフォーム : 1 個
+'=====================================================================
+
+'>>>MODULE:M00_Config
+Option Explicit
+
+'=====================================================================
+' M00_Config : 座標定数と共通ヘルパー
+'
+' 現行のローテーション表(シート"1")のレイアウトをここに集約する。
+' レイアウトが変わったらこのモジュールだけ直せば済むようにしておく。
+'=====================================================================
+
+'--- 二重引用符（文字列の中に " を書くため） ------------------------
+Public Const QT As String = """"
+
+' --- シート名 -------------------------------------------------------
+' 工程表シートの名前はブックによって変わる（"1" だったり "工程表実データ" だったり）。
+' 「ボタン_このシートを工程表に設定」で指定し、未設定なら既定名 → アクティブシートの順に探す。
+Public Const SH_CHART_DEFAULT As String = "1"    ' 工程表本体の既定名
+Public Const SH_VENDOR  As String = "M_業者"
+Public Const SH_EXCEPT  As String = "M_例外日"
+Public Const SH_TASK    As String = "M_工程データ"
+
+' イベント入力の一時シート。入力が終わると削除される。
+Public Const SH_EVENT_INPUT As String = "イベント入力"
+
+' 使わなくなったシート。中身はマクロに取り込んだので、初期セットアップで削除する。
+Public Const SH_SETTING As String = "M_設定"
+Public Const SH_TERM    As String = "M_工期"
+
+' --- 自動で書き込んだセルの文字色 -----------------------------------
+' マクロが計算して入れた値は青字、人が入力した値は黒字。
+' 青字のセルは次の計算でマクロが自由に上書きし直す。
+' 黒字（手入力）のセルには触らない。
+Public Const CLR_AUTO_FONT As Long = 12611584    ' RGB(0, 112, 192) 青
+
+' --- 設定の保存キー -------------------------------------------------
+' 設定シートは作らない。ブックに埋め込む「名前」（非表示）に保存する。
+Public Const CFG_CHART_SHEET As String = "cfgChartSheet"   ' 工程表シート名
+Public Const CFG_BASE_YEAR   As String = "cfgBaseYear"     ' カレンダー先頭列の年
+
+' --- 工程表の座標 (すべて Excel の 1 始まり) ------------------------
+Public Const ROW_DATE       As Long = 3          ' 日付が入っている行
+Public Const COL_DATE_FIRST As Long = 17         ' 日付エリアの先頭列 (Q列)
+Public Const ROW_BLOCK_1ST  As Long = 5          ' 最初の物件ブロックの開始行
+Public Const BLOCK_ROWS     As Long = 6          ' 1物件が占める行数
+
+Public Const COL_NAME       As Long = 11         ' 邸名          (ブロック先頭行)
+Public Const COL_CONTRACT   As Long = 11         ' 契約番号      (先頭行 +1)
+Public Const COL_TYPE       As Long = 13         ' タイプ        (先頭行 +1)
+Public Const COL_TSUBO      As Long = 14         ' 坪数          (先頭行 +2)
+
+' 業者名（先頭行 +0）。実データで表記ゆれが無いことを確認済み。
+'   基礎 : 加納 / 協栄 / 龍壱 / カサハラ の4社
+'   躯体 : 丸岩・KRK / 雅建工 の2社
+Public Const COL_KISO_VENDOR  As Long = 14       ' 基礎業者      (先頭行 +0)
+Public Const COL_KUTAI_VENDOR As Long = 15       ' 躯体業者      (先頭行 +0)
+
+' 本着日とお客様納期（先頭行 +2 がラベル、+3 が値）
+' 実際にはブックによって1行・1列ずれていることがあるため、
+' FindBlockDate がラベル（「本着」「納期」）を手がかりに探す。
+' 下の座標は、ラベルが見つからなかったときの保険。
+Public Const ROW_OFS_DATES   As Long = 3
+Public Const COL_HONCHAKU    As Long = 11        ' 本着日
+Public Const COL_NOUKI       As Long = 12        ' お客様納期
+
+' 物件の情報が入っている列の範囲（日付エリアより左側）。ラベル探索に使う。
+Public Const COL_INFO_FIRST  As Long = 8
+Public Const COL_INFO_LAST   As Long = 16        ' = COL_DATE_FIRST - 1
+
+' --- ブロック内の行オフセット (0 始まり) ----------------------------
+' 日付エリアではオフセットごとに意味が違う。必ずこの定数経由で書く。
+Public Const OFS_KUTAI      As Long = 0          ' 躯体工事の色帯
+Public Const OFS_KUTAI_SUB  As Long = 1          ' 躯体行の補助 (単発イベント)
+Public Const OFS_NOTE       As Long = 2          ' 補助 (吹付・タイル・養生メモ)
+Public Const OFS_MORTAR     As Long = 3          ' モルタル工事の黒帯
+Public Const OFS_KISO       As Long = 4          ' 基礎工事の色帯 (後半は外構が使う)
+Public Const OFS_KISO_SUB   As Long = 5          ' 基礎行の補助 (契約着工日の黒1マス)
+
+' --- クリティカル工程 (工事店確認済。この順で必ず進む) --------------
+'   1 基礎工事 → 2 躯体工事 → 3 モルタル工事 → 4 防水工事
+'   → 5 断熱工事 → 6 木工事 → 7 仕上げ工事
+' 現在は 1 基礎 と 2 躯体 まで実装。以降は順次追加する。
+'
+' 色帯を塗る行は工程ごとに違う（実測で確認済み）。
+'   基礎 … +4 と +5 の 2 行   (実測 2610 / 2621 セル)
+'   躯体 … +0 の 1 行のみ     (実測 +0 が 808、+1 は 19 のみ)
+
+' --- M_工程データ の列レイアウト（1物件1行の横並び） ----------------
+' A 契約番号 / B 邸名 / 以降は工程ごとに 5 列ずつ
+'   基礎: C 開始日  D 調整  E 終了日  F 色名  G 備考
+'   躯体: H 開始日  I 調整  J 終了日  K 色名  L 備考
+' 工程を足すときは右へ 5 列ずつ伸ばす。
+'
+' 各列の役割。手入力（黒字）と自動（青字）で扱いが変わる。
+'   開始日 … 黒字ならその日を使う。青字・空欄なら本着日／前工程から決め直す
+'   調整   … 入力。工期に足し引きする日数（+1 / -2 など）。空欄は 0
+'   終了日 … 黒字ならその日を使う。青字・空欄なら工期の式で計算し直す
+'   色名   … 黒字ならその色。青字・空欄なら工程表の業者欄から引き直す
+'   備考   … 自由記入。マクロは読み書きしない
+Public Const TASK_COL_CONTRACT As Long = 1
+Public Const TASK_COL_NAME     As Long = 2
+Public Const TASK_COL_FIRST    As Long = 3    ' 最初の工程ブロックの開始列
+Public Const TASK_COL_WIDTH    As Long = 5    ' 1工程あたりの列数
+
+' 工程ブロック内での列オフセット（0 始まり）
+Public Const TASK_OFS_START  As Long = 0
+Public Const TASK_OFS_ADJUST As Long = 1
+Public Const TASK_OFS_END    As Long = 2
+Public Const TASK_OFS_COLOR  As Long = 3
+Public Const TASK_OFS_NOTE   As Long = 4
+
+' --- 色 -------------------------------------------------------------
+Public Const CLR_HOLIDAY     As Long = 52377     ' RGB(153, 204, 0)  日曜・祝日の黄緑
+' v13 以前は RGB(153,153,0) で塗っていた。古い塗りも日祝として認識するために残す。
+Public Const CLR_HOLIDAY_OLD As Long = 39321     ' RGB(153, 153, 0)
+Public Const CLR_BLACK      As Long = 0          ' RGB(0, 0, 0)      契約着工日 / モルタル
+
+' 本着日・お客様納期のマーカー。工程表に縦 MARK_ROWS マス塗る。
+' 業者色とは別枠で扱い、工程色より優先して上書きする。
+Public Const CLR_MARK_HONCHAKU As Long = 0        ' RGB(0, 0, 0)     黒
+Public Const CLR_MARK_NOUKI    As Long = 13395456 ' RGB(0, 102, 204) 青
+' 本着日は基礎工事の下の1マスだけ塗る。その列の基礎の色帯は1行上へずらす。
+Public Const MARK_OFS_HONCHAKU As Long = 5       ' = OFS_KISO_SUB
+' お客様納期は物件ブロックの上から縦に塗る
+Public Const MARK_ROWS      As Long = 4          ' 縦に塗るマス数
+Public Const MARK_OFS_FIRST As Long = 0          ' 物件ブロックの先頭からの位置
+
+'---------------------------------------------------------------------
+' マクロが計算して入れたセルか（青字なら自動）
+'---------------------------------------------------------------------
+Public Function IsAutoCell(cell As Range) As Boolean
+    IsAutoCell = (CLng(cell.Font.Color) = CLR_AUTO_FONT)
+End Function
+
+'---------------------------------------------------------------------
+' 計算結果を書き込む（青字にして「自動で入れた」印を付ける）
+'---------------------------------------------------------------------
+Public Sub WriteAuto(cell As Range, v As Variant)
+    cell.Value = v
+    cell.Font.Color = CLR_AUTO_FONT
+End Sub
+
+'---------------------------------------------------------------------
+' 自動で入れたセルだけ消す（手入力は残す）
+'---------------------------------------------------------------------
+Public Function ClearIfAuto(cell As Range) As Boolean
+    If Len(Trim$(CStr(cell.Value))) = 0 Then Exit Function
+    If Not IsAutoCell(cell) Then Exit Function
+    cell.ClearContents
+    cell.Font.ColorIndex = xlColorIndexAutomatic
+    ClearIfAuto = True
+End Function
+
+'---------------------------------------------------------------------
+' 日祝の黄緑か（古い版で塗った色も含む）
+'---------------------------------------------------------------------
+Public Function IsHolidayColor(c As Long) As Boolean
+    IsHolidayColor = (c = CLR_HOLIDAY) Or (c = CLR_HOLIDAY_OLD)
+End Function
+
+'=====================================================================
+' 設定の保存先
+'
+' 設定シートは使わない。利用者が触るシートを増やさないため、
+' ブックに埋め込む「名前」（非表示）に保存する。
+' Excel の画面には出ないが、ブックを保存すれば残る。
+'=====================================================================
+'---------------------------------------------------------------------
+' 設定を読む。無ければ空文字。
+'---------------------------------------------------------------------
+Public Function GetSetting(key As String) As String
+    Dim s As String
+    On Error Resume Next
+    s = CStr(ThisWorkbook.Names(key).RefersTo)
+    On Error GoTo 0
+    If Len(s) = 0 Then Exit Function
+
+    ' RefersTo は ="値" の形で返る。= と引用符を外す。
+    If Left$(s, 1) = "=" Then s = Mid$(s, 2)
+    If Len(s) >= 2 Then
+        If Left$(s, 1) = QT And Right$(s, 1) = QT Then s = Mid$(s, 2, Len(s) - 2)
+    End If
+    GetSetting = Replace$(s, QT & QT, QT)
+End Function
+
+'---------------------------------------------------------------------
+' 設定を書く
+'---------------------------------------------------------------------
+Public Sub SaveSetting(key As String, val As String)
+    On Error Resume Next
+    ThisWorkbook.Names(key).Delete
+    On Error GoTo 0
+    ThisWorkbook.Names.Add Name:=key, _
+        RefersTo:="=" & QT & Replace$(val, QT, QT & QT) & QT, Visible:=False
+End Sub
+
+'---------------------------------------------------------------------
+' カレンダーの基準年（日付エリアの先頭列の年）。0 なら補正しない。
+'---------------------------------------------------------------------
+Public Function CalendarBaseYear() As Long
+    Dim s As String
+    s = GetSetting(CFG_BASE_YEAR)
+    If Len(s) = 0 Then Exit Function
+    If Not IsNumeric(s) Then Exit Function
+    CalendarBaseYear = CLng(s)
+End Function
+
+'---------------------------------------------------------------------
+' 工程表シートを取得する
+'---------------------------------------------------------------------
+Public Function ChartSheet() As Worksheet
+    Dim ws As Worksheet, nm As String
+    nm = ChartSheetName()
+
+    If Len(nm) = 0 Then
+        Err.Raise vbObjectError + 1, "ChartSheet", _
+                  "どのシートが工程表か分かりません。" & vbCrLf & vbCrLf & _
+                  "工程表シートを開いた状態で「ボタン_このシートを工程表に設定」を" & vbCrLf & _
+                  "実行してください。" & vbCrLf & vbCrLf & _
+                  "このブックのシート:" & vbCrLf & SheetNameList()
+    End If
+
+    Set ws = ThisWorkbook.Worksheets(nm)
+    Set ChartSheet = ws
+End Function
+
+'---------------------------------------------------------------------
+' 工程表シートの名前を決める
+'
+' 1) ブックに保存した設定（ボタン_このシートを工程表に設定 で書く）
+' 2) 旧版の M_設定 シートが残っていればその B1
+' 3) 既定名 "1" のシートがあればそれ
+' 4) いま開いているシートがマスタ以外ならそれ
+' どれにも当たらなければ空文字を返す。
+'---------------------------------------------------------------------
+Public Function ChartSheetName() As String
+    Dim ws As Worksheet, nm As String
+
+    nm = Trim$(GetSetting(CFG_CHART_SHEET))
+    If Len(nm) > 0 Then
+        If SheetExists(nm) Then
+            ChartSheetName = nm
+            Exit Function
+        End If
+    End If
+
+    ' 旧版からの移行用。M_設定 が残っていれば読む。
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(SH_SETTING)
+    On Error GoTo 0
+    If Not ws Is Nothing Then nm = Trim$(CStr(ws.Range("B1").Value))
+
+    If Len(nm) > 0 Then
+        If SheetExists(nm) Then
+            ChartSheetName = nm
+            Exit Function
+        End If
+    End If
+
+    If SheetExists(SH_CHART_DEFAULT) Then
+        ChartSheetName = SH_CHART_DEFAULT
+        Exit Function
+    End If
+
+    If TypeName(ActiveSheet) = "Worksheet" Then
+        If Not IsMasterSheet(ActiveSheet.Name) Then
+            ChartSheetName = ActiveSheet.Name
+            Exit Function
+        End If
+    End If
+
+    ChartSheetName = ""
+End Function
+
+'---------------------------------------------------------------------
+' シートが存在するか
+'---------------------------------------------------------------------
+Public Function SheetExists(sheetName As String) As Boolean
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(sheetName)
+    On Error GoTo 0
+    SheetExists = Not ws Is Nothing
+End Function
+
+'---------------------------------------------------------------------
+' マクロが作ったマスタシートか（工程表の候補から外すため）
+'---------------------------------------------------------------------
+Public Function IsMasterSheet(sheetName As String) As Boolean
+    Select Case sheetName
+        Case SH_SETTING, SH_VENDOR, SH_EXCEPT, SH_TERM, SH_TASK, SH_EVENT_INPUT
+            IsMasterSheet = True
+        Case Else
+            IsMasterSheet = False
+    End Select
+End Function
+
+'---------------------------------------------------------------------
+' ブック内のシート名を一覧の文字列にする（エラーメッセージ用）
+'---------------------------------------------------------------------
+Public Function SheetNameList() As String
+    Dim ws As Worksheet, s As String
+    For Each ws In ThisWorkbook.Worksheets
+        s = s & "  ・" & ws.Name
+        If IsMasterSheet(ws.Name) Then s = s & "  （マスタ）"
+        s = s & vbCrLf
+    Next ws
+    SheetNameList = s
+End Function
+
+'---------------------------------------------------------------------
+' 物件ブロックから、ラベル付きの日付を探す
+'
+' 本着日・お客様納期は、ブロックの左側（日付エリアより左）に
+' 「本着」「お客様納期」のラベルと日付が並んでいる。
+' ブックによって行や列が1つずれていることがあるため、
+' 決め打ちにせずラベルを手がかりに探す。
+'
+'   1) ラベルの入ったセルを、ブロックの範囲から探す
+'   2) そのセル自身 → 下 → 右 → 右下 の順に日付を探す
+'   3) 見つからなければ、決め打ちの座標（fallbackCol）で読む
+'
+' 見つからなければ Empty を返す。
+'---------------------------------------------------------------------
+Public Function FindBlockDate(ws As Worksheet, topRow As Long, _
+                              label As String, fallbackCol As Long) As Variant
+    Dim off As Long, c As Long, r As Long
+    Dim t As String, v As Variant
+
+    For off = 0 To BLOCK_ROWS - 1
+        r = topRow + off
+        For c = COL_INFO_FIRST To COL_INFO_LAST
+            t = Trim$(CStr(ws.Cells(r, c).Value))
+            If Len(t) > 0 Then
+                If InStr(1, t, label) > 0 Then
+                    v = FirstDateAround(ws, r, c)
+                    If IsDate(v) Then
+                        FindBlockDate = CDate(v)
+                        Exit Function
+                    End If
+                End If
+            End If
+        Next c
+    Next off
+
+    ' ラベルが見つからないときは決め打ちの座標で読む
+    v = ws.Cells(topRow + ROW_OFS_DATES, fallbackCol).Value
+    If IsDate(v) Then FindBlockDate = CDate(v)
+End Function
+
+'---------------------------------------------------------------------
+' そのセルとその周り（下・右・右下）から最初に見つかる日付を返す
+'---------------------------------------------------------------------
+Private Function FirstDateAround(ws As Worksheet, r As Long, c As Long) As Variant
+    Dim cand As Variant, i As Long
+    Dim rr As Variant, cc As Variant
+
+    rr = Array(0, 1, 0, 1, 2)
+    cc = Array(0, 0, 1, 1, 0)
+
+    For i = LBound(rr) To UBound(rr)
+        cand = ws.Cells(r + CLng(rr(i)), c + CLng(cc(i))).Value
+        If IsDate(cand) Then
+            FirstDateAround = CDate(cand)
+            Exit Function
+        End If
+    Next i
+End Function
+
+'---------------------------------------------------------------------
+' 列番号 -> 日付 の対応表を作る
+'
+' 月の変わり目に日付の入っていない区切り列が挟まるため、
+' 列番号から日付を計算してはいけない。必ず ROW_DATE の実値を読む。
+'
+' ■ 年の補正
+' カレンダーのセルに入っている「年」が実際と違うことがある
+' （前年の表を作り替えて使っている場合など）。
+' 「ボタン_カレンダーの年を設定」で先頭列の年を指定しておくと、
+' 月日だけをシートから読み、年はこちらで振り直す。
+' 月が戻ったところ（12月→1月）で年を1つ繰り上げる。
+' 未設定なら、シートに入っている値をそのまま使う。
+'---------------------------------------------------------------------
+Public Function BuildColMap(ws As Worksheet) As Object
+    Dim map As Object, c As Long, lastCol As Long, v As Variant
+    Dim d As Date, baseYear As Long, y As Long, prevMonth As Long
+
+    Set map = CreateObject("Scripting.Dictionary")
+    baseYear = CalendarBaseYear()
+    y = baseYear
+    prevMonth = 0
+
+    lastCol = ws.Cells(ROW_DATE, ws.Columns.Count).End(xlToLeft).Column
+    For c = COL_DATE_FIRST To lastCol
+        v = ws.Cells(ROW_DATE, c).Value
+        If IsDate(v) Then
+            d = CDate(v)
+            If baseYear > 0 Then
+                If prevMonth > 0 Then
+                    If Month(d) < prevMonth Then y = y + 1
+                End If
+                prevMonth = Month(d)
+                d = DateSerial(y, Month(d), Day(d))
+            End If
+            map(c) = d
+        End If
+    Next c
+    Set BuildColMap = map
+End Function
+
+'---------------------------------------------------------------------
+' 日付 -> 列番号 の対応表 (逆引き)
+' キーは CLng(日付) の日付シリアル値。
+'---------------------------------------------------------------------
+Public Function BuildDateMap(ws As Worksheet) As Object
+    Dim map As Object, colMap As Object, c As Variant, key As Long
+
+    Set map = CreateObject("Scripting.Dictionary")
+    Set colMap = BuildColMap(ws)
+
+    For Each c In colMap.Keys
+        key = CLng(CDate(colMap(c)))
+        If Not map.Exists(key) Then map.Add key, CLng(c)
+    Next c
+
+    If map.Count = 0 Then
+        Err.Raise vbObjectError + 2, "BuildDateMap", _
+                  ROW_DATE & "行目に日付が見つかりません。ROW_DATE / COL_DATE_FIRST を確認してください。"
+    End If
+    Set BuildDateMap = map
+End Function
+
+'---------------------------------------------------------------------
+' 物件ブロックの一覧を返す
+'
+' 各要素は次の Variant 配列。「邸」で終わるセルをブロック先頭とみなす。
+'   0 開始行 / 1 邸名 / 2 契約番号 / 3 タイプ
+'   4 基礎業者 / 5 躯体業者 / 6 本着日 / 7 お客様納期
+' 並び順はシートの上から下。業者の優先順位もこの順になる。
+'---------------------------------------------------------------------
+Public Function FindBlocks(ws As Worksheet) As Collection
+    Dim col As New Collection
+    Dim r As Long, lastRow As Long
+    Dim nm As String, contract As String, typ As String
+    Dim kisoV As String, kutaiV As String
+    Dim honchaku As Variant, nouki As Variant
+
+    lastRow = ws.Cells(ws.Rows.Count, COL_NAME).End(xlUp).Row
+
+    r = ROW_BLOCK_1ST
+    Do While r <= lastRow
+        nm = Trim$(CStr(ws.Cells(r, COL_NAME).Value))
+        If Len(nm) > 0 And Right$(nm, 1) = "邸" Then
+            contract = Trim$(CStr(ws.Cells(r + 1, COL_CONTRACT).Value))
+            typ = Trim$(CStr(ws.Cells(r + 1, COL_TYPE).Value))
+            kisoV = Trim$(CStr(ws.Cells(r, COL_KISO_VENDOR).Value))
+            kutaiV = Trim$(CStr(ws.Cells(r, COL_KUTAI_VENDOR).Value))
+
+            honchaku = FindBlockDate(ws, r, "本着", COL_HONCHAKU)
+            nouki = FindBlockDate(ws, r, "納期", COL_NOUKI)
+
+            col.Add Array(r, nm, contract, typ, kisoV, kutaiV, honchaku, nouki)
+            r = r + BLOCK_ROWS
+        Else
+            r = r + 1
+        End If
+    Loop
+
+    Set FindBlocks = col
+End Function
+
+'=====================================================================
+' タイプコードの解析
+'
+' 例) C2E42 → 種類 "C" / 階数 2 / 坪数 42
+'     DYF67 → 種類 "DY" / 階数 0 / 坪数 67
+'     V3F208 → 種類 "V" / 階数 3 / 坪数 208
+'
+' 末尾の E または F の後ろがすべて数字であるところで区切る。
+' その数字が総坪数（坪数欄 ①②の合計とほぼ一致することを実データで確認済み）。
+'=====================================================================
+Public Function ParseType(typeCode As String, ByRef kind As String, _
+                          ByRef floors As Long, ByRef area As Long) As Boolean
+    Dim t As String, i As Long, sep As Long
+    Dim prefix As String, tail As String, lastCh As String
+
+    kind = "": floors = 0: area = 0
+    t = UCase$(Trim$(typeCode))
+    If Len(t) < 3 Then Exit Function
+
+    ' 後ろから、E/F の直後がすべて数字になる位置を探す
+    For i = Len(t) - 1 To 2 Step -1
+        If Mid$(t, i, 1) = "E" Or Mid$(t, i, 1) = "F" Then
+            tail = Mid$(t, i + 1)
+            If Len(tail) > 0 Then
+                If IsAllDigits(tail) Then
+                    sep = i
+                    Exit For
+                End If
+            End If
+        End If
+    Next i
+    If sep = 0 Then Exit Function
+
+    area = CLng(tail)
+    prefix = Left$(t, sep - 1)
+    If Len(prefix) = 0 Then Exit Function
+
+    ' 接頭辞の末尾が数字なら階数
+    lastCh = Right$(prefix, 1)
+    If lastCh >= "0" And lastCh <= "9" Then
+        floors = CLng(lastCh)
+        kind = Left$(prefix, Len(prefix) - 1)
+    Else
+        kind = prefix
+    End If
+
+    ParseType = (Len(kind) > 0 And area > 0)
+End Function
+
+Private Function IsAllDigits(s As String) As Boolean
+    Dim i As Long, c As String
+    For i = 1 To Len(s)
+        c = Mid$(s, i, 1)
+        If c < "0" Or c > "9" Then Exit Function
+    Next i
+    IsAllDigits = (Len(s) > 0)
+End Function
+
+'---------------------------------------------------------------------
+' シートを名前で取得。無ければ作る。
+'---------------------------------------------------------------------
+Public Function GetOrCreateSheet(sheetName As String) As Worksheet
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(sheetName)
+    On Error GoTo 0
+    If ws Is Nothing Then
+        Set ws = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Worksheets(ThisWorkbook.Worksheets.Count))
+        ws.Name = sheetName
+    End If
+    Set GetOrCreateSheet = ws
+End Function
+
+'>>>MODULE:M01_Holiday
+Option Explicit
+
+'=====================================================================
+' M01_Holiday : 日本の祝日判定
+'
+' 外部データに依存せず計算で判定する（2020年以降の現行法ベース）。
+' ・ハッピーマンデー(成人/海/敬老/スポーツ)
+' ・春分・秋分（天文計算の近似式。1980～2099年で有効）
+' ・振替休日（祝日が日曜のとき、次の非祝日を休みにする）
+' ・国民の休日（祝日に挟まれた平日。9月の敬老の日～秋分の日）
+'
+' 加えて、会社の休業日（お盆・年末年始）も非稼働日として扱う。
+' これらは祝日ではないので、振替休日・国民の休日の判定には含めない。
+' 個別の休工日を足したい場合は M_例外日 シートで物件単位に指定する。
+'=====================================================================
+
+' --- 会社休業日（月/日で指定。年によらず固定） ----------------------
+Public Const OBON_MONTH     As Long = 8    ' お盆
+Public Const OBON_FROM_DAY  As Long = 13
+Public Const OBON_TO_DAY    As Long = 16
+Public Const NENMATSU_MONTH As Long = 12   ' 年末（12/30～12/31）
+Public Const NENMATSU_DAY   As Long = 30
+Public Const NENSHI_MONTH   As Long = 1    ' 年始（1/1～1/3）
+Public Const NENSHI_DAY     As Long = 3
+
+' --- 物件ごとの例外日 -----------------------------------------------
+' M_例外日 に契約番号と日付を書くと、その日は通常の判定が反転する。
+'   もともと非稼働日（日曜・お盆・年末年始）→ その物件だけ稼働日
+'   もともと稼働日（平日・祝日）            → その物件だけ休み
+' 契約番号に「全件」と書くと全物件に適用される（会社都合の休工など）。
+'
+' 塗りつぶしだけでなく工期の計算にも効かせるため、
+' 日数を数える処理はすべて IsNonWorkingDayFor / AddWorkingDaysFor を通す。
+Public Const EXCEPT_ALL As String = "全件"
+
+Private mExcept As Object          ' key: 契約番号|日付シリアル
+Private mExceptLoaded As Boolean
+
+'---------------------------------------------------------------------
+' 祝日か（振替休日・国民の休日を含む。会社休業日は含まない）
+'---------------------------------------------------------------------
+Public Function IsHoliday(d As Date) As Boolean
+    IsHoliday = (Len(HolidayName(d)) > 0)
+End Function
+
+'---------------------------------------------------------------------
+' 会社休業日か（お盆・年末年始）
+'---------------------------------------------------------------------
+Public Function IsCompanyClosure(d As Date) As Boolean
+    IsCompanyClosure = (Len(CompanyClosureName(d)) > 0)
+End Function
+
+'---------------------------------------------------------------------
+' 会社休業日の名前を返す。該当しなければ空文字。
+'---------------------------------------------------------------------
+Public Function CompanyClosureName(d As Date) As String
+    Dim m As Long, dd As Long
+    m = Month(d): dd = Day(d)
+
+    If m = OBON_MONTH Then
+        If dd >= OBON_FROM_DAY And dd <= OBON_TO_DAY Then
+            CompanyClosureName = "お盆"
+            Exit Function
+        End If
+    End If
+
+    If m = NENMATSU_MONTH And dd >= NENMATSU_DAY Then
+        CompanyClosureName = "年末年始"
+        Exit Function
+    End If
+
+    If m = NENSHI_MONTH And dd <= NENSHI_DAY Then
+        CompanyClosureName = "年末年始"
+        Exit Function
+    End If
+
+    CompanyClosureName = ""
+End Function
+
+'---------------------------------------------------------------------
+' 非稼働日か（日曜 / 会社休業日）
+'
+' 祝日は稼働日として扱う。工事店の実態として祝日は作業があり、
+' 休みなのは日曜と会社休業日（お盆・年末年始）だけ。
+' 祝日を休みにしたい物件は M_例外日 に日付を書いて反転させる。
+'---------------------------------------------------------------------
+Public Function IsNonWorkingDay(d As Date) As Boolean
+    IsNonWorkingDay = (Weekday(d, vbSunday) = 1) _
+                      Or IsCompanyClosure(d)
+End Function
+
+'---------------------------------------------------------------------
+' 工程表で黄緑に塗る日か（日曜 / 祝日 / 会社休業日）
+'
+' 稼働の有無とは別物。祝日は稼働日だが、現場で日程を確認するために
+' 工程表上では色を塗る。工事がある日は工程色で上書きされる。
+'---------------------------------------------------------------------
+Public Function IsPaintDay(d As Date) As Boolean
+    IsPaintDay = (Weekday(d, vbSunday) = 1) _
+                 Or IsHoliday(d) _
+                 Or IsCompanyClosure(d)
+End Function
+
+'=====================================================================
+' 物件ごとの例外日
+'=====================================================================
+
+'---------------------------------------------------------------------
+' 例外日の読み込みキャッシュを捨てる
+' M_例外日 を書き換えたあとに呼ぶ（各ボタンの先頭で呼んでいる）
+'---------------------------------------------------------------------
+Public Sub ResetExceptionCache()
+    Set mExcept = Nothing
+    mExceptLoaded = False
+End Sub
+
+Private Sub EnsureExceptions()
+    Dim ws As Worksheet, r As Long, lastRow As Long
+    Dim contract As String, v As Variant
+
+    If mExceptLoaded Then Exit Sub
+    Set mExcept = CreateObject("Scripting.Dictionary")
+
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(SH_EXCEPT)
+    On Error GoTo 0
+
+    If Not ws Is Nothing Then
+        lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+        For r = 2 To lastRow
+            contract = Trim$(CStr(ws.Cells(r, 1).Value))
+            v = ws.Cells(r, 2).Value
+            If Len(contract) > 0 And IsDate(v) Then
+                mExcept(contract & "|" & CLng(CDate(v))) = True
+            End If
+        Next r
+    End If
+
+    mExceptLoaded = True
+End Sub
+
+'---------------------------------------------------------------------
+' その物件・その日に例外の指定があるか（「全件」を含む）
+'---------------------------------------------------------------------
+Public Function HasException(contract As String, d As Date) As Boolean
+    EnsureExceptions
+
+    If mExcept.Exists(EXCEPT_ALL & "|" & CLng(d)) Then
+        HasException = True
+        Exit Function
+    End If
+    If Len(contract) > 0 Then
+        HasException = mExcept.Exists(contract & "|" & CLng(d))
+    End If
+End Function
+
+'---------------------------------------------------------------------
+' 物件ごとの非稼働日判定。例外があれば通常の判定を反転する。
+'---------------------------------------------------------------------
+Public Function IsNonWorkingDayFor(contract As String, d As Date) As Boolean
+    If HasException(contract, d) Then
+        IsNonWorkingDayFor = Not IsNonWorkingDay(d)
+    Else
+        IsNonWorkingDayFor = IsNonWorkingDay(d)
+    End If
+End Function
+
+'---------------------------------------------------------------------
+' 物件ごとの「塗る日」判定
+'
+' 日祝・会社休業日は常に塗る（祝日は稼働日だが日程確認のため塗る）。
+' 加えて、例外日で休みにした平日も塗る。
+' 剥がす処理は持たない。工事がある日は工程色で上書きされる。
+'---------------------------------------------------------------------
+Public Function IsPaintDayFor(contract As String, d As Date) As Boolean
+    IsPaintDayFor = IsPaintDay(d) Or IsNonWorkingDayFor(contract, d)
+End Function
+
+'---------------------------------------------------------------------
+' 物件ごとに稼働日を n 日進める
+'---------------------------------------------------------------------
+Public Function AddWorkingDaysFor(contract As String, d As Date, n As Long) As Date
+    Dim cur As Date, i As Long
+    cur = d
+    Do While IsNonWorkingDayFor(contract, cur)
+        cur = cur + 1
+    Loop
+    For i = 1 To n
+        cur = cur + 1
+        Do While IsNonWorkingDayFor(contract, cur)
+            cur = cur + 1
+        Loop
+    Next i
+    AddWorkingDaysFor = cur
+End Function
+
+'---------------------------------------------------------------------
+' M_例外日 の「詳細」列を、日付から自動で埋める
+'
+' その日がもともと休み（日曜・お盆・年末年始）なら「日曜→作業」のように
+' 休みの理由を添えて作業日に、もともと稼働日なら「祝日→休み」「平日→休み」。
+' ユーザーは契約番号と日付だけ入力すればよい。
+'
+' 祝日は稼働日なので、祝日を指定すると「祝日→休み」になる点に注意。
+'---------------------------------------------------------------------
+Public Sub UpdateExceptionDetails()
+    Dim ws As Worksheet, r As Long, lastRow As Long
+    Dim contract As String, v As Variant
+
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(SH_EXCEPT)
+    On Error GoTo 0
+    If ws Is Nothing Then Exit Sub
+
+    lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+    For r = 2 To lastRow
+        contract = Trim$(CStr(ws.Cells(r, 1).Value))
+        v = ws.Cells(r, 2).Value
+        If Len(contract) = 0 Then
+            ws.Cells(r, 3).ClearContents
+        ElseIf Not IsDate(v) Then
+            ws.Cells(r, 3).Value = "日付が正しくありません"
+        ElseIf IsNonWorkingDay(CDate(v)) Then
+            ws.Cells(r, 3).Value = NonWorkingReason(CDate(v)) & "→作業"
+        ElseIf IsHoliday(CDate(v)) Then
+            ws.Cells(r, 3).Value = HolidayName(CDate(v)) & "→休み"
+        Else
+            ws.Cells(r, 3).Value = "平日→休み"
+        End If
+    Next r
+End Sub
+
+'---------------------------------------------------------------------
+' 非稼働日の理由を返す。稼働日なら空文字。
+' 祝日は稼働日なのでここには出ない（DayNote で確認できる）。
+'---------------------------------------------------------------------
+Public Function NonWorkingReason(d As Date) As String
+    If Weekday(d, vbSunday) = 1 Then
+        NonWorkingReason = "日曜"
+    ElseIf Len(CompanyClosureName(d)) > 0 Then
+        NonWorkingReason = CompanyClosureName(d)
+    Else
+        NonWorkingReason = ""
+    End If
+End Function
+
+'---------------------------------------------------------------------
+' その日の説明を返す（画面表示用）
+'   例 : "日曜（休み）" / "海の日（祝日・稼働日）" / "稼働日"
+'---------------------------------------------------------------------
+Public Function DayNote(d As Date) As String
+    Dim s As String
+    s = NonWorkingReason(d)
+    If Len(s) > 0 Then
+        DayNote = s & "（休み）"
+    ElseIf Len(HolidayName(d)) > 0 Then
+        DayNote = HolidayName(d) & "（祝日・稼働日）"
+    Else
+        DayNote = "稼働日"
+    End If
+End Function
+
+'---------------------------------------------------------------------
+' 祝日名を返す。祝日でなければ空文字。
+'---------------------------------------------------------------------
+Public Function HolidayName(d As Date) As String
+    Dim nm As String
+    Dim prev As Date
+
+    ' 1) 本来の祝日
+    nm = BaseHolidayName(d)
+    If Len(nm) > 0 Then
+        HolidayName = nm
+        Exit Function
+    End If
+
+    ' 2) 振替休日 : さかのぼって日曜の祝日に行き着けば振替
+    If Weekday(d, vbSunday) <> 1 Then
+        prev = d - 1
+        Do While Len(BaseHolidayName(prev)) > 0
+            If Weekday(prev, vbSunday) = 1 Then
+                HolidayName = "振替休日"
+                Exit Function
+            End If
+            prev = prev - 1
+        Loop
+    End If
+
+    ' 3) 国民の休日 : 前後が祝日に挟まれた平日
+    If Weekday(d, vbSunday) <> 1 Then
+        If Len(BaseHolidayName(d - 1)) > 0 And Len(BaseHolidayName(d + 1)) > 0 Then
+            HolidayName = "国民の休日"
+            Exit Function
+        End If
+    End If
+
+    HolidayName = ""
+End Function
+
+'---------------------------------------------------------------------
+' 本来の祝日（振替・国民の休日を除く）
+'---------------------------------------------------------------------
+Private Function BaseHolidayName(d As Date) As String
+    Dim y As Long, m As Long, dd As Long
+    y = Year(d): m = Month(d): dd = Day(d)
+
+    Select Case m
+        Case 1
+            If dd = 1 Then BaseHolidayName = "元日": Exit Function
+            If dd = NthMonday(y, 1, 2) Then BaseHolidayName = "成人の日": Exit Function
+        Case 2
+            If dd = 11 Then BaseHolidayName = "建国記念の日": Exit Function
+            If dd = 23 And y >= 2020 Then BaseHolidayName = "天皇誕生日": Exit Function
+        Case 3
+            If dd = VernalEquinoxDay(y) Then BaseHolidayName = "春分の日": Exit Function
+        Case 4
+            If dd = 29 Then BaseHolidayName = "昭和の日": Exit Function
+        Case 5
+            If dd = 3 Then BaseHolidayName = "憲法記念日": Exit Function
+            If dd = 4 Then BaseHolidayName = "みどりの日": Exit Function
+            If dd = 5 Then BaseHolidayName = "こどもの日": Exit Function
+        Case 7
+            If dd = NthMonday(y, 7, 3) Then BaseHolidayName = "海の日": Exit Function
+        Case 8
+            If dd = 11 Then BaseHolidayName = "山の日": Exit Function
+        Case 9
+            If dd = NthMonday(y, 9, 3) Then BaseHolidayName = "敬老の日": Exit Function
+            If dd = AutumnalEquinoxDay(y) Then BaseHolidayName = "秋分の日": Exit Function
+        Case 10
+            If dd = NthMonday(y, 10, 2) Then BaseHolidayName = "スポーツの日": Exit Function
+        Case 11
+            If dd = 3 Then BaseHolidayName = "文化の日": Exit Function
+            If dd = 23 Then BaseHolidayName = "勤労感謝の日": Exit Function
+    End Select
+
+    BaseHolidayName = ""
+End Function
+
+'---------------------------------------------------------------------
+' その年月の第 n 月曜の「日」を返す
+'---------------------------------------------------------------------
+Private Function NthMonday(y As Long, m As Long, n As Long) As Long
+    Dim firstDow As Long, firstMon As Long
+    firstDow = Weekday(DateSerial(y, m, 1), vbMonday)   ' 月曜=1
+    firstMon = 1 + ((8 - firstDow) Mod 7)
+    NthMonday = firstMon + (n - 1) * 7
+End Function
+
+'---------------------------------------------------------------------
+' 春分の日（1980～2099年で有効な近似式）
+'---------------------------------------------------------------------
+Private Function VernalEquinoxDay(y As Long) As Long
+    VernalEquinoxDay = Int(20.8431 + 0.242194 * (y - 1980) - Int((y - 1980) / 4))
+End Function
+
+'---------------------------------------------------------------------
+' 秋分の日（1980～2099年で有効な近似式）
+'---------------------------------------------------------------------
+Private Function AutumnalEquinoxDay(y As Long) As Long
+    AutumnalEquinoxDay = Int(23.2488 + 0.242194 * (y - 1980) - Int((y - 1980) / 4))
+End Function
+
+'---------------------------------------------------------------------
+' 稼働日を n 日進める（日曜・会社休業日をスキップ。祝日は稼働日）
+' n = 0 なら、d 自身が非稼働日のとき次の稼働日まで送る。
+'---------------------------------------------------------------------
+Public Function AddWorkingDays(d As Date, n As Long) As Date
+    Dim cur As Date, i As Long
+    cur = d
+    Do While IsNonWorkingDay(cur)
+        cur = cur + 1
+    Loop
+    For i = 1 To n
+        cur = cur + 1
+        Do While IsNonWorkingDay(cur)
+            cur = cur + 1
+        Loop
+    Next i
+    AddWorkingDays = cur
+End Function
+
+'---------------------------------------------------------------------
+' 2つの日付の間の稼働日数（開始日を含み、終了日を含む）
+'---------------------------------------------------------------------
+Public Function CountWorkingDays(dFrom As Date, dTo As Date) As Long
+    Dim cur As Date, cnt As Long
+    cur = dFrom
+    Do While cur <= dTo
+        If Not IsNonWorkingDay(cur) Then cnt = cnt + 1
+        cur = cur + 1
+    Loop
+    CountWorkingDays = cnt
+End Function
+
+'---------------------------------------------------------------------
+' 動作確認用 : 指定年の祝日を一覧表示する
+'---------------------------------------------------------------------
+Public Sub DebugListHolidays()
+    Dim y As Long, d As Date, s As String, ans As String
+    ans = InputBox("祝日を一覧表示する年を入力してください。", "祝日確認", Year(Date))
+    If Len(Trim$(ans)) = 0 Then Exit Sub
+    If Not IsNumeric(ans) Then
+        MsgBox "年を数値で入力してください。", vbExclamation
+        Exit Sub
+    End If
+    y = CLng(ans)
+    If y < 1980 Or y > 2099 Then
+        MsgBox "春分・秋分の計算式は 1980～2099年で有効です。", vbExclamation
+        Exit Sub
+    End If
+
+    For d = DateSerial(y, 1, 1) To DateSerial(y, 12, 31)
+        If IsHoliday(d) Or IsCompanyClosure(d) Then
+            s = s & Format$(d, "yyyy/mm/dd (aaa)") & "  " & DayNote(d) & vbCrLf
+        End If
+    Next d
+    MsgBox y & "年の祝日・会社休業日" & vbCrLf & _
+           "（祝日は稼働日として扱います。休みは日曜と会社休業日）" & vbCrLf & vbCrLf & s, _
+           vbInformation, "祝日・休業日一覧"
+End Sub
+
+'>>>MODULE:M02_Masters
+Option Explicit
+
+'=====================================================================
+' M02_Masters : マスタシートの生成と初期化
+'
+' 「見た目は現行のまま、データは別シートで管理する」方針にもとづき、
+' 参照用のマスタシートをここでまとめて作る。
+' 既存シートがある場合、見出しだけ整えて中身は消さない。
+'=====================================================================
+
+' --- M_業者 シートの版 ----------------------------------------------
+' 色や業者名を変えたら上げる。古い版のシートは退避して作り直す。
+Private Const VENDOR_VERSION As String = "v14"
+
+'---------------------------------------------------------------------
+' すべてのマスタシートを作成／初期化する（初回セットアップ用）
+'---------------------------------------------------------------------
+Public Sub SetupMasters()
+    Dim activeName As String
+
+    ' マスタを作る前に、いま開いているシートを工程表の候補として覚えておく
+    If TypeName(ActiveSheet) = "Worksheet" Then
+        If Not IsMasterSheet(ActiveSheet.Name) Then activeName = ActiveSheet.Name
+    End If
+
+    Application.ScreenUpdating = False
+
+    If Len(activeName) > 0 Then SaveSetting CFG_CHART_SHEET, activeName
+
+    Dim removed As String
+    removed = RemoveObsoleteSheets()
+
+    SetupVendorSheet
+    SetupExceptionSheet
+    SetupTaskSheet
+
+    ' 工程表シートが分かっていれば、この場で日祝も塗ってしまう
+    Dim holidayMsg As String
+    If Len(ChartSheetName()) > 0 Then
+        On Error Resume Next
+        holidayMsg = PaintHolidaysCore(ChartSheet())
+        If Err.Number <> 0 Then
+            holidayMsg = "日祝 : 塗れませんでした（" & Err.Description & "）"
+            Err.Clear
+        End If
+        On Error GoTo 0
+    Else
+        holidayMsg = "日祝 : 工程表シートが未設定のため塗っていません"
+    End If
+
+    Application.ScreenUpdating = True
+    MsgBox "マスタシートを作成しました。" & vbCrLf & vbCrLf & _
+           SH_VENDOR & " : 業者と色の対応" & vbCrLf & _
+           SH_EXCEPT & " : 例外日" & vbCrLf & _
+           SH_TASK & " : 工程データ（色塗りの元データ）" & vbCrLf & vbCrLf & _
+           "工程表シート : " & IIf(Len(ChartSheetName()) > 0, ChartSheetName(), "（未設定）") & vbCrLf & _
+           "カレンダーの年 : " & IIf(CalendarBaseYear() > 0, _
+                                     CStr(CalendarBaseYear()) & " 年から", _
+                                     "（シートの値をそのまま使う）") & vbCrLf & _
+           removed & vbCrLf & _
+           holidayMsg, _
+           vbInformation, "セットアップ完了"
+End Sub
+
+'---------------------------------------------------------------------
+' 使わなくなったシートを片づける
+'
+' M_設定（工程表シート名）と M_工期（標準工期）は、利用者が触ることが
+' 無いのでマクロの中に取り込んだ。シートが増えると迷うため削除する。
+' M_設定 に入っていたシート名は、消す前にブックの設定へ移す。
+'---------------------------------------------------------------------
+Private Function RemoveObsoleteSheets() As String
+    Dim ws As Worksheet, nm As String, msg As String
+
+    ' M_設定 の指定を引き継ぐ
+    If SheetExists(SH_SETTING) Then
+        Set ws = ThisWorkbook.Worksheets(SH_SETTING)
+        nm = Trim$(CStr(ws.Range("B1").Value))
+        If Len(nm) > 0 And Len(GetSetting(CFG_CHART_SHEET)) = 0 Then
+            If SheetExists(nm) Then SaveSetting CFG_CHART_SHEET, nm
+        End If
+    End If
+
+    msg = DeleteSheetIfExists(SH_SETTING)
+    msg = msg & DeleteSheetIfExists(SH_TERM)
+
+    If Len(msg) > 0 Then
+        RemoveObsoleteSheets = "不要になったシートを削除しました : " & Left$(msg, Len(msg) - 1)
+    End If
+End Function
+
+Private Function DeleteSheetIfExists(sheetName As String) As String
+    If Not SheetExists(sheetName) Then Exit Function
+    Application.DisplayAlerts = False
+    On Error Resume Next
+    ThisWorkbook.Worksheets(sheetName).Delete
+    On Error GoTo 0
+    Application.DisplayAlerts = True
+    If Not SheetExists(sheetName) Then DeleteSheetIfExists = sheetName & " "
+End Function
+
+'---------------------------------------------------------------------
+' M_業者 : 色と業者の対応表
+'
+' 業者そのものを区別する必要はなく、「同じ色＝同じ業者」が分かれば足りる。
+' 重複稼働チェックもこの色をキーに行う。
+'---------------------------------------------------------------------
+Private Sub SetupVendorSheet()
+    Dim ws As Worksheet, isNew As Boolean
+
+    Set ws = GetOrCreateSheet(SH_VENDOR)
+    isNew = (Len(Trim$(CStr(ws.Cells(1, 1).Value))) = 0)
+
+    ' 色や業者名を直した版が出たら、古いシートは退避して作り直す
+    If Not isNew Then
+        If Not VendorSheetIsCurrent() Then
+            BackupSheet ws
+            Set ws = GetOrCreateSheet(SH_VENDOR)
+            isNew = True
+        End If
+    End If
+
+    WriteHeader ws, Array("色名", "R", "G", "B", "工種", "業者名", "備考", "版")
+    If Not isNew Then Exit Sub
+
+    ' 色は工事店さまの指定値。業者名は工程表の「基礎業者」「躯体業者」欄の
+    ' 表記と一致させること。表記ゆれは「丸岩/KRK」のように / で並べられる。
+    Dim rows As Variant, i As Long
+    rows = Array( _
+        Array("茶", 153, 51, 0, "躯体", "雅建工", "躯体チームA"), _
+        Array("薄紫", 204, 153, 255, "躯体", "丸岩/KRK/丸岩KRK/丸岩・KRK", "躯体チームB / 外構フェーズ2でも使用"), _
+        Array("青", 0, 102, 204, "基礎", "協栄", "お客様納期の青と同じ色。塗る位置で区別する"), _
+        Array("緑", 51, 153, 102, "基礎", "加納", ""), _
+        Array("桃", 255, 0, 255, "基礎", "カサハラ", ""), _
+        Array("薄橙", 255, 204, 153, "基礎", "龍壱", ""), _
+        Array("水色", 153, 204, 255, "外構", "", "外構フェーズ1"), _
+        Array("黒", 0, 0, 0, "モルタル", "", "本着日(1マス)にも使用。行で区別する"), _
+        Array("淡水", 204, 255, 255, "足場", "", "内部足場を含む"), _
+        Array("金", 255, 204, 0, "行事", "", "社内行事・タイル工事"), _
+        Array("白", 255, 255, 255, "単発", "", "家具搬入・器具・CL 等") _
+    )
+
+    For i = LBound(rows) To UBound(rows)
+        WriteRow ws, i + 2, rows(i)
+        ws.Cells(i + 2, 1).Interior.Color = RGB(rows(i)(1), rows(i)(2), rows(i)(3))
+    Next i
+
+    ws.Range("H2").Value = VENDOR_VERSION
+    ws.Columns("A:H").AutoFit
+End Sub
+
+'---------------------------------------------------------------------
+' M_業者 が現行版かどうか（H2 の版で判定する）
+'---------------------------------------------------------------------
+Public Function VendorSheetIsCurrent() As Boolean
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(SH_VENDOR)
+    On Error GoTo 0
+    If ws Is Nothing Then Exit Function
+
+    VendorSheetIsCurrent = (Trim$(CStr(ws.Range("H2").Value)) = VENDOR_VERSION)
+End Function
+
+'---------------------------------------------------------------------
+' M_例外日 : 物件ごとの例外日
+'
+' 入力するのは 契約番号 と 日付 の2列だけ。
+' 「詳細」はマクロが日付から判定して書き込む。
+'   その日が休み（日曜・お盆・年末年始）… 日曜→作業 のように反転
+'   その日が祝日（＝稼働日）            … 祝日名→休み
+'   それ以外（平日）                    … 平日→休み
+'
+' 契約番号に「全件」と書くと、全物件に適用される（会社都合の休工など）。
+'---------------------------------------------------------------------
+Private Sub SetupExceptionSheet()
+    Dim ws As Worksheet, isNew As Boolean
+    Set ws = GetOrCreateSheet(SH_EXCEPT)
+    isNew = (Len(Trim$(CStr(ws.Cells(1, 1).Value))) = 0)
+
+    ' 旧形式（区分・備考の4列）が残っていたら退避して作り直す
+    If Not isNew Then
+        If Not ExceptionSheetIsCurrent() Then
+            BackupSheet ws
+            Set ws = GetOrCreateSheet(SH_EXCEPT)
+            isNew = True
+        End If
+    End If
+
+    WriteHeader ws, Array("契約番号", "日付", "詳細")
+    If Not isNew Then Exit Sub
+
+    On Error Resume Next
+    ws.Range("A1").AddComment "入力。契約番号。「" & EXCEPT_ALL & "」と書くと全物件に適用されます"
+    ws.Range("B1").AddComment "入力。例外にしたい日付"
+    ws.Range("C1").AddComment "出力。日付から自動で判定されます"
+    On Error GoTo 0
+
+    ws.Range("B2:B1000").NumberFormatLocal = "yyyy/mm/dd"
+    ws.Range("C1:C1000").Interior.Color = RGB(242, 242, 242)
+    ws.Columns("A:B").ColumnWidth = 16
+    ws.Columns("C:C").ColumnWidth = 18
+End Sub
+
+'---------------------------------------------------------------------
+' M_例外日 が新形式（契約番号・日付・詳細の3列）かどうか
+'---------------------------------------------------------------------
+Public Function ExceptionSheetIsCurrent() As Boolean
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(SH_EXCEPT)
+    On Error GoTo 0
+    If ws Is Nothing Then Exit Function
+
+    ExceptionSheetIsCurrent = (Trim$(CStr(ws.Cells(1, 3).Value)) = "詳細")
+End Function
+
+'---------------------------------------------------------------------
+' シートを退避する（M_工期_旧1 のように連番を付けて改名）
+'---------------------------------------------------------------------
+Private Sub BackupSheet(ws As Worksheet)
+    Dim base As String, nm As String, i As Long
+    base = ws.Name & "_旧"
+    i = 1
+    Do
+        nm = base & i
+        i = i + 1
+    Loop While SheetExists(nm)
+
+    On Error Resume Next
+    ws.Name = nm
+    On Error GoTo 0
+End Sub
+
+'=====================================================================
+' 標準工期
+'
+'     稼働日数 = ROUND(基準日数 + 坪係数 × 坪数) + 種類補正
+'
+' 基準日数・坪係数は C 種 29 件の回帰、種類補正はその残差から求めた。
+' 以前は M_工期 シートに書き出していたが、利用者が触るものではないので
+' マクロの中に取り込んだ。値を直すのはここ。
+'
+'   基礎 : 6.37 + 0.1075 × 坪   平均絶対誤差 2.2日
+'   躯体 : -0.21 + 0.1103 × 坪  平均絶対誤差 0.6日
+'
+' 種類補正（基礎 / 躯体）
+'   C   0 /  0  基準（29件）
+'   R   3 /  1  工事店確認済：基礎・躯体ともCより長い（6件）
+'   P   0 /  1  工事店確認済：基礎はCと同じ、躯体だけ長い（1件）
+'   D   1 /  0  実測のみ（5件）
+'   DY -2 /  0  実測のみ ※要確認（3件）
+'   M   5 / -2  実測のみ ※要確認（2件）
+'   V   0 /  0  データなし。Cと同じ扱い ※要確認
+'=====================================================================
+
+'---------------------------------------------------------------------
+' 指定タイプの稼働日数を計算する
+'
+' taskName : "基礎" または "躯体"
+' 戻り値   : 稼働日数（1 未満にはならない）。タイプが読めなければ 0
+'---------------------------------------------------------------------
+Public Function TermDays(taskName As String, typeCode As String) As Long
+    Dim kind As String, floors As Long, area As Long
+    Dim baseDays As Double, coef As Double, corr As Long
+
+    If Not ParseType(typeCode, kind, floors, area) Then Exit Function
+
+    Select Case taskName
+        Case "基礎"
+            baseDays = 6.37: coef = 0.1075
+        Case "躯体"
+            baseDays = -0.21: coef = 0.1103
+        Case Else
+            Exit Function
+    End Select
+
+    corr = TypeCorrection(taskName, kind)
+
+    TermDays = CLng(Application.WorksheetFunction.Round(baseDays + coef * area, 0)) + corr
+    If TermDays < 1 Then TermDays = 1
+End Function
+
+'---------------------------------------------------------------------
+' 建物種類による補正日数
+'---------------------------------------------------------------------
+Private Function TypeCorrection(taskName As String, kind As String) As Long
+    Dim kiso As Long, kutai As Long
+
+    Select Case UCase$(Trim$(kind))
+        Case "C":  kiso = 0:  kutai = 0
+        Case "R":  kiso = 3:  kutai = 1
+        Case "P":  kiso = 0:  kutai = 1
+        Case "D":  kiso = 1:  kutai = 0
+        Case "DY": kiso = -2: kutai = 0
+        Case "M":  kiso = 5:  kutai = -2
+        Case "V":  kiso = 0:  kutai = 0
+        Case Else: kiso = 0:  kutai = 0
+    End Select
+
+    If taskName = "躯体" Then
+        TypeCorrection = kutai
+    Else
+        TypeCorrection = kiso
+    End If
+End Function
+
+'---------------------------------------------------------------------
+' 工程間インターバル（暦日）
+'
+'   契約着工日→基礎着手   2 日（実測 1～7日、中央値2日）
+'   基礎完了→躯体着手     4 日（実測 2～11日、中央値4日）
+'   躯体完了→モルタル着手 2 日（間に穴明け1日が入る）
+'---------------------------------------------------------------------
+Public Function TermInterval(label As String, defaultDays As Long) As Long
+    Select Case label
+        Case "契約着工日→基礎着手":   TermInterval = 2
+        Case "基礎完了→躯体着手":     TermInterval = 4
+        Case "躯体完了→モルタル着手": TermInterval = 2
+        Case Else:                     TermInterval = defaultDays
+    End Select
+End Function
+
+'---------------------------------------------------------------------
+' 動作確認用 : タイプを入れると計算結果を表示する
+'---------------------------------------------------------------------
+Public Sub DebugTermDays()
+    Dim t As String, kind As String, floors As Long, area As Long
+    t = InputBox("タイプコードを入力してください（例 C2E42）", "工期の計算確認", "C2E42")
+    If Len(Trim$(t)) = 0 Then Exit Sub
+
+    If Not ParseType(t, kind, floors, area) Then
+        MsgBox "タイプ「" & t & "」を解析できませんでした。", vbExclamation
+        Exit Sub
+    End If
+
+    MsgBox "タイプ : " & UCase$(Trim$(t)) & vbCrLf & _
+           "  建物種類 : " & kind & vbCrLf & _
+           "  階数     : " & IIf(floors > 0, CStr(floors) & " 階", "（表記なし）") & vbCrLf & _
+           "  坪数     : " & area & " 坪" & vbCrLf & vbCrLf & _
+           "基礎工事 : " & TermDays("基礎", t) & " 稼働日" & vbCrLf & _
+           "躯体工事 : " & TermDays("躯体", t) & " 稼働日", _
+           vbInformation, "工期の計算確認"
+End Sub
+
+'---------------------------------------------------------------------
+' M_工程データ : 色塗りの元データ
+'
+' 1物件 = 1行。工程は横に 4 列ずつ並べる。
+' 同じ物件の基礎と躯体が横一列に並ぶので、担当の重なりを目で追いやすい。
+'
+'   A 契約番号 | B 邸名 | C-F 基礎 | G-J 躯体 | （以降 工程を足すごとに右へ）
+'
+' 入力するのは開始日だけでよい。終了日と色名は自動で入る。
+'---------------------------------------------------------------------
+Private Sub SetupTaskSheet()
+    Dim ws As Worksheet, isNew As Boolean
+    Dim headers As Variant
+
+    Set ws = GetOrCreateSheet(SH_TASK)
+    isNew = (Len(Trim$(CStr(ws.Cells(1, 1).Value))) = 0)
+
+    ' 旧形式（1行1工程の縦持ち）が残っていたら退避して作り直す
+    If Not isNew Then
+        If Not TaskSheetIsCurrent() Then
+            BackupSheet ws
+            Set ws = GetOrCreateSheet(SH_TASK)
+            isNew = True
+        End If
+    End If
+
+    headers = Array("契約番号", "邸名", _
+                    "基礎開始日", "基礎調整", "基礎終了日", "色名", "備考", _
+                    "躯体開始日", "躯体調整", "躯体終了日", "色名", "備考")
+    WriteHeader ws, headers
+    If Not isNew Then Exit Sub
+
+    ' 使い方が分かるようヘッダにコメントを付ける（新規作成時のみ）
+    On Error Resume Next
+    ws.Range("C1").AddComment "入力。ここだけ入れれば足ります"
+    ws.Range("D1").AddComment "入力。工期に足し引きする日数（+1 / -2 など）。空欄は0"
+    ws.Range("E1").AddComment "出力。実行のたびに計算し直されます。手で直しても上書きされます"
+    ws.Range("F1").AddComment "空欄なら業者が自動で割り当てられます。" & _
+                              "埋めておけばその業者で固定されます"
+    ws.Range("H1").AddComment "空欄なら基礎の終了日から自動で決まります。" & _
+                              "手で入れるとその日付が優先されます"
+    On Error GoTo 0
+
+    ' 色名は M_業者 シートのA列から選ぶ
+    On Error Resume Next
+    ThisWorkbook.Names.Add Name:="色名一覧", _
+        RefersTo:="=" & SH_VENDOR & "!$A$2:$A$100"
+    On Error GoTo 0
+
+    Dim k As Long, c0 As Long, taskCount As Long
+    taskCount = (UBound(headers) - LBound(headers) + 1 - TASK_COL_FIRST + 1) \ TASK_COL_WIDTH
+    For k = 1 To taskCount
+        c0 = TASK_COL_FIRST + (k - 1) * TASK_COL_WIDTH
+        ws.Range(ws.Cells(2, c0 + TASK_OFS_START), _
+                 ws.Cells(2000, c0 + TASK_OFS_START)).NumberFormatLocal = "yyyy/mm/dd"
+        ws.Range(ws.Cells(2, c0 + TASK_OFS_END), _
+                 ws.Cells(2000, c0 + TASK_OFS_END)).NumberFormatLocal = "yyyy/mm/dd"
+        ' 出力列は薄く色を付けて、入力列と見分けられるようにする
+        ws.Range(ws.Cells(1, c0 + TASK_OFS_END), _
+                 ws.Cells(2000, c0 + TASK_OFS_END)).Interior.Color = RGB(242, 242, 242)
+        With ws.Range(ws.Cells(2, c0 + TASK_OFS_COLOR), _
+                      ws.Cells(2000, c0 + TASK_OFS_COLOR)).Validation
+            .Delete
+            .Add Type:=xlValidateList, AlertStyle:=xlValidAlertStop, _
+                 Operator:=xlBetween, Formula1:="=色名一覧"
+            .IgnoreBlank = True
+            .InCellDropdown = True
+        End With
+    Next k
+
+    ws.Columns("A:B").ColumnWidth = 14
+    ws.Range(ws.Columns(TASK_COL_FIRST), _
+             ws.Columns(TASK_COL_FIRST + taskCount * TASK_COL_WIDTH - 1)).ColumnWidth = 11
+End Sub
+
+'---------------------------------------------------------------------
+' M_工程データ が新形式（1物件1行・工程あたり5列）かどうか
+'
+' 「調整」列があるかどうかで、4列時代のものと区別する。
+'---------------------------------------------------------------------
+Public Function TaskSheetIsCurrent() As Boolean
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(SH_TASK)
+    On Error GoTo 0
+    If ws Is Nothing Then Exit Function
+
+    If Trim$(CStr(ws.Cells(1, TASK_COL_FIRST + TASK_OFS_START).Value)) <> "基礎開始日" Then Exit Function
+    If Trim$(CStr(ws.Cells(1, TASK_COL_FIRST + TASK_OFS_ADJUST).Value)) <> "基礎調整" Then Exit Function
+
+    TaskSheetIsCurrent = True
+End Function
+
+'---------------------------------------------------------------------
+' 工程表から物件一覧を M_工程データ に取り込む（ひな形作成）
+'---------------------------------------------------------------------
+Public Sub ImportPropertiesToTaskSheet()
+    Dim wsC As Worksheet, wsT As Worksheet
+    Dim blocks As Collection, b As Variant
+    Dim r As Long, added As Long
+
+    Set wsC = ChartSheet()
+    Set wsT = GetOrCreateSheet(SH_TASK)
+    Set blocks = FindBlocks(wsC)
+
+    r = wsT.Cells(wsT.Rows.Count, 1).End(xlUp).Row + 1
+    If r < 2 Then r = 2
+
+    For Each b In blocks
+        If Len(b(2)) > 0 Then
+            If Not ContractExists(wsT, CStr(b(2))) Then
+                wsT.Cells(r, 1).Value = b(2)     ' 契約番号
+                wsT.Cells(r, 2).Value = b(1)     ' 邸名
+                r = r + 1
+                added = added + 1
+            End If
+        End If
+    Next b
+
+    MsgBox added & " 件の物件を " & SH_TASK & " に追加しました。" & vbCrLf & _
+           "工程・開始日・終了日・色名を入力してください。", vbInformation
+End Sub
+
+Private Function ContractExists(ws As Worksheet, contract As String) As Boolean
+    Dim f As Range
+    Set f = ws.Columns(1).Find(What:=contract, LookIn:=xlValues, LookAt:=xlWhole)
+    ContractExists = Not f Is Nothing
+End Function
+
+'--- 小物 ------------------------------------------------------------
+
+Private Sub WriteHeader(ws As Worksheet, headers As Variant)
+    WriteHeaderAt ws, 1, headers
+    ' 実行のたびに切り替わらないよう、未設定のときだけ付ける
+    If Not ws.AutoFilterMode Then ws.Rows(1).AutoFilter
+End Sub
+
+Private Sub WriteHeaderAt(ws As Worksheet, r As Long, headers As Variant)
+    Dim i As Long
+    For i = LBound(headers) To UBound(headers)
+        With ws.Cells(r, i + 1)
+            .Value = headers(i)
+            .Font.Bold = True
+            .Interior.Color = RGB(217, 217, 217)
+        End With
+    Next i
+End Sub
+
+Private Sub WriteRow(ws As Worksheet, r As Long, vals As Variant)
+    Dim i As Long
+    For i = LBound(vals) To UBound(vals)
+        ws.Cells(r, i + 1).Value = vals(i)
+    Next i
+End Sub
+
+'>>>MODULE:M03_PaintHolidays
+Option Explicit
+
+'=====================================================================
+' M03_PaintHolidays : 日曜・祝日の自動塗りつぶし
+'
+' ・日曜・祝日・お盆・年末年始を黄緑 RGB(153,204,0) で塗る
+'   祝日は稼働日だが、日程を確認したいので色は塗る
+' ・物件ごとの例外を M_例外日 シートで受け付ける
+'   （例外で休みにした平日も塗る。判定は M01_Holiday に集約してある）
+' ・すでに色が入っているセルには触らない（工程色を消さない）
+'
+' 塗った日祝を剥がす処理は持たない。日祝の上に工事があるときは、
+' このあとに走る工程の色塗りが黄緑を上書きする。
+'
+' 単独のボタンは用意していない。色を塗る処理（工程表に色を塗る・初期セットアップ）
+' から PaintHolidaysCore が呼ばれ、そのついでに塗られる。
+'
+' 何度実行しても同じ結果になる（冪等）。
+'=====================================================================
+
+'---------------------------------------------------------------------
+' 日祝を塗り直して、結果のサマリを返す
+'
+' メッセージは出さない。呼び出し側が自分の報告にまとめて載せる。
+'---------------------------------------------------------------------
+Public Function PaintHolidaysCore(ws As Worksheet) As String
+    Dim colMap As Object
+    Dim blocks As Collection, b As Variant
+    Dim c As Variant, d As Date
+    Dim r As Long, off As Long
+    Dim eff As Boolean
+    Dim painted As Long, skipped As Long
+    Dim skipList As String, skipCount As Long
+    Dim cell As Range
+
+    ' 例外日を読み直してから判定する
+    ResetExceptionCache
+    UpdateExceptionDetails
+
+    Set colMap = BuildColMap(ws)
+    Set blocks = FindBlocks(ws)
+
+    If blocks.Count = 0 Then
+        PaintHolidaysCore = "日祝 : 物件ブロックが見つかりませんでした"
+        Exit Function
+    End If
+
+    On Error GoTo Cleanup
+
+    For Each c In colMap.Keys
+        d = colMap(c)
+
+        For Each b In blocks
+            eff = IsPaintDayFor(BlockKey(b), d)
+            If eff Then
+                For off = 0 To BLOCK_ROWS - 1
+                    r = CLng(b(0)) + off
+                    Set cell = ws.Cells(r, CLng(c))
+
+                    If cell.Interior.Pattern = xlNone Then
+                        cell.Interior.Color = CLR_HOLIDAY
+                        painted = painted + 1
+                    ElseIf IsHolidayColor(CLng(cell.Interior.Color)) Then
+                        ' 既に塗られている。何もしない
+                    Else
+                        ' 別の色が入っている。上書きせず報告に回す
+                        skipped = skipped + 1
+                        If skipCount < 20 Then
+                            skipList = skipList & "  " & b(1) & " / " & _
+                                       Format$(d, "yyyy/mm/dd") & " / " & cell.Address(False, False) & vbCrLf
+                            skipCount = skipCount + 1
+                        End If
+                    End If
+                Next off
+            End If
+        Next b
+    Next c
+
+    PaintHeaderHolidays ws, colMap
+
+Cleanup:
+    If Err.Number <> 0 Then
+        PaintHolidaysCore = "日祝 : エラー " & Err.Description
+        Exit Function
+    End If
+
+    Dim msg As String
+    msg = "日祝（日曜・祝日・お盆・年末年始）" & vbCrLf & _
+          "  塗った " & painted & " セル"
+    If skipped > 0 Then
+        msg = msg & " / 見送り " & skipped & " セル（別の色が入っていたため）" & vbCrLf & _
+              "  見送った箇所（先頭20件）:" & vbCrLf & skipList
+        If skipped > skipCount Then msg = msg & "    ... 他 " & (skipped - skipCount) & " 件" & vbCrLf
+    End If
+    PaintHolidaysCore = msg
+End Function
+
+'---------------------------------------------------------------------
+' 日付ヘッダ行の日祝も塗る（物件ごとの例外は適用しない）
+'---------------------------------------------------------------------
+Private Sub PaintHeaderHolidays(ws As Worksheet, colMap As Object)
+    Dim c As Variant, d As Date, r As Long
+    For Each c In colMap.Keys
+        d = colMap(c)
+        For r = ROW_DATE To ROW_DATE + 1
+            With ws.Cells(r, CLng(c)).Interior
+                If IsPaintDay(d) Then
+                    If .Pattern = xlNone Then .Color = CLR_HOLIDAY
+                End If
+            End With
+        Next r
+    Next c
+End Sub
+
+'---------------------------------------------------------------------
+' ブロックのキー。契約番号を優先し、無ければ邸名を使う。
+'---------------------------------------------------------------------
+Private Function BlockKey(b As Variant) As String
+    If Len(Trim$(CStr(b(2)))) > 0 Then
+        BlockKey = Trim$(CStr(b(2)))
+    Else
+        BlockKey = Trim$(CStr(b(1)))
+    End If
+End Function
+
+'---------------------------------------------------------------------
+' 保守用 : 日祝の塗りを全部消す
+'---------------------------------------------------------------------
+Public Sub ClearAllHolidayFill()
+    Dim ws As Worksheet, colMap As Object, blocks As Collection
+    Dim c As Variant, b As Variant, off As Long, r As Long
+    Dim cleared As Long
+
+    If MsgBox("工程表から日祝の黄緑をすべて消します。よろしいですか？", _
+              vbYesNo + vbQuestion) <> vbYes Then Exit Sub
+
+    Set ws = ChartSheet()
+    Set colMap = BuildColMap(ws)
+    Set blocks = FindBlocks(ws)
+
+    Application.ScreenUpdating = False
+    For Each c In colMap.Keys
+        For Each b In blocks
+            For off = 0 To BLOCK_ROWS - 1
+                r = CLng(b(0)) + off
+                With ws.Cells(r, CLng(c)).Interior
+                    If .Pattern <> xlNone Then
+                        If IsHolidayColor(CLng(.Color)) Then
+                            .Pattern = xlNone
+                            cleared = cleared + 1
+                        End If
+                    End If
+                End With
+            Next off
+        Next b
+    Next c
+    Application.ScreenUpdating = True
+
+    MsgBox cleared & " セルの塗りを消しました。", vbInformation
+End Sub
+
+'---------------------------------------------------------------------
+' 選択セルの日付と物件を表示する（例外日を登録するときの確認用）
+'---------------------------------------------------------------------
+Public Sub WhatIsThisCell()
+    Dim ws As Worksheet, colMap As Object, blocks As Collection
+    Dim b As Variant, r As Long, c As Long
+    Dim nm As String, contract As String, ofsName As String
+    Dim d As Variant
+
+    Set ws = ChartSheet()
+    If ActiveSheet.Name <> ws.Name Then
+        MsgBox "工程表シート上でセルを選択してから実行してください。", vbExclamation
+        Exit Sub
+    End If
+
+    r = Selection.Row: c = Selection.Column
+    Set colMap = BuildColMap(ws)
+    Set blocks = FindBlocks(ws)
+
+    If colMap.Exists(c) Then d = colMap(c) Else d = "（日付エリア外）"
+
+    For Each b In blocks
+        If r >= CLng(b(0)) And r < CLng(b(0)) + BLOCK_ROWS Then
+            nm = CStr(b(1)): contract = CStr(b(2))
+            Select Case r - CLng(b(0))
+                Case OFS_KUTAI:     ofsName = "躯体（色帯）"
+                Case OFS_KUTAI_SUB: ofsName = "躯体（補助）"
+                Case OFS_NOTE:      ofsName = "補助メモ"
+                Case OFS_MORTAR:    ofsName = "モルタル（黒帯）"
+                Case OFS_KISO:      ofsName = "基礎（色帯）／外構"
+                Case OFS_KISO_SUB:  ofsName = "基礎（補助）／本着日の黒1マス"
+            End Select
+            Exit For
+        End If
+    Next b
+
+    Dim reason As String
+    If IsDate(d) Then reason = DayNote(CDate(d))
+
+    MsgBox "セル : " & Selection.Address(False, False) & vbCrLf & _
+           "日付 : " & d & "  (" & reason & ")" & vbCrLf & _
+           "物件 : " & nm & vbCrLf & _
+           "契約番号 : " & contract & vbCrLf & _
+           "行の意味 : " & ofsName, vbInformation, "セル情報"
+End Sub
+
+'>>>MODULE:M05_Plan
+Option Explicit
+
+'=====================================================================
+' M05_Plan : 工程を自動で作って工程表に色を塗る
+'
+' クリティカル工程 7 段階のうち、いまは 1 基礎 と 2 躯体 まで。
+'   1 基礎工事 ← 実装済み
+'   2 躯体工事 ← 実装済み
+'   3 モルタル / 4 防水 / 5 断熱 / 6 木工事 / 7 仕上げ … 順次追加
+'
+' やること:
+'   1. 工程表の「基礎業者」「躯体業者」欄から、その物件の業者を読む
+'   2. M_工程データ（1物件1行）から開始日を読む（空欄なら本着日を使う）
+'   3. 工程表のタイプ（例 C2E42）から坪数と建物種類を取り出す
+'   4. 工期の式（M02_Masters の TermDays）で稼働日数を計算し、終了日を確定する
+'   5. 同じ業者が2現場に重ならないよう、後の現場を後ろへずらす
+'   6. 工程表に色を塗る
+'
+' ■ 業者はシートで決まっている（自動割り当てはしない）
+' 業者名は工程表のお客様名の右（建設地の右2列）に書いてある。
+' その名前を M_業者 の「業者名」で引いて色を決める。
+'
+' ■ 業者の順番はシートの上から
+' 1業者は同時に2現場へ入れない。シートの上にある物件を優先し、
+' 前の現場が終わった翌営業日から次の現場に入る。
+' 次の現場の開始予定日が前の現場の完了より前なら、開始日を後ろへずらす。
+' 前倒しはしない（空きがあっても予定日より早く始めない）。
+'
+' ■ 手入力（黒字）は触らない・自動（青字）は毎回決め直す
+' 会社やお客様の都合で日程を人が決めることがあるため、人が入力した値には触らない。
+' マクロが計算して入れた値は青字にしておき、次の計算で決め直す。
+'
+'   開始日 … 黒字ならその日を使う。青字・空欄なら本着日／前工程から決め直す
+'   終了日 … 黒字ならその日を使う。青字・空欄なら工期の式で計算し直す
+'   色名   … 黒字ならその色。青字・空欄なら工程表の業者欄から引き直す
+'   調整   … 入力。終了日を計算するときに足し引きする日数
+'
+' 青字を決め直すので、あとから調整を入れたり業者を変えたりしても、
+' 「ボタン_工程を計算する」を実行するだけで後続の現場までずれる。
+' 手入力（黒字）の開始日が前の現場と重なるときは、書き換えずに警告で知らせる。
+'
+' 手入力の値を自動に戻したいときは、そのセルを消す（または黒字→空欄にする）。
+' 行をまとめて消すなら ClearPlanResultsForSelection / ClearPlanResults を使う。
+'
+' 何度実行しても同じ結果になる（冪等）。
+'=====================================================================
+
+' 工程の数。増やすときは下の Task〇〇 関数にも Case を足す。
+Private Const TASK_COUNT As Long = 2
+
+'---------------------------------------------------------------------
+' 工程の定義
+'---------------------------------------------------------------------
+Private Function TaskName(k As Long) As String
+    Select Case k
+        Case 1: TaskName = "基礎"
+        Case 2: TaskName = "躯体"
+    End Select
+End Function
+
+' 色帯を塗る行オフセット。工程ごとに違う（実測で確認済み）。
+Private Function TaskRowOffsets(k As Long) As Variant
+    Select Case k
+        Case 1: TaskRowOffsets = Array(OFS_KISO, OFS_KISO_SUB)   ' 基礎は2行
+        Case 2: TaskRowOffsets = Array(OFS_KUTAI)                ' 躯体は1行だけ
+    End Select
+End Function
+
+' 前の工程からのインターバル（暦日）。1番目の工程は使わない。
+Private Function TaskInterval(k As Long) As Long
+    Select Case k
+        Case 2: TaskInterval = TermInterval("基礎完了→躯体着手", 4)
+        Case Else: TaskInterval = 0
+    End Select
+End Function
+
+' M_工程データ でこの工程が使う先頭列（開始日の列）
+Private Function TaskFirstCol(k As Long) As Long
+    TaskFirstCol = TASK_COL_FIRST + (k - 1) * TASK_COL_WIDTH
+End Function
+
+'=====================================================================
+' メイン1 : 表の上で計算する（工程表には触らない）
+'=====================================================================
+Public Sub CalculatePlan()
+    Dim ws As Worksheet, wsT As Worksheet
+    Dim info As Object, order As Collection, taskRow As Object
+    Dim prevEnd As Object, result As Object
+    Dim k As Long
+    Dim warned As String, warnCount As Long
+    Dim conflicts As String, conflictCount As Long
+    Dim derived As Long, outOfRange As Long, kept As Long, delayed As Long
+
+    If Not PreflightOK() Then Exit Sub
+
+    ' 例外日を読み直す。工期の計算にも効かせるため必ず先に行う。
+    ResetExceptionCache
+    UpdateExceptionDetails
+
+    Set ws = ChartSheet()
+    Set wsT = ThisWorkbook.Worksheets(SH_TASK)
+    LoadBlocks ws, info, order
+    Set taskRow = BuildTaskRowMap(wsT)
+
+    Set prevEnd = CreateObject("Scripting.Dictionary")
+    Set result = CreateObject("Scripting.Dictionary")
+
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+    On Error GoTo Cleanup
+
+    ' 工程は順番に処理する。躯体は基礎の結果（終了日）を使うため。
+    For k = 1 To TASK_COUNT
+        PlanOneTask k, wsT, info, order, taskRow, prevEnd, result, _
+                    warned, warnCount, conflicts, conflictCount, _
+                    derived, outOfRange, kept, delayed
+    Next k
+
+Cleanup:
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+
+    If Err.Number <> 0 Then
+        MsgBox "エラーが発生しました: " & Err.Description, vbCritical
+        Exit Sub
+    End If
+
+    ShowReport ws, result, info, derived, outOfRange, kept, delayed, _
+               conflicts, conflictCount, warned, warnCount
+End Sub
+
+'=====================================================================
+' メイン2 : 工程表に色を塗る（計算はしない）
+'
+' M_工程データ に入っている 開始日・終了日・色名 をそのまま塗る。
+' 日祝の塗りつぶしも、このなかで一緒に行う。
+'=====================================================================
+' clearedCount : 塗る前に消したセル数。RepaintPlan から渡す。単独実行なら -1。
+Public Sub PaintPlan(Optional clearedCount As Long = -1)
+    Dim ws As Worksheet, wsT As Worksheet
+    Dim dateMap As Object, colorMap As Object, vendors As Object
+    Dim info As Object, order As Collection, taskRow As Object
+    Dim k As Long, r As Long, lastRow As Long, c0 As Long
+    Dim contract As String, colorName As String
+    Dim dFrom As Date, dTo As Date
+    Dim painted As Long, skipped As Long, marks As Long, shiftCol As Long
+    Dim holidayMsg As String, markMsg As String
+    Dim warned As String, warnCount As Long
+
+    If Not PreflightOK() Then Exit Sub
+
+    Set ws = ChartSheet()
+    Set wsT = ThisWorkbook.Worksheets(SH_TASK)
+
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+    On Error GoTo Cleanup
+
+    ' 1) 日祝を先に塗る。祝日は稼働日なので、このあと工程色が上書きする。
+    holidayMsg = PaintHolidaysCore(ws)
+
+    Set dateMap = BuildDateMap(ws)
+    Set colorMap = LoadColorMap()
+    LoadBlocks ws, info, order
+    lastRow = wsT.Cells(wsT.Rows.Count, TASK_COL_CONTRACT).End(xlUp).Row
+
+    ' 2) 工程の色を塗る
+
+    For k = 1 To TASK_COUNT
+        c0 = TaskFirstCol(k)
+        Set vendors = LoadVendorsByKind(TaskName(k))
+        If vendors.Count = 0 Then GoTo NextTask
+
+        For r = 2 To lastRow
+            contract = Trim$(CStr(wsT.Cells(r, TASK_COL_CONTRACT).Value))
+            If Len(contract) = 0 Then GoTo NextRow
+            If Not info.Exists(contract) Then GoTo NextRow
+
+            ' その工程の古い色をいったん消す（外構や日祝には触らない）
+            ClearTaskPaint ws, BlockRowOf(info, contract), dateMap, vendors, colorMap, TaskRowOffsets(k)
+
+            colorName = Trim$(CStr(wsT.Cells(r, c0 + TASK_OFS_COLOR).Value))
+            If Len(colorName) = 0 Then GoTo NextRow
+            If Not IsDate(wsT.Cells(r, c0 + TASK_OFS_START).Value) Then GoTo NextRow
+            If Not IsDate(wsT.Cells(r, c0 + TASK_OFS_END).Value) Then GoTo NextRow
+
+            If Not colorMap.Exists(colorName) Then
+                warned = warned & "  " & contract & " [" & TaskName(k) & "] : 色名「" & _
+                         colorName & "」が " & SH_VENDOR & " にありません" & vbCrLf
+                warnCount = warnCount + 1
+                GoTo NextRow
+            End If
+
+            dFrom = CDate(wsT.Cells(r, c0 + TASK_OFS_START).Value)
+            dTo = CDate(wsT.Cells(r, c0 + TASK_OFS_END).Value)
+            ' 基礎は本着日の黒と行がぶつかるので、その列だけ1行上へずらす
+            If k = 1 Then
+                shiftCol = HonchakuCol(info, contract, dateMap)
+            Else
+                shiftCol = 0
+            End If
+
+            painted = painted + PaintTask(ws, BlockRowOf(info, contract), dateMap, _
+                                          dFrom, dTo, CLng(colorMap(colorName)), _
+                                          TaskRowOffsets(k), contract, shiftCol)
+
+            ' 工程表の表示期間から外れている日は塗れない
+            If Not dateMap.Exists(CLng(dFrom)) Then skipped = skipped + 1
+NextRow:
+        Next r
+NextTask:
+    Next k
+
+    ' 3) 本着日（黒）とお客様納期（青）を塗る。工程色より上に載せる。
+    marks = PaintMilestones(ws, info, order, dateMap, markMsg)
+
+    ' 4) 「2W」など、塗りつぶし無しにするイベントのセルを整える
+    marks = marks + ApplyEventFills(ws, order, info)
+
+Cleanup:
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+
+    If Err.Number <> 0 Then
+        MsgBox "エラーが発生しました: " & Err.Description, vbCritical
+        Exit Sub
+    End If
+
+    Dim msg As String
+    msg = "工程表に色を塗りました。" & vbCrLf & vbCrLf & _
+          "対象シート : " & ws.Name & vbCrLf
+    If clearedCount >= 0 Then
+        msg = msg & "消した色   : " & clearedCount & " セル" & vbCrLf
+    End If
+    msg = msg & _
+          "工程の色   : " & painted & " セル" & vbCrLf & vbCrLf & _
+          markMsg & vbCrLf & vbCrLf & _
+          holidayMsg
+    If skipped > 0 Then
+        msg = msg & vbCrLf & vbCrLf & _
+              "※ " & skipped & " 件は開始日が工程表の表示期間の外にあり、塗られていません。"
+    End If
+    If warnCount > 0 Then
+        msg = msg & vbCrLf & vbCrLf & "■ 警告:" & vbCrLf & warned
+    End If
+
+    MsgBox msg, IIf(warnCount > 0, vbExclamation, vbInformation), "工程表に色を塗る"
+End Sub
+
+'---------------------------------------------------------------------
+' 工程を1つ処理する
+'---------------------------------------------------------------------
+Private Sub PlanOneTask(k As Long, wsT As Worksheet, _
+                        info As Object, order As Collection, taskRow As Object, _
+                        prevEnd As Object, result As Object, _
+                        ByRef warned As String, ByRef warnCount As Long, _
+                        ByRef conflicts As String, ByRef conflictCount As Long, _
+                        ByRef derived As Long, ByRef outOfRange As Long, _
+                        ByRef kept As Long, ByRef delayed As Long)
+
+    Dim vendors As Object, nameMap As Object, vendorFree As Object, vendorLast As Object
+    Dim r As Long, c0 As Long
+    Dim key As Variant, contract As String, typeCode As String
+    Dim vendorName As String, colorName As String, writtenColor As String
+    Dim dWish As Date, dStart As Date, dEnd As Date
+    Dim days As Long
+    Dim kind As String, floors As Long, area As Long
+    Dim taskLabel As String, startFixed As Boolean, endFixed As Boolean
+    Dim v As Variant
+    Dim cStart As Range, cEnd As Range, cColor As Range
+
+    taskLabel = TaskName(k)
+    c0 = TaskFirstCol(k)
+    Set vendors = LoadVendorsByKind(taskLabel)
+
+    If vendors.Count = 0 Then
+        warned = warned & "  " & SH_VENDOR & " に工種「" & taskLabel & "」の色がありません" & vbCrLf
+        warnCount = warnCount + 1
+        Exit Sub
+    End If
+
+    Set nameMap = BuildVendorNameMap(vendors)
+    Set vendorFree = CreateObject("Scripting.Dictionary")   ' 色名 -> 次に入れる日
+    Set vendorLast = CreateObject("Scripting.Dictionary")   ' 色名 -> 直前の現場の契約番号
+
+    ' シートの上から順に処理する。これが業者の優先順位そのもの。
+    For Each key In order
+        contract = CStr(key)
+        v = info(contract)
+
+        If Not taskRow.Exists(contract) Then GoTo NextProp
+        r = CLng(taskRow(contract))
+
+        Set cStart = wsT.Cells(r, c0 + TASK_OFS_START)
+        Set cEnd = wsT.Cells(r, c0 + TASK_OFS_END)
+        Set cColor = wsT.Cells(r, c0 + TASK_OFS_COLOR)
+
+        '--- 業者を決める --------------------------------------------
+        ' 手入力（黒字）の色名だけ尊重する。
+        ' 自前で入れた（青字）色名は、工程表の業者欄から引き直す。
+        vendorName = Trim$(CStr(v(IIf(k = 1, 4, 5))))
+        writtenColor = Trim$(CStr(cColor.Value))
+        If IsAutoCell(cColor) Then writtenColor = ""
+
+        If Len(writtenColor) > 0 Then
+            ' 手入力の色名を尊重する
+            colorName = writtenColor
+            If Not vendors.Exists(colorName) Then
+                warned = warned & "  " & InfoName(info, contract) & " [" & taskLabel & "] : 色名「" & _
+                         colorName & "」は" & taskLabel & "の業者ではありません" & vbCrLf
+                warnCount = warnCount + 1
+                GoTo NextProp
+            End If
+        ElseIf Len(vendorName) = 0 Then
+            warned = warned & "  " & InfoName(info, contract) & " [" & taskLabel & "] : " & _
+                     "工程表に" & taskLabel & "業者が書かれていません" & vbCrLf
+            warnCount = warnCount + 1
+            GoTo NextProp
+        ElseIf nameMap.Exists(NormalizeName(vendorName)) Then
+            colorName = CStr(nameMap(NormalizeName(vendorName)))
+        Else
+            warned = warned & "  " & InfoName(info, contract) & " [" & taskLabel & "] : 業者「" & _
+                     vendorName & "」が " & SH_VENDOR & " にありません（工種" & taskLabel & "）" & vbCrLf
+            warnCount = warnCount + 1
+            GoTo NextProp
+        End If
+
+        '--- 希望の開始日を決める ------------------------------------
+        ' 入っていればその日を使う（人が決めた日程を尊重する）。
+        ' 空欄なら、基礎は本着日から、2番目以降は前工程の終了日から決める。
+        ' 手入力（黒字）の開始日だけ動かさない。
+        ' 自前で入れた（青字）開始日は、毎回決め直す。
+        ' こうしないと、前の現場の工期が伸びたときに後ろがずれない。
+        startFixed = False
+        If IsDate(cStart.Value) And Not IsAutoCell(cStart) Then
+            dWish = CDate(cStart.Value)
+            startFixed = True
+        ElseIf k > 1 And prevEnd.Exists(contract) Then
+            dWish = CDate(prevEnd(contract)) + TaskInterval(k)
+        ElseIf k = 1 And IsDate(v(6)) Then
+            dWish = CDate(v(6))          ' 本着日
+        Else
+            GoTo NextProp                ' 開始日も本着日も無い＝まだ計画対象外
+        End If
+        dStart = AddWorkingDaysFor(contract, dWish, 0)
+
+        '--- 業者の空きに合わせて後ろへずらす ------------------------
+        ' 前の現場が終わった翌営業日から。前倒しはしない。
+        If vendorFree.Exists(colorName) Then
+            If CDate(vendorFree(colorName)) > dStart Then
+                If startFixed Then
+                    ' 手入力の開始日は書き換えない。重なることだけ知らせる。
+                    conflicts = conflicts & _
+                        "  【" & taskLabel & "】" & InfoName(info, contract) & _
+                        "  開始日 " & Format$(dStart, "yyyy/mm/dd") & vbCrLf & _
+                        "    業者「" & colorName & "」は " & _
+                        InfoName(info, CStr(vendorLast(colorName))) & " に入っています。" & vbCrLf & _
+                        "    → " & Format$(CDate(vendorFree(colorName)), "yyyy/mm/dd") & _
+                        " 以降なら入れます" & vbCrLf & vbCrLf
+                    conflictCount = conflictCount + 1
+                Else
+                    dStart = AddWorkingDaysFor(contract, CDate(vendorFree(colorName)), 0)
+                    delayed = delayed + 1
+                End If
+            End If
+        End If
+
+        If Not startFixed Then
+            WriteAuto cStart, dStart
+            derived = derived + 1
+        End If
+
+        typeCode = CStr(v(3))
+
+        '--- 終了日を決める ------------------------------------------
+        ' 入っていればその日を使う（人が決めた日程を尊重する）。空欄なら計算する。
+        ' 手入力（黒字）の終了日だけそのまま使う。
+        ' 自前で入れた（青字）終了日は、調整の変更を拾えるよう計算し直す。
+        endFixed = (IsDate(cEnd.Value) And Not IsAutoCell(cEnd))
+        If endFixed Then
+            dEnd = CDate(cEnd.Value)
+            If dEnd < dStart Then dEnd = dStart
+            kept = kept + 1
+        Else
+            days = TermDays(taskLabel, typeCode)
+            If days <= 0 Then
+                warned = warned & "  " & InfoName(info, contract) & " : タイプ「" & typeCode & _
+                         "」から" & taskLabel & "の工期を計算できません" & vbCrLf
+                warnCount = warnCount + 1
+                GoTo NextProp
+            End If
+
+            ' 調整列の日数を足し引きする（1日を下回らないようにする）
+            If IsNumeric(wsT.Cells(r, c0 + TASK_OFS_ADJUST).Value) Then
+                If Len(Trim$(CStr(wsT.Cells(r, c0 + TASK_OFS_ADJUST).Value))) > 0 Then
+                    days = days + CLng(wsT.Cells(r, c0 + TASK_OFS_ADJUST).Value)
+                End If
+            End If
+            If days < 1 Then days = 1
+
+            dEnd = AddWorkingDaysFor(contract, dStart, days - 1)
+            WriteAuto cEnd, dEnd
+        End If
+
+        ' 実測範囲（25～90坪）を外れていたら印を付ける
+        If ParseType(typeCode, kind, floors, area) Then
+            If area < 25 Or area > 90 Then outOfRange = outOfRange + 1
+        End If
+
+        '--- 業者の次の空き日を更新する ------------------------------
+        ' 終わった翌営業日から次の現場へ入る。
+        vendorFree(colorName) = AddWorkingDaysFor(contract, dEnd, 1)
+        vendorLast(colorName) = contract
+
+        If Len(writtenColor) = 0 Then
+            WriteAuto cColor, colorName
+        End If
+
+        prevEnd(contract) = dEnd
+        result(contract & "|" & k) = Array(typeCode, dStart, dEnd, colorName)
+NextProp:
+    Next key
+End Sub
+
+'---------------------------------------------------------------------
+' 邸名（分からなければ契約番号）
+'---------------------------------------------------------------------
+Private Function InfoName(info As Object, contract As String) As String
+    Dim v As Variant
+    If info.Exists(contract) Then
+        v = info(contract)
+        If Len(Trim$(CStr(v(1)))) > 0 Then
+            InfoName = Trim$(CStr(v(1)))
+            Exit Function
+        End If
+    End If
+    InfoName = contract
+End Function
+
+'---------------------------------------------------------------------
+' 契約番号 -> M_工程データ の行番号
+'---------------------------------------------------------------------
+Private Function BuildTaskRowMap(wsT As Worksheet) As Object
+    Dim map As Object, r As Long, lastRow As Long, contract As String
+    Set map = CreateObject("Scripting.Dictionary")
+    lastRow = wsT.Cells(wsT.Rows.Count, TASK_COL_CONTRACT).End(xlUp).Row
+    For r = 2 To lastRow
+        contract = Trim$(CStr(wsT.Cells(r, TASK_COL_CONTRACT).Value))
+        If Len(contract) > 0 Then
+            If Not map.Exists(contract) Then map.Add contract, r
+        End If
+    Next r
+    Set BuildTaskRowMap = map
+End Function
+
+'---------------------------------------------------------------------
+' 業者名 -> 色名 の対応表を作る
+'
+' M_業者 の「業者名」は「丸岩/KRK」のように / 区切りで別名を並べられる。
+' 表記ゆれを吸収するため、空白を落として比較する。
+'---------------------------------------------------------------------
+Private Function BuildVendorNameMap(vendors As Object) As Object
+    Dim map As Object, k As Variant, parts As Variant, i As Long, nm As String
+    Set map = CreateObject("Scripting.Dictionary")
+    For Each k In vendors.Keys
+        parts = Split(CStr(vendors(k)), "/")
+        For i = LBound(parts) To UBound(parts)
+            nm = NormalizeName(CStr(parts(i)))
+            If Len(nm) > 0 Then map(nm) = CStr(k)
+        Next i
+    Next k
+    Set BuildVendorNameMap = map
+End Function
+
+'---------------------------------------------------------------------
+' 業者名の突き合わせ用に整える（前後と途中の空白を落とす）
+'---------------------------------------------------------------------
+Private Function NormalizeName(s As String) As String
+    Dim t As String
+    t = Trim$(s)
+    t = Replace$(t, " ", "")
+    t = Replace$(t, "　", "")
+    NormalizeName = t
+End Function
+
+'=====================================================================
+' 前提のチェック
+'=====================================================================
+Private Function PreflightOK() As Boolean
+    If Not SheetExists(SH_TASK) Then
+        MsgBox SH_TASK & " シートがありません。" & vbCrLf & _
+               "「ボタン_初期セットアップ」を実行してください。", vbExclamation
+        Exit Function
+    End If
+    If Not TaskSheetIsCurrent() Then
+        MsgBox SH_TASK & " シートが古い形式です。" & vbCrLf & vbCrLf & _
+               "「ボタン_初期セットアップ」を実行してください。" & vbCrLf & _
+               "古いシートは " & SH_TASK & "_旧1 という名前で残ります。", _
+               vbExclamation, "工程を作る"
+        Exit Function
+    End If
+    If Not VendorSheetIsCurrent() Then
+        MsgBox SH_VENDOR & " シートが古い色設定です。" & vbCrLf & vbCrLf & _
+               "「ボタン_初期セットアップ」を実行してください。" & vbCrLf & _
+               "古いシートは " & SH_VENDOR & "_旧1 という名前で残ります。", _
+               vbExclamation, "工程を作る"
+        Exit Function
+    End If
+    PreflightOK = True
+End Function
+
+'=====================================================================
+' 結果表示
+'=====================================================================
+Private Sub ShowReport(ws As Worksheet, result As Object, info As Object, _
+                       derived As Long, outOfRange As Long, kept As Long, delayed As Long, _
+                       conflicts As String, conflictCount As Long, _
+                       warned As String, warnCount As Long)
+    Dim msg As String, key As Variant, seen As Object
+    Dim contract As String, shown As Long, total As Long
+    Dim k As Long, v As Variant, line As String
+
+    Set seen = CreateObject("Scripting.Dictionary")
+    For Each key In result.Keys
+        contract = Split(CStr(key), "|")(0)
+        If Not seen.Exists(contract) Then seen.Add contract, True
+    Next key
+    total = seen.Count
+
+    msg = "工程を計算しました。" & vbCrLf & vbCrLf & _
+          "対象シート : " & ws.Name & vbCrLf & _
+          "物件       : " & total & " 件" & vbCrLf
+    If derived > 0 Then msg = msg & "開始日を自動で決めた工程 : " & derived & " 件" & vbCrLf
+    If delayed > 0 Then msg = msg & "業者の前の現場に合わせて後ろへずらした工程 : " & delayed & " 件" & vbCrLf
+    If kept > 0 Then msg = msg & "手入力の終了日をそのまま使った工程 : " & kept & " 件" & vbCrLf
+
+    msg = msg & vbCrLf & "邸名 / タイプ / 基礎 / 躯体" & vbCrLf
+
+    For Each key In seen.Keys
+        shown = shown + 1
+        If shown > 12 Then
+            msg = msg & "  ... 他 " & (total - 12) & " 件" & vbCrLf
+            Exit For
+        End If
+        contract = CStr(key)
+        line = "  " & Left$(InfoName(info, contract) & String$(11, " "), 11)
+        For k = 1 To TASK_COUNT
+            If result.Exists(contract & "|" & k) Then
+                v = result(contract & "|" & k)
+                If k = 1 Then line = line & " " & Left$(CStr(v(0)) & String$(7, " "), 7)
+                line = line & "  " & Format$(v(1), "mm/dd") & "～" & Format$(v(2), "mm/dd") & _
+                       " " & IIf(Len(CStr(v(3))) > 0, CStr(v(3)), "未割当")
+            Else
+                line = line & "  （なし）"
+            End If
+        Next k
+        msg = msg & line & vbCrLf
+    Next key
+
+    If outOfRange > 0 Then
+        msg = msg & vbCrLf & "※実測範囲外が " & outOfRange & " 件あります。" & vbCrLf & _
+              "　工期の式は 25～90坪 の実績から作っています。外れる物件の日数は目安です。" & vbCrLf
+    End If
+    If conflictCount > 0 Then
+        msg = msg & vbCrLf & String$(50, "-") & vbCrLf & _
+              "■ その日程では業者が入れません（" & conflictCount & "件）" & vbCrLf & vbCrLf & _
+              conflicts & _
+              "  手入力の開始日は書き換えていません。次のどれかで解消できます。" & vbCrLf & _
+              "    ・上に出ている日まで開始日をずらす" & vbCrLf & _
+              "    ・先に入っている物件の日程を動かす" & vbCrLf & _
+              "    ・工程表の業者欄を別の業者に変える" & vbCrLf & vbCrLf & _
+              "  ※このままだと同じ業者が2現場に重なります。" & vbCrLf
+    End If
+    If warnCount > 0 Then
+        msg = msg & vbCrLf & "■ 警告:" & vbCrLf & warned
+    End If
+
+    msg = msg & vbCrLf & "続けて「ボタン_工程表に色を塗る」を実行してください。"
+
+    MsgBox msg, IIf(conflictCount > 0 Or warnCount > 0, vbExclamation, vbInformation), _
+           IIf(conflictCount > 0, "工程を計算する － 業者が重なっています", "工程を計算する")
+End Sub
+
+'=====================================================================
+' 塗る / 消す
+'=====================================================================
+Private Function PaintTask(ws As Worksheet, blockRow As Long, dateMap As Object, _
+                           dFrom As Date, dTo As Date, rgbVal As Long, _
+                           offsets As Variant, contract As String, _
+                           shiftCol As Long) As Long
+    Dim d As Date, col As Long, cnt As Long, off As Variant
+    Dim use As Variant
+
+    For d = dFrom To dTo
+        If Not IsNonWorkingDayFor(contract, d) Then
+            If dateMap.Exists(CLng(d)) Then
+                col = dateMap(CLng(d))
+
+                ' 本着日の列だけ、黒に場所を譲って1行上へ逃がす
+                If shiftCol > 0 And col = shiftCol Then
+                    use = ShiftedOffsets(offsets)
+                Else
+                    use = offsets
+                End If
+
+                For Each off In use
+                    If blockRow + CLng(off) >= blockRow Then
+                        ws.Cells(blockRow + CLng(off), col).Interior.Color = rgbVal
+                        cnt = cnt + 1
+                    End If
+                Next off
+            End If
+        End If
+    Next d
+    PaintTask = cnt
+End Function
+
+'---------------------------------------------------------------------
+' 本着日（黒）とお客様納期（青）を工程表に塗る
+'
+' 工事の色より上に載せる。日付が工程表の表示期間の外なら何もしない。
+'   本着日       … 基礎の下の行に1マスだけ（MARK_OFS_HONCHAKU）
+'                   その列の基礎の色帯は1行上へずらして塗ってある
+'   お客様納期   … 物件ブロックの上から縦 MARK_ROWS マス
+'---------------------------------------------------------------------
+Private Function PaintMilestones(ws As Worksheet, info As Object, _
+                                 order As Collection, dateMap As Object, _
+                                 ByRef report As String) As Long
+    Dim key As Variant, v As Variant, cnt As Long
+    Dim blockTop As Long, res As Long
+    Dim hOK As Long, hNone As Long, hOut As Long, hList As String
+    Dim nOK As Long, nNone As Long, nOut As Long
+
+    For Each key In order
+        v = info(CStr(key))
+        blockTop = CLng(v(0))
+
+        res = PaintMarkColumn(ws, blockTop + MARK_OFS_HONCHAKU, dateMap, _
+                              v(6), CLR_MARK_HONCHAKU, 1)
+        Select Case res
+            Case -1: hNone = hNone + 1
+            Case -2
+                hOut = hOut + 1
+                If hOut <= 5 Then hList = hList & "    " & CStr(v(1)) & " " & _
+                                          Format$(v(6), "yyyy/mm/dd") & vbCrLf
+            Case Else: hOK = hOK + 1: cnt = cnt + res
+        End Select
+
+        res = PaintMarkColumn(ws, blockTop + MARK_OFS_FIRST, dateMap, _
+                              v(7), CLR_MARK_NOUKI, MARK_ROWS)
+        Select Case res
+            Case -1: nNone = nNone + 1
+            Case -2: nOut = nOut + 1
+            Case Else: nOK = nOK + 1: cnt = cnt + res
+        End Select
+    Next key
+
+    report = "本着日（黒） : " & hOK & " 件"
+    If hNone > 0 Then report = report & " / 日付なし " & hNone & " 件"
+    If hOut > 0 Then report = report & " / 表示期間外 " & hOut & " 件" & vbCrLf & hList
+    report = report & vbCrLf & "お客様納期（青） : " & nOK & " 件"
+    If nNone > 0 Then report = report & " / 日付なし " & nNone & " 件"
+    If nOut > 0 Then report = report & " / 表示期間外 " & nOut & " 件"
+
+    PaintMilestones = cnt
+End Function
+
+'---------------------------------------------------------------------
+' 縦に rowCount マス塗る
+'
+' 戻り値 : 塗ったセル数 / -1 日付が無い / -2 工程表の表示期間の外
+'---------------------------------------------------------------------
+Private Function PaintMarkColumn(ws As Worksheet, baseRow As Long, dateMap As Object, _
+                                 dv As Variant, rgbVal As Long, rowCount As Long) As Long
+    Dim d As Date, col As Long, i As Long
+
+    If Not IsDate(dv) Then
+        PaintMarkColumn = -1
+        Exit Function
+    End If
+    d = CDate(dv)
+    If Not dateMap.Exists(CLng(d)) Then
+        PaintMarkColumn = -2
+        Exit Function
+    End If
+
+    col = CLng(dateMap(CLng(d)))
+    For i = 0 To rowCount - 1
+        ws.Cells(baseRow + i, col).Interior.Color = rgbVal
+    Next i
+    PaintMarkColumn = rowCount
+End Function
+
+'---------------------------------------------------------------------
+' 本着日の列だけ、色帯を1行上へずらす
+'
+' 本着日はその物件の基礎の下1マスを黒で使う。同じマスに基礎の色を塗ると
+' 消えてしまうため、その列に限って基礎の色帯を1行上へ逃がす。
+' 基礎以外の工程は本着日と行が重ならないので、そのまま。
+'---------------------------------------------------------------------
+Private Function ShiftedOffsets(offsets As Variant) As Variant
+    Dim res As Variant, i As Long
+    res = offsets
+    For i = LBound(res) To UBound(res)
+        res(i) = CLng(res(i)) - 1
+    Next i
+    ShiftedOffsets = res
+End Function
+
+'---------------------------------------------------------------------
+' その物件の本着日が入っている列。無ければ 0。
+'---------------------------------------------------------------------
+Private Function HonchakuCol(info As Object, contract As String, dateMap As Object) As Long
+    Dim v As Variant, d As Date
+    If Not info.Exists(contract) Then Exit Function
+    v = info(contract)
+    If Not IsDate(v(6)) Then Exit Function
+    d = CDate(v(6))
+    If Not dateMap.Exists(CLng(d)) Then Exit Function
+    HonchakuCol = CLng(dateMap(CLng(d)))
+End Function
+
+'---------------------------------------------------------------------
+' その物件のブロック先頭行
+'---------------------------------------------------------------------
+Private Function BlockRowOf(info As Object, contract As String) As Long
+    Dim v As Variant
+    v = info(contract)
+    BlockRowOf = CLng(v(0))
+End Function
+
+'---------------------------------------------------------------------
+' その物件・その工程の色だけを消す
+'
+' 基礎の行は後半で外構も使うため、行ごと消してはいけない。
+' その工程の業者色に一致するセルだけを対象にする。
+'---------------------------------------------------------------------
+Private Sub ClearTaskPaint(ws As Worksheet, blockRow As Long, dateMap As Object, _
+                           vendors As Object, colorMap As Object, offsets As Variant)
+    Dim rgbSet As Object, k As Variant, c As Variant, off As Variant
+    Dim cell As Range
+
+    Set rgbSet = CreateObject("Scripting.Dictionary")
+    For Each k In vendors.Keys
+        If colorMap.Exists(k) Then rgbSet(CLng(colorMap(k))) = True
+    Next k
+    If rgbSet.Count = 0 Then Exit Sub
+
+    ' 本着日の列で1行上へ逃がした分も消えるよう、1行上まで対象にする
+    Dim allOffsets As Variant
+    allOffsets = WithShifted(offsets)
+
+    For Each c In dateMap.Items
+        For Each off In allOffsets
+            If blockRow + CLng(off) < blockRow Then GoTo NextOffset
+            Set cell = ws.Cells(blockRow + CLng(off), CLng(c))
+            If cell.Interior.Pattern <> xlNone Then
+                If rgbSet.Exists(CLng(cell.Interior.Color)) Then cell.Interior.Pattern = xlNone
+            End If
+NextOffset:
+        Next off
+    Next c
+End Sub
+
+'---------------------------------------------------------------------
+' 色帯の行オフセットに、1行上へずらした分を足したもの
+'---------------------------------------------------------------------
+Private Function WithShifted(offsets As Variant) As Variant
+    Dim d As Object, i As Long, res() As Variant, k As Variant, n As Long
+
+    Set d = CreateObject("Scripting.Dictionary")
+    For i = LBound(offsets) To UBound(offsets)
+        d(CLng(offsets(i))) = True
+        d(CLng(offsets(i)) - 1) = True
+    Next i
+
+    ReDim res(0 To d.Count - 1)
+    For Each k In d.Keys
+        res(n) = CLng(k)
+        n = n + 1
+    Next k
+    WithShifted = res
+End Function
+
+'=====================================================================
+' マスタの読み込み
+'=====================================================================
+' 工程表の物件ブロックを読む
+'   info  : 契約番号 -> FindBlocks の1件分（行 / 邸名 / 契約番号 / タイプ /
+'                       基礎業者 / 躯体業者 / 本着日 / お客様納期）
+'   order : 契約番号をシートの上から順に並べたもの（＝業者の優先順位）
+Private Sub LoadBlocks(ws As Worksheet, ByRef info As Object, ByRef order As Collection)
+    Dim blocks As Collection, b As Variant, key As String
+
+    Set info = CreateObject("Scripting.Dictionary")
+    Set order = New Collection
+    Set blocks = FindBlocks(ws)
+
+    For Each b In blocks
+        key = Trim$(CStr(b(2)))
+        If Len(key) > 0 Then
+            If Not info.Exists(key) Then
+                info.Add key, b
+                order.Add key
+            End If
+        End If
+    Next b
+End Sub
+
+' M_業者 のうち、工種が一致する色
+Private Function LoadVendorsByKind(kindName As String) As Object
+    Dim ws As Worksheet, map As Object
+    Dim r As Long, lastRow As Long, nm As String
+
+    Set map = CreateObject("Scripting.Dictionary")
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(SH_VENDOR)
+    On Error GoTo 0
+    If ws Is Nothing Then
+        Set LoadVendorsByKind = map
+        Exit Function
+    End If
+
+    lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+    For r = 2 To lastRow
+        nm = Trim$(CStr(ws.Cells(r, 1).Value))
+        If Len(nm) > 0 And Trim$(CStr(ws.Cells(r, 5).Value)) = kindName Then
+            map(nm) = Trim$(CStr(ws.Cells(r, 6).Value))
+        End If
+    Next r
+
+    Set LoadVendorsByKind = map
+End Function
+
+' 色名 -> RGB
+Private Function LoadColorMap() As Object
+    Dim ws As Worksheet, map As Object
+    Dim r As Long, lastRow As Long, nm As String
+
+    Set map = CreateObject("Scripting.Dictionary")
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(SH_VENDOR)
+    On Error GoTo 0
+    If ws Is Nothing Then
+        Set LoadColorMap = map
+        Exit Function
+    End If
+
+    lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+    For r = 2 To lastRow
+        nm = Trim$(CStr(ws.Cells(r, 1).Value))
+        If Len(nm) > 0 And IsNumeric(ws.Cells(r, 2).Value) Then
+            map(nm) = RGB(CLng(ws.Cells(r, 2).Value), _
+                          CLng(ws.Cells(r, 3).Value), _
+                          CLng(ws.Cells(r, 4).Value))
+        End If
+    Next r
+    Set LoadColorMap = map
+End Function
+
+'=====================================================================
+' 業者の重複チェック
+'
+' 同じ色（＝同じ業者）が、別々の物件で同じ稼働日に入っていたら報告する。
+'=====================================================================
+Public Sub CheckVendorConflicts()
+    Dim wsT As Worksheet
+    Dim r As Long, lastRow As Long, k As Long, c0 As Long
+    Dim occupied As Object
+    Dim contract As String, colorName As String
+    Dim dFrom As Date, dTo As Date, d As Date
+    Dim key As String, report As String, hits As Long
+
+    If Not TaskSheetIsCurrent() Then
+        MsgBox SH_TASK & " シートが古い形式です。" & vbCrLf & _
+               "「ボタン_初期セットアップ」を実行してください。", vbExclamation
+        Exit Sub
+    End If
+
+    ResetExceptionCache
+    Set wsT = ThisWorkbook.Worksheets(SH_TASK)
+    Set occupied = CreateObject("Scripting.Dictionary")
+    lastRow = wsT.Cells(wsT.Rows.Count, TASK_COL_CONTRACT).End(xlUp).Row
+
+    For k = 1 To TASK_COUNT
+        c0 = TaskFirstCol(k)
+        For r = 2 To lastRow
+            contract = Trim$(CStr(wsT.Cells(r, TASK_COL_CONTRACT).Value))
+            colorName = Trim$(CStr(wsT.Cells(r, c0 + TASK_OFS_COLOR).Value))
+            If Len(contract) = 0 Or Len(colorName) = 0 Then GoTo NextRow
+            If Not IsDate(wsT.Cells(r, c0 + TASK_OFS_START).Value) Then GoTo NextRow
+            If Not IsDate(wsT.Cells(r, c0 + TASK_OFS_END).Value) Then GoTo NextRow
+
+            dFrom = CDate(wsT.Cells(r, c0 + TASK_OFS_START).Value)
+            dTo = CDate(wsT.Cells(r, c0 + TASK_OFS_END).Value)
+
+            For d = dFrom To dTo
+                If Not IsNonWorkingDayFor(contract, d) Then
+                    key = colorName & "|" & CLng(d)
+                    If occupied.Exists(key) Then
+                        If occupied(key) <> contract Then
+                            hits = hits + 1
+                            If hits <= 30 Then
+                                report = report & "  " & Format$(d, "yyyy/mm/dd") & _
+                                         "  [" & TaskName(k) & "] 色[" & colorName & "]  " & _
+                                         occupied(key) & " と " & contract & vbCrLf
+                            End If
+                        End If
+                    Else
+                        occupied(key) = contract
+                    End If
+                End If
+            Next d
+NextRow:
+        Next r
+    Next k
+
+    If hits = 0 Then
+        MsgBox "同じ業者（色）が同じ日に別物件へ入っている箇所はありませんでした。", _
+               vbInformation, "重複チェック"
+    Else
+        Dim msg As String
+        msg = hits & " 件の重複が見つかりました。" & vbCrLf & vbCrLf & report
+        If hits > 30 Then msg = msg & "  ... 他 " & (hits - 30) & " 件"
+        MsgBox msg, vbExclamation, "重複チェック"
+    End If
+End Sub
+
+'=====================================================================
+' 工程表から工程の色を消す
+'
+' M_業者 に登録されている色に一致するセルだけを消す。
+' 日祝の黄緑と、マクロが知らない色（手で塗った印など）は残る。
+' M_工程データ の日付は消えないので、「工程を作る」で塗り直せる。
+'=====================================================================
+Public Sub ClearTaskColors()
+    Dim ws As Worksheet, cleared As Long
+
+    Set ws = ChartSheet()
+
+    If MsgBox("「" & ws.Name & "」から工程の色をすべて消します。" & vbCrLf & vbCrLf & _
+              "消えるもの : " & SH_VENDOR & " に登録されている色" & vbCrLf & _
+              "残るもの   : 日祝の黄緑、手で塗った色、" & SH_TASK & " の日付" & vbCrLf & vbCrLf & _
+              "元に戻す（Ctrl+Z）は効きません。よろしいですか？", _
+              vbYesNo + vbExclamation, "工程の色をクリア") <> vbYes Then Exit Sub
+
+    cleared = ClearTaskColorsCore(ws)
+
+    MsgBox cleared & " セルの色を消しました。" & vbCrLf & vbCrLf & _
+           "「ボタン_工程表に色を塗る」で塗り直せます。" & vbCrLf & _
+           "日程から作り直したい場合は「ボタン_工程の計算結果をクリア」を先に実行してください。", _
+           vbInformation, "工程の色をクリア"
+End Sub
+
+'---------------------------------------------------------------------
+' 工程の色を消す本体（確認も報告もしない）
+'---------------------------------------------------------------------
+Private Function ClearTaskColorsCore(ws As Worksheet) As Long
+    Dim colorMap As Object, dateMap As Object
+    Dim blocks As Collection, b As Variant
+    Dim rgbSet As Object, k As Variant, c As Variant
+    Dim off As Long, r As Long, cleared As Long
+    Dim cell As Range
+
+    Set colorMap = LoadColorMap()
+    Set dateMap = BuildDateMap(ws)
+    Set blocks = FindBlocks(ws)
+
+    ' 消す対象の RGB を集める（日祝の黄緑は除外する）
+    Set rgbSet = CreateObject("Scripting.Dictionary")
+    For Each k In colorMap.Keys
+        If Not IsHolidayColor(CLng(colorMap(k))) Then rgbSet(CLng(colorMap(k))) = True
+    Next k
+
+    If rgbSet.Count = 0 Then Exit Function
+
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+
+    For Each c In dateMap.Items
+        For Each b In blocks
+            For off = 0 To BLOCK_ROWS - 1
+                r = CLng(b(0)) + off
+                Set cell = ws.Cells(r, CLng(c))
+                If cell.Interior.Pattern <> xlNone Then
+                    If rgbSet.Exists(CLng(cell.Interior.Color)) Then
+                        cell.Interior.Pattern = xlNone
+                        cleared = cleared + 1
+                    End If
+                End If
+            Next off
+        Next b
+    Next c
+
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+
+    ClearTaskColorsCore = cleared
+End Function
+
+'=====================================================================
+' 工程表を塗り直す（消してから塗る）
+'
+' 実務で使うのはこのボタン。工程の色をいったん全部消してから塗り直すので、
+' 日程を変えたあとに古い色が残らない。
+' 「色をクリア」「色を塗る」の2つはデバッグ用に残してある。
+'=====================================================================
+Public Sub RepaintPlan()
+    Dim ws As Worksheet, cleared As Long
+
+    If Not PreflightOK() Then Exit Sub
+
+    Set ws = ChartSheet()
+
+    If MsgBox("「" & ws.Name & "」の工程の色を、いったん消してから塗り直します。" & vbCrLf & vbCrLf & _
+              "消えるもの : " & SH_VENDOR & " に登録されている色" & vbCrLf & _
+              "残るもの   : 日祝の黄緑、手で塗った色" & vbCrLf & vbCrLf & _
+              "元に戻す（Ctrl+Z）は効きません。よろしいですか？", _
+              vbYesNo + vbQuestion, "工程表を塗り直す") <> vbYes Then Exit Sub
+
+    cleared = ClearTaskColorsCore(ws)
+    PaintPlan cleared
+End Sub
+
+'=====================================================================
+' 選択した行だけ計算結果をクリアする
+'
+' 雨で日程がずれた行を選んで実行 → 開始日を直して「工程を作る」で計算し直す。
+'=====================================================================
+Public Sub ClearPlanResultsForSelection()
+    Dim wsT As Worksheet, cell As Range, rows As Object
+    Dim r As Variant, k As Long, c0 As Long, cnt As Long
+
+    If Not TaskSheetIsCurrent() Then
+        MsgBox SH_TASK & " シートが古い形式です。" & vbCrLf & _
+               "「ボタン_初期セットアップ」を実行してください。", vbExclamation
+        Exit Sub
+    End If
+
+    Set wsT = ThisWorkbook.Worksheets(SH_TASK)
+    If ActiveSheet.Name <> wsT.Name Then
+        MsgBox SH_TASK & " シート上で、対象の行を選択してから実行してください。", vbExclamation
+        Exit Sub
+    End If
+
+    ' 選択されている行番号を集める
+    Set rows = CreateObject("Scripting.Dictionary")
+    For Each cell In Selection.Cells
+        If cell.Row >= 2 Then
+            If Len(Trim$(CStr(wsT.Cells(cell.Row, TASK_COL_CONTRACT).Value))) > 0 Then
+                rows(cell.Row) = True
+            End If
+        End If
+    Next cell
+
+    If rows.Count = 0 Then
+        MsgBox "契約番号の入っている行が選択されていません。", vbExclamation
+        Exit Sub
+    End If
+
+    If MsgBox(rows.Count & " 件の物件について、計算結果を消します。" & vbCrLf & vbCrLf & _
+              "消すもの : マクロが入れた値（青字の 開始日 / 終了日 / 色名）" & vbCrLf & _
+              "残るもの : 手入力した値（黒字）/ 調整 / 備考" & vbCrLf & vbCrLf & _
+              "よろしいですか？", vbYesNo + vbQuestion) <> vbYes Then Exit Sub
+
+    For Each r In rows.Keys
+        ClearAutoOutputs wsT, CLng(r)
+        cnt = cnt + 1
+    Next r
+
+    MsgBox cnt & " 件をクリアしました。" & vbCrLf & _
+           "開始日を直してから「ボタン_工程を作る」を実行してください。", vbInformation
+End Sub
+
+'=====================================================================
+' 計算結果をすべてクリアする（割り当てをやり直したいとき）
+'
+' 開始日は残し、終了日と色名だけ消す。
+'=====================================================================
+Public Sub ClearPlanResults()
+    Dim wsT As Worksheet, r As Long, lastRow As Long
+    Dim k As Long, c0 As Long, cnt As Long
+
+    If MsgBox(SH_TASK & " から、計算結果を消します。" & vbCrLf & vbCrLf & _
+              "消すもの : マクロが入れた値（青字の 開始日 / 終了日 / 色名）" & vbCrLf & _
+              "残るもの : 手入力した値（黒字）/ 調整 / 備考" & vbCrLf & vbCrLf & _
+              "よろしいですか？", vbYesNo + vbQuestion) <> vbYes Then Exit Sub
+
+    Set wsT = ThisWorkbook.Worksheets(SH_TASK)
+    lastRow = wsT.Cells(wsT.Rows.Count, TASK_COL_CONTRACT).End(xlUp).Row
+
+    For r = 2 To lastRow
+        If Len(Trim$(CStr(wsT.Cells(r, TASK_COL_CONTRACT).Value))) > 0 Then
+            cnt = cnt + ClearAutoOutputs(wsT, r)
+        End If
+    Next r
+
+    MsgBox cnt & " 箇所をクリアしました。" & vbCrLf & _
+           "「ボタン_工程を作る」で計算し直せます。", vbInformation
+End Sub
+
+'---------------------------------------------------------------------
+' その行の「マクロが入れた値」だけ消す（手入力は残す）
+'
+' 戻り値は消したセル数。
+'---------------------------------------------------------------------
+Private Function ClearAutoOutputs(wsT As Worksheet, r As Long) As Long
+    Dim k As Long, c0 As Long, cnt As Long
+
+    For k = 1 To TASK_COUNT
+        c0 = TaskFirstCol(k)
+        If ClearIfAuto(wsT.Cells(r, c0 + TASK_OFS_START)) Then cnt = cnt + 1
+        If ClearIfAuto(wsT.Cells(r, c0 + TASK_OFS_END)) Then cnt = cnt + 1
+        If ClearIfAuto(wsT.Cells(r, c0 + TASK_OFS_COLOR)) Then cnt = cnt + 1
+    Next k
+
+    ClearAutoOutputs = cnt
+End Function
+
+'=====================================================================
+' 選択した行と、その影響を受ける行を計算し直す
+'
+' あとから調整を入れたときに使う。選んだ物件と、
+' 「同じ業者を使っていて、工程表で下にある物件」をまとめて計算し直す。
+' 業者は前の現場が終わってから次に移るので、影響が出るのはこの範囲だけ。
+'
+' 手入力（黒字）の値は消さないので、人が決めた日程は残る。
+'=====================================================================
+Public Sub RecalcFromSelection()
+    Dim wsT As Worksheet, ws As Worksheet
+    Dim cell As Range, picked As Object, target As Object
+    Dim info As Object, order As Collection, taskRow As Object
+    Dim idx As Object, key As Variant, contract As String
+    Dim k As Long, i As Long, n As Long
+    Dim v As Variant, vendorName As String
+    Dim pickedVendors As Object
+    Dim listMsg As String, cleared As Long
+
+    If Not PreflightOK() Then Exit Sub
+
+    Set wsT = ThisWorkbook.Worksheets(SH_TASK)
+    If ActiveSheet.Name <> wsT.Name Then
+        MsgBox SH_TASK & " シート上で、計算し直したい行を選択してから実行してください。", _
+               vbExclamation, "選択行と後続を再計算"
+        Exit Sub
+    End If
+
+    ' 選択されている契約番号を集める
+    Set picked = CreateObject("Scripting.Dictionary")
+    For Each cell In Selection.Cells
+        If cell.Row >= 2 Then
+            contract = Trim$(CStr(wsT.Cells(cell.Row, TASK_COL_CONTRACT).Value))
+            If Len(contract) > 0 Then picked(contract) = True
+        End If
+    Next cell
+
+    If picked.Count = 0 Then
+        MsgBox "契約番号の入っている行が選択されていません。", vbExclamation
+        Exit Sub
+    End If
+
+    Set ws = ChartSheet()
+    LoadBlocks ws, info, order
+    Set taskRow = BuildTaskRowMap(wsT)
+
+    ' 工程表の並び順（＝業者の優先順位）での位置
+    Set idx = CreateObject("Scripting.Dictionary")
+    i = 0
+    For Each key In order
+        idx(CStr(key)) = i
+        i = i + 1
+    Next key
+
+    Set target = CreateObject("Scripting.Dictionary")
+
+    For k = 1 To TASK_COUNT
+        ' 選んだ物件が使っている業者を集める
+        Set pickedVendors = CreateObject("Scripting.Dictionary")
+        For Each key In picked.Keys
+            contract = CStr(key)
+            If info.Exists(contract) Then
+                v = info(contract)
+                vendorName = NormalizeName(CStr(v(IIf(k = 1, 4, 5))))
+                If Len(vendorName) > 0 Then
+                    pickedVendors(vendorName) = idx(contract)
+                    target(contract) = True
+                End If
+            End If
+        Next key
+
+        ' 同じ業者で、選んだ物件より下にある物件も対象にする
+        For Each key In order
+            contract = CStr(key)
+            If Not target.Exists(contract) Then
+                v = info(contract)
+                vendorName = NormalizeName(CStr(v(IIf(k = 1, 4, 5))))
+                If pickedVendors.Exists(vendorName) Then
+                    If CLng(idx(contract)) > CLng(pickedVendors(vendorName)) Then
+                        target(contract) = True
+                    End If
+                End If
+            End If
+        Next key
+    Next k
+
+    ' 対象の一覧を作る（工程表の並び順）
+    For Each key In order
+        contract = CStr(key)
+        If target.Exists(contract) Then
+            n = n + 1
+            If n <= 15 Then
+                listMsg = listMsg & "  " & InfoName(info, contract) & _
+                          IIf(picked.Exists(contract), "  ← 選択", "") & vbCrLf
+            End If
+        End If
+    Next key
+    If n > 15 Then listMsg = listMsg & "  ... 他 " & (n - 15) & " 件" & vbCrLf
+
+    If MsgBox(n & " 件を計算し直します。" & vbCrLf & vbCrLf & _
+              listMsg & vbCrLf & _
+              "選んだ物件と、同じ業者を使っていて工程表で下にある物件が対象です。" & vbCrLf & vbCrLf & _
+              "消すもの : マクロが入れた値（青字）" & vbCrLf & _
+              "残るもの : 手入力した値（黒字）/ 調整 / 備考" & vbCrLf & vbCrLf & _
+              "よろしいですか？", vbYesNo + vbQuestion, "選択行と後続を再計算") <> vbYes Then Exit Sub
+
+    Application.ScreenUpdating = False
+    For Each key In target.Keys
+        contract = CStr(key)
+        If taskRow.Exists(contract) Then
+            cleared = cleared + ClearAutoOutputs(wsT, CLng(taskRow(contract)))
+        End If
+    Next key
+    Application.ScreenUpdating = True
+
+    ' そのまま計算する。青字は毎回決め直すので、対象外の物件は結果が変わらない。
+    CalculatePlan
+End Sub
+
+'>>>MODULE:M06_Events
+Option Explicit
+
+'=====================================================================
+' M06_Events : 工程表にイベント名を書く
+'
+' 工程表は色を塗るだけでなく、イベントを文字でも書き込む。
+' M0～M5 / 家具搬入 / CL / クリーンハウス / 2W の10種類。
+'
+' ■ 入力は1画面
+' 10個の入力欄をまとめて出す。「イベント入力」シートが開くので、
+' 日付を入れて「書き込む」を押す。入力が終わるとシートは消える。
+' ユーザーフォーム F_イベント入力 がブックにあれば、そちらを使う。
+'
+' ■ 書き込む位置
+'   行 … その物件のブロック（邸名の行から6行）のうち、イベントごとに決まった行
+'   列 … 入力された日付の列
+'
+' 「上から◯マス目」は物件の6行のなかの位置（1 始まり）。
+'
+'   M0 / M1              上から5マス目          黒・横書き
+'   M2 / M3 / M4 / M5    上から2マス目          黒・横書き
+'   家具搬入             上から2～3マス目を結合  赤・太字・縦書き
+'   CL                   上から2～3マス目を結合  赤・縦書き
+'   クリーンハウス       上から1～3マス目を結合  黒・縦書き
+'   2W                   上から2マス目          赤・横書き・塗りつぶしなし
+'
+' ■ 結合されたセルの扱い
+' 工程表は 3～4マス目 と 5～6マス目 が結合されていることがある。
+' 結合されたセルは左上にしか文字が入らないため、
+' 書き込み・読み取りとも MergeArea の左上に読み替える。
+' 複数マスにまたがるイベントは、必要なら結合してから書く。
+'
+' どの物件かはカーソルの位置（行）で判定する。
+'
+' 何度実行しても同じ結果になる（冪等）。
+' 同じイベントを入れ直すと、前に書いた場所は消えて新しい場所に書かれる。
+'=====================================================================
+
+' イベントの数
+Public Const EVENT_COUNT As Long = 10
+
+' 1画面で入力するユーザーフォームの名前（任意）
+' このフォームがブックにあればフォームを、無ければ入力シートを使う。
+' 作り方は vba/userform/F_イベント入力.txt を参照。
+Public Const EVENT_FORM_NAME As String = "F_イベント入力"
+
+' --- 入力シートの座標 -----------------------------------------------
+Private Const EVS_ROW_FIRST As Long = 4    ' 1件目の行
+Private Const EVS_COL_NAME  As Long = 2    ' B列 : イベント名
+Private Const EVS_COL_DATE  As Long = 3    ' C列 : 日付（入力）
+Private Const EVS_COL_NOTE  As Long = 4    ' D列 : 説明
+Private Const EVS_COL_KEEP  As Long = 8    ' H列 : 対象の記憶（非表示）
+
+' --- 文字色 ---------------------------------------------------------
+Private Const CLR_EVENT_BLACK As Long = 0          ' RGB(0, 0, 0)
+Private Const CLR_EVENT_RED   As Long = 255        ' RGB(255, 0, 0)
+
+' --- フォームとのやり取り -------------------------------------------
+' フォームは部品の配置だけを持ち、値はここを通してやり取りする。
+Private mFormTitle As String
+Private mFormHeader As String
+Private mFormDefault(1 To EVENT_COUNT) As String
+Private mFormResult(1 To EVENT_COUNT) As String
+Private mFormOK As Boolean
+
+'---------------------------------------------------------------------
+' イベントの定義
+'
+' 戻り値 : Array(名前, 行オフセット, 行数, 文字色, 太字, 縦書き, 塗りを消す)
+'
+'   行オフセット … 物件ブロックの先頭からの位置（0 始まり）
+'                   「上から2マス目」= 1、「上から5マス目」= 4
+'   行数         … 縦にいくつのマスを使うか。2以上なら結合して書く
+'---------------------------------------------------------------------
+Public Function EventDef(i As Long) As Variant
+    Select Case i
+        Case 1:  EventDef = Array("M0", 4, 1, CLR_EVENT_BLACK, False, False, False)
+        Case 2:  EventDef = Array("M1", 4, 1, CLR_EVENT_BLACK, False, False, False)
+        Case 3:  EventDef = Array("M2", 1, 1, CLR_EVENT_BLACK, False, False, False)
+        Case 4:  EventDef = Array("M3", 1, 1, CLR_EVENT_BLACK, False, False, False)
+        Case 5:  EventDef = Array("M4", 1, 1, CLR_EVENT_BLACK, False, False, False)
+        Case 6:  EventDef = Array("M5", 1, 1, CLR_EVENT_BLACK, False, False, False)
+        Case 7:  EventDef = Array("家具搬入", 1, 2, CLR_EVENT_RED, True, True, False)
+        Case 8:  EventDef = Array("CL", 1, 2, CLR_EVENT_RED, False, True, False)
+        Case 9:  EventDef = Array("クリーンハウス", 0, 3, CLR_EVENT_BLACK, False, True, False)
+        Case 10: EventDef = Array("2W", 1, 1, CLR_EVENT_RED, False, False, True)
+    End Select
+End Function
+
+Public Function EventName(i As Long) As String
+    Dim v As Variant
+    v = EventDef(i)
+    EventName = CStr(v(0))
+End Function
+
+'---------------------------------------------------------------------
+' 書き込む場所の説明（入力シートに出す）
+'---------------------------------------------------------------------
+Private Function EventWhere(i As Long) As String
+    Dim v As Variant, s As String
+    v = EventDef(i)
+
+    If CLng(v(2)) > 1 Then
+        s = "上から " & (CLng(v(1)) + 1) & "～" & (CLng(v(1)) + CLng(v(2))) & " マス目（結合）"
+    Else
+        s = "上から " & (CLng(v(1)) + 1) & " マス目"
+    End If
+
+    s = s & " / " & IIf(CLng(v(3)) = CLR_EVENT_RED, "赤", "黒")
+    If CBool(v(4)) Then s = s & "太字"
+    s = s & IIf(CBool(v(5)), "・縦書き", "・横書き")
+    If CBool(v(6)) Then s = s & "・塗りつぶしなし"
+
+    EventWhere = s
+End Function
+
+'=====================================================================
+' メイン : イベントを入力する
+'
+' フォームがあればフォームで、無ければ入力シートで、10個まとめて入力する。
+'=====================================================================
+Public Sub InputEvents()
+    Dim ws As Worksheet, colMap As Object
+    Dim blocks As Collection
+    Dim blockTop As Long, nm As String
+    Dim i As Long, cur As Variant
+
+    On Error GoTo Fail
+
+    Set ws = ChartSheet()
+    If ActiveSheet.Name <> ws.Name Then
+        MsgBox "工程表シート「" & ws.Name & "」の上で、" & vbCrLf & _
+               "対象の物件の行にカーソルを置いてから実行してください。", _
+               vbExclamation, "イベントを入力"
+        Exit Sub
+    End If
+
+    Set blocks = FindBlocks(ws)
+    blockTop = BlockTopFromRow(blocks, Selection.Row, nm)
+
+    If blockTop = 0 Then
+        MsgBox "カーソルの行から物件を特定できませんでした。" & vbCrLf & vbCrLf & _
+               "邸名の行から6行がその物件の範囲です。" & vbCrLf & _
+               "その範囲にカーソルを置いてから実行してください。", _
+               vbExclamation, "イベントを入力"
+        Exit Sub
+    End If
+
+    ' --- いま書かれている日付を初期値にする -------------------------
+    Set colMap = BuildColMap(ws)
+    For i = 1 To EVENT_COUNT
+        cur = FindEventDate(ws, blockTop, i, colMap)
+        If IsDate(cur) Then
+            mFormDefault(i) = Format$(cur, "yyyy/mm/dd")
+        Else
+            mFormDefault(i) = ""
+        End If
+        mFormResult(i) = ""
+    Next i
+
+    mFormTitle = "イベントを入力 － " & nm
+    mFormHeader = nm & vbCrLf & _
+                  "日付を入れると書き込みます。空欄にするとそのイベントを消します。" & vbCrLf & _
+                  "（画面のとおりに工程表へ反映されます）"
+
+    ' --- フォームがあればフォーム、無ければ入力シート ---------------
+    If ShowEventForm() Then
+        If Not mFormOK Then Exit Sub
+        ApplyEvents ws, blockTop, nm
+    Else
+        OpenEventSheet ws, blockTop, nm
+    End If
+    Exit Sub
+
+Fail:
+    Application.ScreenUpdating = True
+    MsgBox "エラーが発生しました: " & Err.Description, vbCritical, "イベントを入力"
+End Sub
+
+'---------------------------------------------------------------------
+' 入力された内容を工程表に反映する
+'
+' mFormResult に入力結果、mFormDefault に元の値が入っている前提。
+'---------------------------------------------------------------------
+Private Sub ApplyEvents(ws As Worksheet, blockTop As Long, nm As String)
+    Dim dateMap As Object, colMap As Object
+    Dim entered As Object, removed As Object
+    Dim i As Long, t As String, d As Date
+    Dim ng As String, msg As String
+    Dim wrote As Long, cleared As Long
+
+    Set dateMap = BuildDateMap(ws)
+    Set colMap = BuildColMap(ws)
+    Set entered = CreateObject("Scripting.Dictionary")
+    Set removed = CreateObject("Scripting.Dictionary")
+
+    For i = 1 To EVENT_COUNT
+        t = Trim$(mFormResult(i))
+
+        If Len(t) = 0 Then
+            ' もともと何か書いてあったときだけ「消す」
+            If Len(mFormDefault(i)) > 0 Then removed(i) = True
+        ElseIf t = mFormDefault(i) Then
+            ' 変わっていない。触らない
+        ElseIf Not IsDate(t) Then
+            ng = ng & "  " & EventName(i) & " : 「" & t & "」は日付として読めません" & vbCrLf
+        Else
+            d = CDate(t)
+            If Not dateMap.Exists(CLng(d)) Then
+                ng = ng & "  " & EventName(i) & " : " & Format$(d, "yyyy/mm/dd") & _
+                     " は工程表の表示期間の外です" & vbCrLf
+            Else
+                entered(i) = d
+            End If
+        End If
+    Next i
+
+    If entered.Count = 0 And removed.Count = 0 Then
+        If Len(ng) > 0 Then
+            MsgBox "書き込めませんでした。" & vbCrLf & vbCrLf & ng, vbExclamation, "イベントを入力"
+        Else
+            MsgBox "変更はありませんでした。", vbInformation, "イベントを入力"
+        End If
+        Exit Sub
+    End If
+
+    Application.ScreenUpdating = False
+    For i = 1 To EVENT_COUNT
+        If entered.Exists(i) Or removed.Exists(i) Then
+            ' 同じイベントが別の日に書いてあれば、まず消す
+            cleared = cleared + ClearEvent(ws, blockTop, i, colMap)
+        End If
+        If entered.Exists(i) Then
+            WriteEvent ws, blockTop, i, CLng(dateMap(CLng(CDate(entered(i)))))
+            wrote = wrote + 1
+        End If
+    Next i
+    Application.ScreenUpdating = True
+
+    msg = nm & vbCrLf & vbCrLf & _
+          "書き込み : " & wrote & " 件" & vbCrLf & _
+          "消した   : " & cleared & " 件"
+    If Len(ng) > 0 Then msg = msg & vbCrLf & vbCrLf & "※ 次は書き込めませんでした。" & vbCrLf & ng
+
+    MsgBox msg, vbInformation, "イベントを入力"
+End Sub
+
+'=====================================================================
+' 入力シート（フォームが無いときの1画面入力）
+'
+' シートに10行の入力欄とボタンを作る。書き込む／やめる を押すと
+' EventSheetOK / EventSheetCancel が呼ばれ、シートは消える。
+'
+' どの物件が対象かは、シートの H 列（非表示）に覚えさせる。
+' マクロが一度終わってもボタンから続きを実行できるようにするため。
+'=====================================================================
+Private Sub OpenEventSheet(ws As Worksheet, blockTop As Long, nm As String)
+    Dim wsE As Worksheet, i As Long, r As Long
+    Dim v As Variant
+
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+
+    ' 前回の入力シートが残っていれば作り直す（隠れているものも消す）
+    On Error Resume Next
+    ThisWorkbook.Worksheets(SH_EVENT_INPUT).Visible = xlSheetVisible
+    ThisWorkbook.Worksheets(SH_EVENT_INPUT).Delete
+    On Error GoTo 0
+
+    Set wsE = ThisWorkbook.Worksheets.Add(After:=ws)
+    wsE.Name = SH_EVENT_INPUT
+
+    ' --- 見出し -----------------------------------------------------
+    With wsE.Range("B1")
+        .Value = "イベントを入力 － " & nm
+        .Font.Bold = True
+        .Font.Size = 14
+    End With
+    wsE.Range("B2").Value = "日付を入れて「書き込む」を押してください。" & _
+                            "空欄にするとそのイベントを消します。"
+
+    wsE.Cells(EVS_ROW_FIRST - 1, EVS_COL_NAME).Value = "イベント"
+    wsE.Cells(EVS_ROW_FIRST - 1, EVS_COL_DATE).Value = "日付"
+    wsE.Cells(EVS_ROW_FIRST - 1, EVS_COL_NOTE).Value = "書き込む場所と書式"
+    With wsE.Range(wsE.Cells(EVS_ROW_FIRST - 1, EVS_COL_NAME), _
+                   wsE.Cells(EVS_ROW_FIRST - 1, EVS_COL_NOTE))
+        .Font.Bold = True
+        .Interior.Color = RGB(217, 217, 217)
+    End With
+
+    ' --- 10行 -------------------------------------------------------
+    For i = 1 To EVENT_COUNT
+        r = EVS_ROW_FIRST + i - 1
+        v = EventDef(i)
+
+        wsE.Cells(r, EVS_COL_NAME).Value = CStr(v(0))
+        wsE.Cells(r, EVS_COL_NAME).Font.Bold = True
+
+        With wsE.Cells(r, EVS_COL_DATE)
+            .NumberFormatLocal = "yyyy/mm/dd"
+            If Len(mFormDefault(i)) > 0 Then .Value = CDate(mFormDefault(i))
+            .Interior.Color = RGB(255, 255, 204)
+            .HorizontalAlignment = xlCenter
+        End With
+
+        wsE.Cells(r, EVS_COL_NOTE).Value = EventWhere(i)
+        wsE.Cells(r, EVS_COL_NOTE).Font.Color = RGB(128, 128, 128)
+    Next i
+
+    ' --- 対象を覚えておく（非表示） ---------------------------------
+    wsE.Cells(1, EVS_COL_KEEP).Value = ws.Name
+    wsE.Cells(2, EVS_COL_KEEP).Value = blockTop
+    wsE.Cells(3, EVS_COL_KEEP).Value = nm
+    wsE.Columns(EVS_COL_KEEP).Hidden = True
+
+    wsE.Columns("B:B").ColumnWidth = 16
+    wsE.Columns("C:C").ColumnWidth = 14
+    wsE.Columns("D:D").ColumnWidth = 38
+
+    AddSheetButton wsE, "書き込む", "EventSheetOK", 0
+    AddSheetButton wsE, "やめる", "EventSheetCancel", 1
+
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
+
+    wsE.Activate
+    wsE.Cells(EVS_ROW_FIRST, EVS_COL_DATE).Select
+End Sub
+
+'---------------------------------------------------------------------
+' 入力シートにボタンを置く
+'---------------------------------------------------------------------
+Private Sub AddSheetButton(wsE As Worksheet, caption As String, _
+                           macroName As String, index As Long)
+    Dim shp As Shape
+    Dim topPos As Single
+
+    topPos = wsE.Cells(EVS_ROW_FIRST + EVENT_COUNT + 1, EVS_COL_NAME).Top + 4
+
+    Set shp = wsE.Shapes.AddFormControl(xlButtonControl, _
+              wsE.Cells(EVS_ROW_FIRST + EVENT_COUNT + 1, EVS_COL_NAME).Left + index * 96, _
+              topPos, 88, 30)
+    shp.OnAction = macroName
+    shp.TextFrame.Characters.Text = caption
+End Sub
+
+'---------------------------------------------------------------------
+' 入力シートの「書き込む」ボタン
+'---------------------------------------------------------------------
+Public Sub EventSheetOK()
+    Dim wsE As Worksheet, ws As Worksheet
+    Dim blockTop As Long, nm As String
+    Dim i As Long, r As Long, v As Variant
+
+    On Error GoTo Fail
+
+    If Not SheetExists(SH_EVENT_INPUT) Then
+        MsgBox "入力シートが見つかりません。", vbExclamation
+        Exit Sub
+    End If
+    Set wsE = ThisWorkbook.Worksheets(SH_EVENT_INPUT)
+
+    Set ws = ThisWorkbook.Worksheets(CStr(wsE.Cells(1, EVS_COL_KEEP).Value))
+    blockTop = CLng(wsE.Cells(2, EVS_COL_KEEP).Value)
+    nm = CStr(wsE.Cells(3, EVS_COL_KEEP).Value)
+
+    ' 入力欄を読む。元の値は、いま工程表に書かれているものを読み直す。
+    Dim colMap As Object, cur As Variant
+    Set colMap = BuildColMap(ws)
+
+    For i = 1 To EVENT_COUNT
+        r = EVS_ROW_FIRST + i - 1
+        v = wsE.Cells(r, EVS_COL_DATE).Value
+
+        If IsDate(v) Then
+            mFormResult(i) = Format$(CDate(v), "yyyy/mm/dd")
+        Else
+            mFormResult(i) = Trim$(CStr(v))
+        End If
+
+        cur = FindEventDate(ws, blockTop, i, colMap)
+        If IsDate(cur) Then
+            mFormDefault(i) = Format$(cur, "yyyy/mm/dd")
+        Else
+            mFormDefault(i) = ""
+        End If
+    Next i
+
+    ' 先に工程表へ戻してから書き込み、最後に入力シートを片づける。
+    ' ボタンのマクロの中でシートを消すため、消すのは一番最後にする。
+    ws.Activate
+    ApplyEvents ws, blockTop, nm
+    CloseEventSheet
+    Exit Sub
+
+Fail:
+    Application.ScreenUpdating = True
+    Application.DisplayAlerts = True
+    MsgBox "エラーが発生しました: " & Err.Description, vbCritical, "イベントを入力"
+End Sub
+
+'---------------------------------------------------------------------
+' 入力シートの「やめる」ボタン
+'---------------------------------------------------------------------
+Public Sub EventSheetCancel()
+    Dim nm As String
+
+    On Error Resume Next
+    nm = CStr(ThisWorkbook.Worksheets(SH_EVENT_INPUT).Cells(1, EVS_COL_KEEP).Value)
+    ThisWorkbook.Worksheets(nm).Activate
+    On Error GoTo 0
+
+    CloseEventSheet
+End Sub
+
+'---------------------------------------------------------------------
+' 入力シートを片づける
+'
+' 消すのに失敗したときは隠す。次に開くときに作り直すので残らない。
+'---------------------------------------------------------------------
+Private Sub CloseEventSheet()
+    If Not SheetExists(SH_EVENT_INPUT) Then Exit Sub
+
+    Application.DisplayAlerts = False
+    On Error Resume Next
+    ThisWorkbook.Worksheets(SH_EVENT_INPUT).Delete
+    On Error GoTo 0
+    Application.DisplayAlerts = True
+
+    If SheetExists(SH_EVENT_INPUT) Then
+        On Error Resume Next
+        ThisWorkbook.Worksheets(SH_EVENT_INPUT).Visible = xlSheetHidden
+        On Error GoTo 0
+    End If
+End Sub
+
+'=====================================================================
+' ユーザーフォーム（任意）
+'
+' フォームがブックにあればそちらを使う。無ければ入力シートになる。
+' フォーム側は部品を並べるだけで、中身はここから受け取る。
+'=====================================================================
+Public Function EventFormCount() As Long
+    EventFormCount = EVENT_COUNT
+End Function
+
+Public Function EventFormTitle() As String
+    EventFormTitle = mFormTitle
+End Function
+
+Public Function EventFormHeader() As String
+    EventFormHeader = mFormHeader
+End Function
+
+Public Function EventFormLabel(i As Long) As String
+    EventFormLabel = EventName(i)
+End Function
+
+Public Function EventFormDefault(i As Long) As String
+    EventFormDefault = mFormDefault(i)
+End Function
+
+Public Sub EventFormSetResult(i As Long, s As String)
+    mFormResult(i) = s
+End Sub
+
+Public Sub EventFormSetOK(b As Boolean)
+    mFormOK = b
+End Sub
+
+'---------------------------------------------------------------------
+' 入力フォームがブックにあるか
+'---------------------------------------------------------------------
+Public Function EventFormExists() As Boolean
+    Dim frm As Object
+
+    On Error Resume Next
+    Set frm = VBA.UserForms.Add(EVENT_FORM_NAME)
+    On Error GoTo 0
+
+    If frm Is Nothing Then Exit Function
+
+    Unload frm
+    EventFormExists = True
+End Function
+
+'---------------------------------------------------------------------
+' 入力フォームを出す
+'
+' 戻り値 : フォームを出せたか（False なら入力シートに切り替える）
+' 書き込むかどうかは mFormOK を見る。
+'---------------------------------------------------------------------
+Private Function ShowEventForm() As Boolean
+    Dim frm As Object
+
+    mFormOK = False
+
+    On Error Resume Next
+    Set frm = VBA.UserForms.Add(EVENT_FORM_NAME)
+    On Error GoTo 0
+
+    If frm Is Nothing Then Exit Function     ' フォームがブックに無い
+
+    frm.Show 1
+    Unload frm
+    ShowEventForm = True
+End Function
+
+'=====================================================================
+' カーソルのある物件のイベントを一覧表示する
+'=====================================================================
+Public Sub ShowEvents()
+    Dim ws As Worksheet, colMap As Object
+    Dim blocks As Collection
+    Dim blockTop As Long, nm As String
+    Dim i As Long, msg As String, cur As Variant, cnt As Long
+
+    On Error GoTo Fail
+
+    Set ws = ChartSheet()
+    If ActiveSheet.Name <> ws.Name Then
+        MsgBox "工程表シートの上で実行してください。", vbExclamation
+        Exit Sub
+    End If
+
+    Set blocks = FindBlocks(ws)
+    blockTop = BlockTopFromRow(blocks, Selection.Row, nm)
+    If blockTop = 0 Then
+        MsgBox "カーソルの行から物件を特定できませんでした。", vbExclamation
+        Exit Sub
+    End If
+
+    Set colMap = BuildColMap(ws)
+
+    For i = 1 To EVENT_COUNT
+        cur = FindEventDate(ws, blockTop, i, colMap)
+        If IsDate(cur) Then
+            msg = msg & "  " & Left$(EventName(i) & String$(8, " "), 8) & _
+                  Format$(cur, "yyyy/mm/dd (aaa)") & vbCrLf
+            cnt = cnt + 1
+        End If
+    Next i
+
+    If cnt = 0 Then msg = "  （まだ何も書かれていません）" & vbCrLf
+
+    MsgBox nm & " のイベント" & vbCrLf & vbCrLf & msg, vbInformation, "イベント一覧"
+    Exit Sub
+
+Fail:
+    MsgBox "エラーが発生しました: " & Err.Description, vbCritical
+End Sub
+
+'=====================================================================
+' カーソルのある物件のイベントをすべて消す
+'=====================================================================
+Public Sub ClearEventsForProperty()
+    Dim ws As Worksheet, colMap As Object
+    Dim blocks As Collection
+    Dim blockTop As Long, nm As String
+    Dim i As Long, cleared As Long
+
+    On Error GoTo Fail
+
+    Set ws = ChartSheet()
+    If ActiveSheet.Name <> ws.Name Then
+        MsgBox "工程表シートの上で実行してください。", vbExclamation
+        Exit Sub
+    End If
+
+    Set blocks = FindBlocks(ws)
+    blockTop = BlockTopFromRow(blocks, Selection.Row, nm)
+    If blockTop = 0 Then
+        MsgBox "カーソルの行から物件を特定できませんでした。", vbExclamation
+        Exit Sub
+    End If
+
+    If MsgBox(nm & " のイベント文字をすべて消します。" & vbCrLf & vbCrLf & _
+              "消えるもの : M0～M5 / 家具搬入 / CL / クリーンハウス / 2W" & vbCrLf & _
+              "残るもの   : 色の塗りつぶし、その他の文字" & vbCrLf & vbCrLf & _
+              "よろしいですか？", vbYesNo + vbExclamation, "イベントをクリア") <> vbYes Then Exit Sub
+
+    Set colMap = BuildColMap(ws)
+
+    For i = 1 To EVENT_COUNT
+        cleared = cleared + ClearEvent(ws, blockTop, i, colMap)
+    Next i
+
+    MsgBox cleared & " 件のイベントを消しました。", vbInformation, "イベントをクリア"
+    Exit Sub
+
+Fail:
+    MsgBox "エラーが発生しました: " & Err.Description, vbCritical
+End Sub
+
+'=====================================================================
+' 書き込み・削除・検索
+'=====================================================================
+
+'---------------------------------------------------------------------
+' イベントを書くセルを返す
+'
+' 複数マスにまたがるイベントは、必要なら結合してから返す。
+' すでに結合されているセルは、その左上を返す（そこにしか文字が入らない）。
+'---------------------------------------------------------------------
+Private Function EventCell(ws As Worksheet, blockTop As Long, i As Long, _
+                           col As Long, doMerge As Boolean) As Range
+    Dim v As Variant, rng As Range
+    Dim r1 As Long, r2 As Long
+
+    v = EventDef(i)
+    r1 = blockTop + CLng(v(1))
+    r2 = r1 + CLng(v(2)) - 1
+
+    If CLng(v(2)) > 1 And doMerge Then
+        Set rng = ws.Range(ws.Cells(r1, col), ws.Cells(r2, col))
+        If Not rng.MergeCells Then
+            Application.DisplayAlerts = False
+            rng.Merge
+            Application.DisplayAlerts = True
+        End If
+    End If
+
+    ' 結合されていれば、その左上に読み替える
+    Set EventCell = ws.Cells(r1, col).MergeArea.Cells(1, 1)
+End Function
+
+'---------------------------------------------------------------------
+' イベントを1件書き込む
+'---------------------------------------------------------------------
+Private Sub WriteEvent(ws As Worksheet, blockTop As Long, i As Long, col As Long)
+    Dim v As Variant, cell As Range
+
+    v = EventDef(i)
+    Set cell = EventCell(ws, blockTop, i, col, True)
+
+    cell.Value = CStr(v(0))
+    cell.Font.Color = CLng(v(3))
+    cell.Font.Bold = CBool(v(4))
+
+    If CBool(v(5)) Then
+        cell.Orientation = xlVertical      ' 縦書き
+    Else
+        cell.Orientation = 0               ' 横書き
+    End If
+
+    cell.HorizontalAlignment = xlCenter
+    cell.VerticalAlignment = xlCenter
+
+    ' 「2W」は塗りつぶしを消す
+    If CBool(v(6)) Then cell.Interior.Pattern = xlNone
+End Sub
+
+'---------------------------------------------------------------------
+' その物件に書かれている、そのイベントを消す
+'
+' 戻り値 : 消した件数
+'---------------------------------------------------------------------
+Private Function ClearEvent(ws As Worksheet, blockTop As Long, i As Long, _
+                            colMap As Object) As Long
+    Dim v As Variant, c As Variant, cell As Range
+    Dim nm As String, cnt As Long
+
+    v = EventDef(i)
+    nm = CStr(v(0))
+
+    For Each c In colMap.Keys
+        Set cell = EventCell(ws, blockTop, i, CLng(c), False)
+        If Trim$(CStr(cell.Value)) = nm Then
+            cell.ClearContents
+            cell.Orientation = 0
+            cell.Font.Bold = False
+            ' このマクロが結合したセルなら、結合も戻す
+            If CLng(v(2)) > 1 Then
+                If cell.MergeCells Then
+                    If cell.MergeArea.Rows.Count = CLng(v(2)) And _
+                       cell.MergeArea.Columns.Count = 1 Then cell.MergeArea.UnMerge
+                End If
+            End If
+            cnt = cnt + 1
+        End If
+    Next c
+
+    ClearEvent = cnt
+End Function
+
+'---------------------------------------------------------------------
+' その物件に書かれている、そのイベントの日付を返す（無ければ Empty）
+'---------------------------------------------------------------------
+Private Function FindEventDate(ws As Worksheet, blockTop As Long, i As Long, _
+                               colMap As Object) As Variant
+    Dim v As Variant, c As Variant
+    Dim nm As String
+
+    v = EventDef(i)
+    nm = CStr(v(0))
+
+    For Each c In colMap.Keys
+        If Trim$(CStr(EventCell(ws, blockTop, i, CLng(c), False).Value)) = nm Then
+            FindEventDate = colMap(c)
+            Exit Function
+        End If
+    Next c
+End Function
+
+'---------------------------------------------------------------------
+' 行番号から、その行が属する物件ブロックの先頭行を返す
+'
+' 邸名の行から6行がその物件の範囲。どれにも入らなければ 0 を返す。
+'---------------------------------------------------------------------
+Public Function BlockTopFromRow(blocks As Collection, r As Long, _
+                                ByRef propName As String) As Long
+    Dim b As Variant, topRow As Long
+
+    For Each b In blocks
+        topRow = CLng(b(0))
+        If r >= topRow And r < topRow + BLOCK_ROWS Then
+            propName = CStr(b(1))
+            BlockTopFromRow = topRow
+            Exit Function
+        End If
+    Next b
+End Function
+
+'=====================================================================
+' 色を塗り直したあとの後始末
+'
+' 「2W」のセルは塗りつぶし無しでなければならないが、
+' 日祝や工程の色を塗ると上から塗られてしまう。
+' 色を塗ったあとにこれを呼んで、塗りつぶしを消し直す。
+'
+' 戻り値 : 直したセル数
+'=====================================================================
+Public Function ApplyEventFills(ws As Worksheet, order As Collection, _
+                                info As Object) As Long
+    Dim key As Variant, v As Variant, def As Variant
+    Dim colMap As Object, c As Variant, cell As Range
+    Dim i As Long, cnt As Long, blockTop As Long
+
+    Set colMap = BuildColMap(ws)
+
+    For i = 1 To EVENT_COUNT
+        def = EventDef(i)
+        If CBool(def(6)) Then
+            For Each key In order
+                v = info(CStr(key))
+                blockTop = CLng(v(0))
+                For Each c In colMap.Keys
+                    Set cell = EventCell(ws, blockTop, i, CLng(c), False)
+                    If Trim$(CStr(cell.Value)) = CStr(def(0)) Then
+                        If cell.Interior.Pattern <> xlNone Then
+                            cell.Interior.Pattern = xlNone
+                            cnt = cnt + 1
+                        End If
+                    End If
+                Next c
+            Next key
+        End If
+    Next i
+
+    ApplyEventFills = cnt
+End Function
+
+'>>>MODULE:M90_Loader
+Option Explicit
+
+'=====================================================================
+' M90_Loader : マクロを1ファイルから入れ替える
+'
+' モジュールを7つ取り込むのは手間なので、全部を1つにまとめた
+' テキストファイル（工程表マクロ.txt）から一括で入れ替える。
+'
+' ■ 使い方
+'   1. このモジュール（M90_Loader）だけ、最初に1回インポートする
+'   2. 以降は「ボタン_マクロを更新」を実行し、
+'      ダウンロードした 工程表マクロ.txt を選ぶだけ
+'
+' ■ 事前に1回だけ必要な設定
+'   ファイル → オプション → トラスト センター
+'     → トラスト センターの設定 → マクロの設定
+'     → 「VBA プロジェクト オブジェクト モデルへのアクセスを信頼する」にチェック
+'
+'   この設定が無いと、マクロからモジュールを入れ替えられない。
+'   （設定していない場合は、これまでどおり手で7つ取り込んでも同じです）
+'
+' ■ 文字化けしない
+' ファイルは UTF-8 として読む。VBE の「ファイルのインポート」と違い、
+' Shift-JIS への変換が要らないので文字化けしない。
+'
+' ■ 自分自身は入れ替えない
+' 実行中のモジュールを消すと止まるため、M90_Loader だけは飛ばす。
+' ローダー自体を新しくしたいときは、手でインポートし直す。
+'=====================================================================
+
+' 1ファイルのなかで、モジュールの区切りに入っている目印
+Public Const BUNDLE_MODULE As String = ">>>MODULE:"
+Public Const BUNDLE_FORM   As String = ">>>USERFORM:"
+
+' VBComponents.Add に渡す種類（vbext_ComponentType）
+Private Const CT_STD_MODULE As Long = 1
+Private Const CT_MSFORM     As Long = 3
+
+'=====================================================================
+' メイン : 1ファイルからマクロを入れ替える
+'=====================================================================
+Public Sub ボタン_マクロを更新()
+    Dim path As Variant
+    Dim text As String
+    Dim parts As Object
+    Dim vbp As Object
+    Dim key As Variant
+    Dim added As String, skipped As String
+    Dim cnt As Long
+
+    ' --- ファイルを選ぶ ---------------------------------------------
+    path = Application.GetOpenFilename( _
+           "工程表マクロのファイル (*.txt),*.txt", , "工程表マクロ.txt を選んでください")
+    If VarType(path) = vbBoolean Then Exit Sub     ' キャンセル
+
+    ' --- 読む（UTF-8） ----------------------------------------------
+    text = ReadUtf8(CStr(path))
+    If Len(text) = 0 Then
+        MsgBox "ファイルを読めませんでした。" & vbCrLf & CStr(path), vbExclamation, "マクロを更新"
+        Exit Sub
+    End If
+
+    Set parts = SplitBundle(text)
+    If parts.Count = 0 Then
+        MsgBox "このファイルにモジュールが入っていません。" & vbCrLf & vbCrLf & _
+               "「工程表マクロ.txt」を選んでください。", vbExclamation, "マクロを更新"
+        Exit Sub
+    End If
+
+    ' --- VBA プロジェクトに触れるか確認 ------------------------------
+    On Error Resume Next
+    Set vbp = ThisWorkbook.VBProject
+    On Error GoTo 0
+
+    If vbp Is Nothing Then
+        MsgBox "マクロからモジュールを入れ替える設定が入っていません。" & vbCrLf & vbCrLf & _
+               "ファイル → オプション → トラスト センター" & vbCrLf & _
+               "  → トラスト センターの設定 → マクロの設定" & vbCrLf & _
+               "  → 「VBA プロジェクト オブジェクト モデルへのアクセスを信頼する」" & vbCrLf & _
+               "にチェックを入れて、Excel を開き直してから実行してください。" & vbCrLf & vbCrLf & _
+               "この設定を使いたくない場合は、これまでどおり" & vbCrLf & _
+               "vba/sjis/ の .bas を手で取り込んでも同じ結果になります。", _
+               vbExclamation, "マクロを更新"
+        Exit Sub
+    End If
+
+    ' --- 確認 -------------------------------------------------------
+    For Each key In parts.Keys
+        added = added & "  " & CStr(key) & vbCrLf
+    Next key
+
+    If MsgBox(parts.Count & " 個のモジュールを入れ替えます。" & vbCrLf & vbCrLf & _
+              added & vbCrLf & _
+              "同じ名前のモジュールがあれば、いったん削除して入れ直します。" & vbCrLf & _
+              "元に戻す（Ctrl+Z）は効きません。よろしいですか？", _
+              vbYesNo + vbQuestion, "マクロを更新") <> vbYes Then Exit Sub
+
+    ' --- 入れ替える -------------------------------------------------
+    added = ""
+    Application.ScreenUpdating = False
+
+    For Each key In parts.Keys
+        If CStr(key) = "M90_Loader" Then
+            skipped = skipped & "  " & CStr(key) & "（実行中のため）" & vbCrLf
+        ElseIf ReplaceComponent(vbp, CStr(key), CStr(parts(key))) Then
+            added = added & "  " & CStr(key) & vbCrLf
+            cnt = cnt + 1
+        Else
+            skipped = skipped & "  " & CStr(key) & "（入れ替えに失敗）" & vbCrLf
+        End If
+    Next key
+
+    Application.ScreenUpdating = True
+
+    Dim msg As String
+    msg = cnt & " 個のモジュールを入れ替えました。" & vbCrLf & vbCrLf & added
+    If Len(skipped) > 0 Then msg = msg & vbCrLf & "入れ替えなかったもの:" & vbCrLf & skipped
+    msg = msg & vbCrLf & "■ このあと" & vbCrLf & _
+          "  1. ブックを保存する" & vbCrLf & _
+          "  2. 「ボタン_初期セットアップ」を実行する"
+
+    MsgBox msg, vbInformation, "マクロを更新"
+End Sub
+
+'---------------------------------------------------------------------
+' モジュールを1つ入れ替える
+'
+' 同じ名前があれば削除してから、新しく作って中身を流し込む。
+'---------------------------------------------------------------------
+Private Function ReplaceComponent(vbp As Object, compName As String, _
+                                  code As String) As Boolean
+    Dim comp As Object
+    Dim isForm As Boolean
+    Dim realName As String
+
+    isForm = (Left$(compName, 2) = "F_")
+    realName = compName
+
+    ' 既にあれば消す
+    On Error Resume Next
+    Set comp = vbp.VBComponents(realName)
+    On Error GoTo 0
+    If Not comp Is Nothing Then
+        On Error Resume Next
+        vbp.VBComponents.Remove comp
+        On Error GoTo 0
+        Set comp = Nothing
+    End If
+
+    ' 作って中身を入れる
+    On Error GoTo Fail
+    If isForm Then
+        Set comp = vbp.VBComponents.Add(CT_MSFORM)
+    Else
+        Set comp = vbp.VBComponents.Add(CT_STD_MODULE)
+    End If
+    comp.Name = realName
+    comp.CodeModule.AddFromString code
+
+    ReplaceComponent = True
+    Exit Function
+
+Fail:
+    ReplaceComponent = False
+End Function
+
+'---------------------------------------------------------------------
+' 1ファイルをモジュールごとに切り分ける
+'
+' 行頭がアポストロフィ + 目印 + モジュール名 の行で区切られている。
+' 戻り値 : モジュール名 -> コード
+'---------------------------------------------------------------------
+Private Function SplitBundle(text As String) As Object
+    Dim map As Object
+    Dim lines As Variant, i As Long
+    Dim t As String, cur As String, buf As String
+
+    Set map = CreateObject("Scripting.Dictionary")
+
+    text = Replace$(text, vbCrLf, vbLf)
+    text = Replace$(text, vbCr, vbLf)
+    lines = Split(text, vbLf)
+
+    For i = LBound(lines) To UBound(lines)
+        t = Trim$(CStr(lines(i)))
+
+        ' 目印は「行頭が ' のすぐあとに目印」のときだけ。
+        ' 説明文のなかに目印が出てきても切らないようにする。
+        If Left$(t, 1 + Len(BUNDLE_MODULE)) = "'" & BUNDLE_MODULE Then
+            If Len(cur) > 0 Then map(cur) = buf
+            cur = Trim$(Mid$(t, 2 + Len(BUNDLE_MODULE)))
+            buf = ""
+        ElseIf Left$(t, 1 + Len(BUNDLE_FORM)) = "'" & BUNDLE_FORM Then
+            If Len(cur) > 0 Then map(cur) = buf
+            cur = Trim$(Mid$(t, 2 + Len(BUNDLE_FORM)))
+            buf = ""
+        ElseIf Len(cur) > 0 Then
+            buf = buf & CStr(lines(i)) & vbCrLf
+        End If
+    Next i
+
+    If Len(cur) > 0 Then map(cur) = buf
+
+    Set SplitBundle = map
+End Function
+
+'---------------------------------------------------------------------
+' UTF-8 のテキストファイルを読む
+'
+' ADODB.Stream を使う。BOM の有無は気にしなくてよい。
+'---------------------------------------------------------------------
+Private Function ReadUtf8(path As String) As String
+    Dim st As Object
+
+    On Error GoTo Fail
+    Set st = CreateObject("ADODB.Stream")
+    st.Charset = "UTF-8"
+    st.Type = 2                 ' adTypeText
+    st.Open
+    st.LoadFromFile path
+    ReadUtf8 = st.ReadText
+    st.Close
+    Exit Function
+
+Fail:
+    ReadUtf8 = ""
+End Function
+
+'=====================================================================
+' いま入っているモジュールを確認する
+'=====================================================================
+Public Sub ボタン_モジュール一覧()
+    Dim vbp As Object, comp As Object, msg As String, cnt As Long
+
+    On Error Resume Next
+    Set vbp = ThisWorkbook.VBProject
+    On Error GoTo 0
+
+    If vbp Is Nothing Then
+        MsgBox "VBA プロジェクトへのアクセスが許可されていません。" & vbCrLf & _
+               "「ボタン_マクロを更新」の説明を参照してください。", vbExclamation
+        Exit Sub
+    End If
+
+    For Each comp In vbp.VBComponents
+        msg = msg & "  " & comp.Name & "  （" & ComponentKind(comp.Type) & "）" & vbCrLf
+        cnt = cnt + 1
+    Next comp
+
+    MsgBox "このブックに入っているもの : " & cnt & " 個" & vbCrLf & vbCrLf & msg, _
+           vbInformation, "モジュール一覧"
+End Sub
+
+Private Function ComponentKind(t As Long) As String
+    Select Case t
+        Case 1: ComponentKind = "標準モジュール"
+        Case 2: ComponentKind = "クラス"
+        Case 3: ComponentKind = "ユーザーフォーム"
+        Case 100: ComponentKind = "シート／ブック"
+        Case Else: ComponentKind = "その他"
+    End Select
+End Function
+
+'>>>MODULE:M99_Menu
+Option Explicit
+
+'=====================================================================
+' M99_Menu : ボタンから呼び出すエントリポイント
+'
+' 図形やフォームボタンにマクロを登録するときは、このモジュールの
+' Sub を指定する。中身の実装が変わっても登録し直さずに済む。
+'=====================================================================
+
+'--- 初回セットアップ -------------------------------------------------
+Public Sub ボタン_初期セットアップ()
+    SetupMasters
+    ImportPropertiesToTaskSheet
+End Sub
+
+'--- 日常操作 ---------------------------------------------------------
+
+'---------------------------------------------------------------------
+' 1. 表の上で計算する（工程表には触らない）
+'
+' M_工程データ に 契約番号 と 基礎開始日 を入れて実行すると、
+' 工期の計算 → 終了日の確定 → 業者の割り当て までを行い、
+' 結果を M_工程データ に書き込む。
+'---------------------------------------------------------------------
+Public Sub ボタン_工程を計算する()
+    CalculatePlan
+End Sub
+
+'---------------------------------------------------------------------
+' 2. 工程表を塗り直す（実務ではこちらを使う）
+'
+' 工程の色をいったん全部消してから塗り直す。
+' 日程を変えたあとでも古い色が残らない。
+'---------------------------------------------------------------------
+Public Sub ボタン_工程表を塗り直す()
+    RepaintPlan
+End Sub
+
+'---------------------------------------------------------------------
+' 選択した行と、その影響を受ける行だけ計算し直す
+'
+' あとから調整を入れたときに使う。
+' 選んだ物件と、同じ業者を使っていて工程表で下にある物件が対象。
+'---------------------------------------------------------------------
+Public Sub ボタン_選択行と後続を再計算()
+    RecalcFromSelection
+End Sub
+
+'---------------------------------------------------------------------
+' イベントを入力する（M0～M5 / 家具搬入 / CL / クリーンハウス / 2W）
+'
+' 工程表の上で、対象の物件の行にカーソルを置いてから実行する。
+' 10個の入力欄が1画面で出る。決まった行・書式で書き込む。
+'---------------------------------------------------------------------
+Public Sub ボタン_イベントを入力()
+    InputEvents
+End Sub
+
+Public Sub ボタン_イベントを一覧表示()
+    ShowEvents
+End Sub
+
+Public Sub ボタン_イベントをクリア()
+    ClearEventsForProperty
+End Sub
+
+'--- デバッグ用（塗る／消すを別々に実行したいとき）---------------------
+
+'---------------------------------------------------------------------
+' 工程表に色を塗る（消さない・計算もしない）
+'
+' M_工程データ の 開始日・終了日・色名 をそのまま塗る。
+' 日祝の塗りつぶしもこのなかで一緒に行われる。
+'---------------------------------------------------------------------
+Public Sub ボタン_工程表に色を塗る()
+    PaintPlan
+End Sub
+
+'---------------------------------------------------------------------
+' 計算結果をクリアする
+'
+' 日程を計算し直したい行を選んで「選択行」の方を実行し、
+' 開始日を直してから「工程を作る」を実行する。
+'---------------------------------------------------------------------
+Public Sub ボタン_選択行の計算結果をクリア()
+    ClearPlanResultsForSelection
+End Sub
+
+Public Sub ボタン_工程の計算結果をクリア()
+    ClearPlanResults
+End Sub
+
+'---------------------------------------------------------------------
+' 工程表から工程の色だけを消す
+'
+' M_工程データ の日付は残るので、「工程を作る」で塗り直せる。
+'---------------------------------------------------------------------
+Public Sub ボタン_工程の色をクリア()
+    ClearTaskColors
+End Sub
+
+' 日祝の塗りつぶしは単独のボタンにしていない。
+' 「工程表に色を塗る」と「初期セットアップ」のなかで一緒に実行される。
+
+Public Sub ボタン_業者の重複を確認()
+    CheckVendorConflicts
+End Sub
+
+'--- 補助 -------------------------------------------------------------
+
+'---------------------------------------------------------------------
+' いま開いているシートを、色を塗る対象として登録する
+'---------------------------------------------------------------------
+Public Sub ボタン_このシートを工程表に設定()
+    Dim ws As Worksheet, nm As String
+
+    If TypeName(ActiveSheet) <> "Worksheet" Then
+        MsgBox "ワークシートを開いた状態で実行してください。", vbExclamation
+        Exit Sub
+    End If
+
+    nm = ActiveSheet.Name
+    If IsMasterSheet(nm) Then
+        MsgBox "「" & nm & "」はマクロが使うマスタシートです。" & vbCrLf & _
+               "工程表のシートを開いてから実行してください。", vbExclamation
+        Exit Sub
+    End If
+
+    SaveSetting CFG_CHART_SHEET, nm
+
+    MsgBox "工程表シートを「" & nm & "」に設定しました。" & vbCrLf & _
+           "（設定はブックの中に保存されます。設定用のシートは作りません）" & vbCrLf & vbCrLf & _
+           "続けて「ボタン_レイアウトを検証」で座標を確認してください。", _
+           vbInformation, "工程表シートの設定"
+End Sub
+
+'---------------------------------------------------------------------
+' カレンダーの年を設定する
+'
+' 前年の表を作り替えて使っていると、日付セルの「年」が実際と違うことがある。
+' 日付エリアの先頭列の年をここで指定すると、以降は月日だけをシートから読み、
+' 年はマクロが振り直す（12月→1月で1年繰り上げ）。
+'---------------------------------------------------------------------
+Public Sub ボタン_カレンダーの年を設定()
+    Dim ans As String, y As Long, ws As Worksheet
+    Dim colMap As Object, c As Variant, minC As Long
+    Dim shown As String
+
+    On Error Resume Next
+    Set ws = ChartSheet()
+    On Error GoTo 0
+
+    If Not ws Is Nothing Then
+        Set colMap = BuildColMap(ws)
+        minC = 999999
+        For Each c In colMap.Keys
+            If CLng(c) < minC Then minC = CLng(c)
+        Next c
+        If colMap.Count > 0 Then
+            shown = "いま先頭列は " & Format$(colMap(minC), "yyyy/mm/dd") & " と読めています。" & vbCrLf & vbCrLf
+        End If
+    End If
+
+    ans = InputBox(shown & _
+                   "日付エリアの先頭列は何年ですか。" & vbCrLf & _
+                   "（0 を入れると補正をやめ、シートの値をそのまま使います）", _
+                   "カレンダーの年", CStr(Year(Date)))
+    If Len(Trim$(ans)) = 0 Then Exit Sub
+    If Not IsNumeric(ans) Then
+        MsgBox "年を数値で入力してください。", vbExclamation
+        Exit Sub
+    End If
+
+    y = CLng(ans)
+    If y = 0 Then
+        SaveSetting CFG_BASE_YEAR, ""
+        MsgBox "年の補正をやめました。シートに入っている日付をそのまま使います。", _
+               vbInformation, "カレンダーの年"
+        Exit Sub
+    End If
+
+    If y < 1980 Or y > 2099 Then
+        MsgBox "1980～2099 の範囲で入力してください。", vbExclamation
+        Exit Sub
+    End If
+
+    SaveSetting CFG_BASE_YEAR, CStr(y)
+    MsgBox "先頭列を " & y & " 年として扱います。" & vbCrLf & _
+           "月が戻ったところ（12月→1月）で年を1つ繰り上げます。" & vbCrLf & vbCrLf & _
+           "「ボタン_レイアウトを検証」で日付を確認してください。", _
+           vbInformation, "カレンダーの年"
+End Sub
+
+Public Sub ボタン_このセルは何()
+    WhatIsThisCell
+End Sub
+
+Public Sub ボタン_物件を取り込む()
+    ImportPropertiesToTaskSheet
+End Sub
+
+Public Sub ボタン_祝日を一覧表示()
+    DebugListHolidays
+End Sub
+
+Public Sub ボタン_工期の計算を確認()
+    DebugTermDays
+End Sub
+
+'--- 保守 -------------------------------------------------------------
+Public Sub ボタン_日祝の塗りを全部消す()
+    ClearAllHolidayFill
+End Sub
+
+'=====================================================================
+' 導入チェック
+'
+' マスタシートの不足・古い形式を検出する。
+' うまく動かないときは、まずこれを実行する。
+'
+' モジュールの入れ忘れはここでは検出できない。VBA はプロジェクト全体を
+' コンパイルするため、1つでも欠けていると実行時に
+' 「Sub または Function が定義されていません」で止まる。
+' そのエラーが出たら、「ボタン_マクロを更新」で全部入れ直すこと。
+'=====================================================================
+Public Sub ボタン_導入状態を確認()
+    Dim msg As String, ng As Long
+
+    msg = "■ マスタシート" & vbCrLf
+    msg = msg & CheckSheet(SH_VENDOR, ng)
+    msg = msg & CheckSheet(SH_EXCEPT, ng)
+    msg = msg & CheckSheet(SH_TASK, ng)
+    If SheetExists(SH_SETTING) Or SheetExists(SH_TERM) Then
+        msg = msg & "  ―   " & SH_SETTING & " / " & SH_TERM & " は使いません。" & _
+              "「ボタン_初期セットアップ」で削除されます" & vbCrLf
+    End If
+
+    msg = msg & vbCrLf & "■ シートの形式" & vbCrLf
+    If VendorSheetIsCurrent() Then
+        msg = msg & "  OK  " & SH_VENDOR & " : 現行の色設定" & vbCrLf
+    Else
+        msg = msg & "  NG  " & SH_VENDOR & " : 古い色設定。「ボタン_初期セットアップ」を実行してください" & vbCrLf
+        ng = ng + 1
+    End If
+    If TaskSheetIsCurrent() Then
+        msg = msg & "  OK  " & SH_TASK & " : 1物件1行の横並び" & vbCrLf
+    Else
+        msg = msg & "  NG  " & SH_TASK & " : 古い形式。「ボタン_初期セットアップ」を実行してください" & vbCrLf
+        ng = ng + 1
+    End If
+    If ExceptionSheetIsCurrent() Then
+        msg = msg & "  OK  " & SH_EXCEPT & " : 契約番号・日付・詳細の3列" & vbCrLf
+    Else
+        msg = msg & "  NG  " & SH_EXCEPT & " : 古い形式。「ボタン_初期セットアップ」を実行してください" & vbCrLf
+        ng = ng + 1
+    End If
+
+    msg = msg & vbCrLf & "■ 工程表シート" & vbCrLf
+    If Len(ChartSheetName()) > 0 Then
+        msg = msg & "  OK  " & ChartSheetName() & vbCrLf
+    Else
+        msg = msg & "  NG  未設定。「ボタン_このシートを工程表に設定」を実行してください" & vbCrLf
+        ng = ng + 1
+    End If
+
+    msg = msg & vbCrLf & "■ イベント入力フォーム" & vbCrLf
+    If EventFormExists() Then
+        msg = msg & "  OK  " & EVENT_FORM_NAME & " : 1画面でまとめて入力できます" & vbCrLf
+    Else
+        msg = msg & "  ―   未作成。「イベント入力」シートで入力します" & vbCrLf & _
+              "      どちらも1画面です。フォームにするとシートを使いません" & vbCrLf
+    End If
+
+    msg = msg & vbCrLf & "■ カレンダーの年" & vbCrLf
+    If CalendarBaseYear() > 0 Then
+        msg = msg & "  OK  先頭列を " & CalendarBaseYear() & " 年として扱う" & vbCrLf
+    Else
+        msg = msg & "  ―   シートに入っている年をそのまま使う" & vbCrLf & _
+              "      年がずれているときは「ボタン_カレンダーの年を設定」" & vbCrLf
+    End If
+
+    If ng = 0 Then
+        msg = msg & vbCrLf & "すべて揃っています。"
+    Else
+        msg = msg & vbCrLf & ng & " 件の問題があります。上の NG を解消してください。"
+    End If
+
+    MsgBox msg, IIf(ng = 0, vbInformation, vbExclamation), "導入状態の確認"
+End Sub
+
+Private Function CheckSheet(nm As String, ByRef ng As Long) As String
+    If SheetExists(nm) Then
+        CheckSheet = "  OK  " & nm & vbCrLf
+    Else
+        CheckSheet = "  NG  " & nm & " がありません" & vbCrLf
+        ng = ng + 1
+    End If
+End Function
+
+'=====================================================================
+' レイアウト検証
+'
+' M00_Config の座標定数が、実際のシートと合っているかを確認する。
+' 別バージョンの工程表に入れ替えたときは、まずこれを実行する。
+'=====================================================================
+Public Sub ボタン_レイアウトを検証()
+    Dim ws As Worksheet
+    Dim colMap As Object, blocks As Collection
+    Dim msg As String
+    Dim firstDate As Variant, lastDate As Variant
+    Dim c As Variant, minC As Long, maxC As Long
+    Dim b As Variant, i As Long
+
+    On Error GoTo Fail
+
+    Set ws = ChartSheet()
+    Set colMap = BuildColMap(ws)
+    Set blocks = FindBlocks(ws)
+
+    minC = 999999: maxC = 0
+    For Each c In colMap.Keys
+        If CLng(c) < minC Then minC = CLng(c): firstDate = colMap(c)
+        If CLng(c) > maxC Then maxC = CLng(c): lastDate = colMap(c)
+    Next c
+
+    msg = "■ 対象シート : " & ws.Name & vbCrLf & vbCrLf & _
+          "■ 日付エリア" & vbCrLf & _
+          "  日付の行     : " & ROW_DATE & " 行目" & vbCrLf & _
+          "  日付の列数   : " & colMap.Count & " 列" & vbCrLf & _
+          "  先頭         : " & minC & " 列目 = " & Format$(firstDate, "yyyy/mm/dd") & vbCrLf & _
+          "  末尾         : " & maxC & " 列目 = " & Format$(lastDate, "yyyy/mm/dd") & vbCrLf & _
+          "  年の扱い     : " & IIf(CalendarBaseYear() > 0, _
+                                    CalendarBaseYear() & " 年から振り直し", _
+                                    "シートの値をそのまま使用") & vbCrLf & _
+          "  シートの生値 : " & CStr(ws.Cells(ROW_DATE, minC).Value) & vbCrLf & vbCrLf & _
+          "■ 物件ブロック" & vbCrLf & _
+          "  検出件数     : " & blocks.Count & " 件" & vbCrLf & vbCrLf & _
+          "  先頭5件:" & vbCrLf
+
+    i = 0
+    For Each b In blocks
+        i = i + 1
+        If i > 5 Then Exit For
+        msg = msg & "    " & b(0) & "行目  " & b(1) & "  [" & b(2) & "]  " & b(3) & vbCrLf & _
+              "      基礎業者 " & IIf(Len(Trim$(CStr(b(4)))) > 0, b(4), "（空）") & _
+              " / 躯体業者 " & IIf(Len(Trim$(CStr(b(5)))) > 0, b(5), "（空）") & vbCrLf & _
+              "      本着日 " & IIf(IsDate(b(6)), Format$(b(6), "yyyy/mm/dd"), "（空）") & _
+              " / 納期 " & IIf(IsDate(b(7)), Format$(b(7), "yyyy/mm/dd"), "（空）") & vbCrLf
+    Next b
+
+    msg = msg & vbCrLf & "この内容が実際のシートと合っていれば、座標設定は正しいです。" & vbCrLf & _
+          "業者名や本着日がずれている場合は M00_Config の列番号を直してください。" & vbCrLf & _
+          "年だけ違う場合は「ボタン_カレンダーの年を設定」で直せます。"
+    MsgBox msg, vbInformation, "レイアウト検証"
+    Exit Sub
+
+Fail:
+    MsgBox "レイアウトの検証に失敗しました。" & vbCrLf & vbCrLf & _
+           Err.Description & vbCrLf & vbCrLf & _
+           "M00_Config の定数を実際のシートに合わせてください。", vbCritical
+End Sub
+
+'>>>USERFORM:F_イベント入力
+Option Explicit
+
+'=====================================================================
+' F_イベント入力 : イベントの日付を1画面で入力するフォーム
+'
+' ■ このファイルの使い方
+' このコードは .bas として配れません（ユーザーフォームのため）。
+' 次の手順で1回だけ手で作ってください。2分で終わります。
+'
+'   1. Alt + F11 で VBE を開く
+'   2. メニューの 挿入 → ユーザーフォーム
+'      （何も置かれていない灰色のフォームが出ます。部品は置かなくて構いません）
+'   3. F4 でプロパティを開き、(オブジェクト名) を  F_イベント入力  に変える
+'   4. フォームを右クリック → コードの表示
+'   5. このファイルの中身を全部コピーして貼り付ける
+'      （最初から入っている行があれば消してから貼る）
+'   6. ブックを保存する
+'
+' 入力欄・ボタンはこのコードが実行時に作るので、配置作業は要りません。
+'
+' ■ このフォームは必須ではありません
+' 作らなかった場合は「イベント入力」シートで入力します（こちらも1画面）。
+' M06_Events がフォームの有無を見て自動で切り替えます。
+' シートを使いたくない場合だけ、このフォームを作ってください。
+'
+' ■ 中身
+' 表示するイベント名・初期値・結果の受け渡しは、すべて M06_Events 側の
+' EventForm〇〇 関数を通して行う。フォームはレイアウトだけを持つ。
+'=====================================================================
+
+' 実行時に作るコントロールのうち、クリックを受け取るものだけ WithEvents で持つ
+Private WithEvents mOK As MSForms.CommandButton
+Private WithEvents mCancel As MSForms.CommandButton
+
+Private Const ROW_H     As Single = 22
+Private Const LBL_W     As Single = 104
+Private Const BOX_W     As Single = 116
+Private Const MARGIN    As Single = 10
+
+Private Sub UserForm_Initialize()
+    Dim i As Long, y As Single, n As Long
+    Dim lbl As MSForms.Label
+    Dim box As MSForms.TextBox
+
+    n = EventFormCount()
+
+    Me.Caption = EventFormTitle()
+    y = MARGIN
+
+    ' --- 見出し -----------------------------------------------------
+    Set lbl = Me.Controls.Add("Forms.Label.1", "lblHead", True)
+    lbl.Caption = EventFormHeader()
+    lbl.Left = MARGIN
+    lbl.Top = y
+    lbl.Width = LBL_W + BOX_W + 10
+    lbl.Height = 42
+    y = y + 46
+
+    ' --- イベントごとの入力欄 ---------------------------------------
+    For i = 1 To n
+        Set lbl = Me.Controls.Add("Forms.Label.1", "lbl" & i, True)
+        lbl.Caption = EventFormLabel(i)
+        lbl.Left = MARGIN
+        lbl.Top = y + 3
+        lbl.Width = LBL_W
+        lbl.Height = 16
+
+        Set box = Me.Controls.Add("Forms.TextBox.1", "txt" & i, True)
+        box.Text = EventFormDefault(i)
+        box.Left = MARGIN + LBL_W
+        box.Top = y
+        box.Width = BOX_W
+        box.Height = 18
+        box.TabIndex = i - 1
+
+        y = y + ROW_H
+    Next i
+
+    y = y + 8
+
+    ' --- ボタン -----------------------------------------------------
+    Set mOK = Me.Controls.Add("Forms.CommandButton.1", "cmdOK", True)
+    mOK.Caption = "書き込む"
+    mOK.Left = MARGIN + LBL_W
+    mOK.Top = y
+    mOK.Width = 66
+    mOK.Height = 24
+    mOK.Default = True
+    mOK.TabIndex = n
+
+    Set mCancel = Me.Controls.Add("Forms.CommandButton.1", "cmdCancel", True)
+    mCancel.Caption = "やめる"
+    mCancel.Left = MARGIN + LBL_W + 72
+    mCancel.Top = y
+    mCancel.Width = 54
+    mCancel.Height = 24
+    mCancel.Cancel = True
+    mCancel.TabIndex = n + 1
+
+    ' --- フォームの大きさ -------------------------------------------
+    Me.Width = MARGIN * 2 + LBL_W + BOX_W + 12
+    Me.Height = y + 24 + MARGIN + 24
+
+    EventFormSetOK False
+End Sub
+
+Private Sub mOK_Click()
+    Dim i As Long
+    For i = 1 To EventFormCount()
+        EventFormSetResult i, CStr(Me.Controls("txt" & i).Text)
+    Next i
+    EventFormSetOK True
+    Me.Hide
+End Sub
+
+Private Sub mCancel_Click()
+    EventFormSetOK False
+    Me.Hide
+End Sub
+
+Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
+    ' × で閉じたときは「やめる」と同じ扱いにする
+    If CloseMode = vbFormControlMenu Then EventFormSetOK False
+End Sub

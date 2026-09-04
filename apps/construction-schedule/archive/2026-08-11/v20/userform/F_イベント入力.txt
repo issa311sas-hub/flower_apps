@@ -1,0 +1,124 @@
+Option Explicit
+
+'=====================================================================
+' F_イベント入力 : イベントの日付を1画面で入力するフォーム
+'
+' ■ このファイルの使い方
+' このコードは .bas として配れません（ユーザーフォームのため）。
+' 次の手順で1回だけ手で作ってください。2分で終わります。
+'
+'   1. Alt + F11 で VBE を開く
+'   2. メニューの 挿入 → ユーザーフォーム
+'      （何も置かれていない灰色のフォームが出ます。部品は置かなくて構いません）
+'   3. F4 でプロパティを開き、(オブジェクト名) を  F_イベント入力  に変える
+'   4. フォームを右クリック → コードの表示
+'   5. このファイルの中身を全部コピーして貼り付ける
+'      （最初から入っている行があれば消してから貼る）
+'   6. ブックを保存する
+'
+' 入力欄・ボタンはこのコードが実行時に作るので、配置作業は要りません。
+'
+' ■ このフォームは必須ではありません
+' 作らなかった場合は「イベント入力」シートで入力します（こちらも1画面）。
+' M06_Events がフォームの有無を見て自動で切り替えます。
+' シートを使いたくない場合だけ、このフォームを作ってください。
+'
+' ■ 中身
+' 表示するイベント名・初期値・結果の受け渡しは、すべて M06_Events 側の
+' EventForm〇〇 関数を通して行う。フォームはレイアウトだけを持つ。
+'=====================================================================
+
+' 実行時に作るコントロールのうち、クリックを受け取るものだけ WithEvents で持つ
+Private WithEvents mOK As MSForms.CommandButton
+Private WithEvents mCancel As MSForms.CommandButton
+
+Private Const ROW_H     As Single = 22
+Private Const LBL_W     As Single = 104
+Private Const BOX_W     As Single = 116
+Private Const MARGIN    As Single = 10
+
+Private Sub UserForm_Initialize()
+    Dim i As Long, y As Single, n As Long
+    Dim lbl As MSForms.Label
+    Dim box As MSForms.TextBox
+
+    n = EventFormCount()
+
+    Me.Caption = EventFormTitle()
+    y = MARGIN
+
+    ' --- 見出し -----------------------------------------------------
+    Set lbl = Me.Controls.Add("Forms.Label.1", "lblHead", True)
+    lbl.Caption = EventFormHeader()
+    lbl.Left = MARGIN
+    lbl.Top = y
+    lbl.Width = LBL_W + BOX_W + 10
+    lbl.Height = 42
+    y = y + 46
+
+    ' --- イベントごとの入力欄 ---------------------------------------
+    For i = 1 To n
+        Set lbl = Me.Controls.Add("Forms.Label.1", "lbl" & i, True)
+        lbl.Caption = EventFormLabel(i)
+        lbl.Left = MARGIN
+        lbl.Top = y + 3
+        lbl.Width = LBL_W
+        lbl.Height = 16
+
+        Set box = Me.Controls.Add("Forms.TextBox.1", "txt" & i, True)
+        box.Text = EventFormDefault(i)
+        box.Left = MARGIN + LBL_W
+        box.Top = y
+        box.Width = BOX_W
+        box.Height = 18
+        box.TabIndex = i - 1
+
+        y = y + ROW_H
+    Next i
+
+    y = y + 8
+
+    ' --- ボタン -----------------------------------------------------
+    Set mOK = Me.Controls.Add("Forms.CommandButton.1", "cmdOK", True)
+    mOK.Caption = "書き込む"
+    mOK.Left = MARGIN + LBL_W
+    mOK.Top = y
+    mOK.Width = 66
+    mOK.Height = 24
+    mOK.Default = True
+    mOK.TabIndex = n
+
+    Set mCancel = Me.Controls.Add("Forms.CommandButton.1", "cmdCancel", True)
+    mCancel.Caption = "やめる"
+    mCancel.Left = MARGIN + LBL_W + 72
+    mCancel.Top = y
+    mCancel.Width = 54
+    mCancel.Height = 24
+    mCancel.Cancel = True
+    mCancel.TabIndex = n + 1
+
+    ' --- フォームの大きさ -------------------------------------------
+    Me.Width = MARGIN * 2 + LBL_W + BOX_W + 12
+    Me.Height = y + 24 + MARGIN + 24
+
+    EventFormSetOK False
+End Sub
+
+Private Sub mOK_Click()
+    Dim i As Long
+    For i = 1 To EventFormCount()
+        EventFormSetResult i, CStr(Me.Controls("txt" & i).Text)
+    Next i
+    EventFormSetOK True
+    Me.Hide
+End Sub
+
+Private Sub mCancel_Click()
+    EventFormSetOK False
+    Me.Hide
+End Sub
+
+Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
+    ' × で閉じたときは「やめる」と同じ扱いにする
+    If CloseMode = vbFormControlMenu Then EventFormSetOK False
+End Sub
