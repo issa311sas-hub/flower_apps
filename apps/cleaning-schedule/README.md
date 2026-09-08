@@ -30,17 +30,26 @@
 ## ファイル構成
 
 ```
+migrations/
+  0001_init.sql       ← D1 のスキーマ
+  0002_seed_master.sql←   9ユニット・担当者4名・既定の設定
 src/
   index.js            ← Worker のエントリ（fetch / scheduled）
   core/               ← ★Cloudflare に依存しない純粋ロジック（テスト対象）
     assign.js         ←   割り当てアルゴリズム（Phase 1〜4）
     deadlines.js      ←   清掃期限の計算
     diff.js           ←   前回との差分計算
+    nextGuests.js     ←   「次に泊まる人数」の算出
     dates.js          ←   JST前提の日付ユーティリティ
+  db/                 ← D1 アクセス（1テーブル群につき1ファイル）
+    settings.js staff.js units.js bookings.js
+    availability.js assignments.js runs.js notifications.js
 test/
   parity.test.js      ← ★旧 GAS 版との出力一致テスト（ランダム2000シナリオ）
   legacy/             ←   比較用にコピーした旧ロジック
   core/               ←   業務ルール・日付・純粋性のテスト
+  db/                 ←   データ層のテスト（実スキーマ・実SQLで検証）
+  support/d1-sqlite.js←   node:sqlite の上に D1 互換APIをかぶせたテスト用アダプタ
 wrangler.jsonc        ← Worker 設定（D1 バインディング・cron）
 ```
 
@@ -59,7 +68,7 @@ npm run dev       # ローカルで Worker を起動
 
 - [x] 割り当てエンジンの移植（旧版とのランダム2000シナリオ一致を確認）
 - [x] 清掃期限・差分計算・JST日付ユーティリティ
-- [ ] D1 スキーマとデータ層
+- [x] D1 スキーマとデータ層（実スキーマに対するテスト42件）
 - [ ] Beds24 API 連携・日次処理
 - [ ] 認証とスタッフ画面
 - [ ] 管理画面
