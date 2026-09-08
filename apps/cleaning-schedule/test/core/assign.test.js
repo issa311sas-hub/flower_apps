@@ -51,13 +51,18 @@ function booking(id, unit, checkoutDate, extra = {}) {
 }
 
 describe('清掃期限の計算', () => {
-  // ⚠ 現行（GAS版 v8）の実装をそのまま移植した挙動。
-  //    docs には「清掃期限 = min(次の予約の開始日-1, CO+2)」とあるが、
-  //    実装は「次の予約がない場合はチェックアウト当日が期限」であり、延期できない。
-  //    次の予約がないユニットこそ延期しても支障がないため、
-  //    これは不要な外注を生んでいる可能性がある（decisions.md に記録・要判断）。
-  it('【現行踏襲】次の予約がなければ延期できない（当日が期限）', () => {
+  it('次の予約がなければ チェックアウト+2日 まで延期できる', () => {
     const d = buildCleaningDeadlines([booking('1', 'b2', '2026-09-10')]);
+    expect(d['1'].deadline).toBe('2026-09-12');
+    expect(d['1'].canDefer).toBe(true);
+  });
+
+  // 旧 GAS 版はここが実装漏れで、次の予約がないと1日も延期できなかった。
+  // 移植の忠実性を確認する parity テストのためだけに互換モードを残している。
+  it('【旧版互換モード】次の予約がなければ延期できない', () => {
+    const d = buildCleaningDeadlines([booking('1', 'b2', '2026-09-10')], {
+      allowDeferWithoutNextBooking: false
+    });
     expect(d['1'].deadline).toBe('2026-09-10');
     expect(d['1'].canDefer).toBe(false);
   });

@@ -212,6 +212,12 @@ function randomScenario(rng) {
   return { today, bookings, existing, capacity, staff: NEW_STAFF };
 }
 
+// 新実装は「次の予約がないユニットも +2日 まで延期できる」仕様に直してある
+// （旧版の実装漏れの修正。docs/decisions.md 参照）。
+// 一致テストは移植の忠実性を見るのが目的なので、この1点だけ旧版互換に戻して比較する。
+// ここ以外に意図的な挙動の違いはない。
+const LEGACY_COMPAT = { allowDeferWithoutNextBooking: false };
+
 function runBoth(sc) {
   const legacy = normalizeLegacy(legacyDoMatching(toLegacyInput(sc)));
   const next = normalizeNew(
@@ -220,7 +226,8 @@ function runBoth(sc) {
       bookings: sc.bookings,
       existing: sc.existing,
       staff: sc.staff,
-      capacity: sc.capacity
+      capacity: sc.capacity,
+      params: LEGACY_COMPAT
     })
   );
   return { legacy, next };
@@ -247,6 +254,48 @@ describe('新旧一致（parity）', () => {
     expect(checkedRows).toBeGreaterThan(100000);
   });
 
+  it('修正版は旧版より外注が増えることがない', () => {
+    const rng = makeRng(555);
+
+    for (let i = 0; i < 100; i++) {
+      const sc = randomScenario(rng);
+      const legacyRows = normalizeLegacy(legacyDoMatching(toLegacyInput(sc)));
+      const fixed = assign({
+        today: sc.today,
+        bookings: sc.bookings,
+        existing: sc.existing,
+        staff: sc.staff,
+        capacity: sc.capacity
+      });
+
+      const legacyOutsourced = legacyRows.filter((a) => a.staffName === OUTSOURCE).length;
+      expect(fixed.stats.outsourced, `シナリオ #${i}`).toBeLessThanOrEqual(legacyOutsourced);
+    }
+  });
+
+  it('清掃日がチェックアウト+2日を超えることはない（害虫防止の絶対条件）', () => {
+    const rng = makeRng(777);
+
+    for (let i = 0; i < 200; i++) {
+      const sc = randomScenario(rng);
+      const r = assign({
+        today: sc.today,
+        bookings: sc.bookings,
+        existing: sc.existing,
+        staff: sc.staff,
+        capacity: sc.capacity
+      });
+
+      for (const a of r.assignments) {
+        expect(
+          a.cleaningDate <= addDays(a.checkoutDate, 2),
+          `シナリオ #${i} / 予約 ${a.bookingId}: CO ${a.checkoutDate} に対し清掃日 ${a.cleaningDate}`
+        ).toBe(true);
+        expect(a.cleaningDate >= a.checkoutDate).toBe(true);
+      }
+    }
+  });
+
   it('空データでも一致する', () => {
     const sc = { today: '2026-09-08', bookings: [], existing: [], capacity: {}, staff: NEW_STAFF };
     const { legacy, next } = runBoth(sc);
@@ -262,6 +311,29 @@ describe('新旧一致（parity）', () => {
       const { legacy, next } = runBoth(sc);
       expect(next, `シナリオ #${i}`).toEqual(legacy);
     }
+  });
+
+  it('旧版互換モードを外すと結果が変わる（比較が形骸化していないことの確認）', () => {
+    const rng = makeRng(1234);
+    let differed = 0;
+
+    for (let i = 0; i < 50; i++) {
+      const sc = randomScenario(rng);
+      const legacy = normalizeLegacy(legacyDoMatching(toLegacyInput(sc)));
+      const fixed = normalizeNew(
+        assign({
+          today: sc.today,
+          bookings: sc.bookings,
+          existing: sc.existing,
+          staff: sc.staff,
+          capacity: sc.capacity
+        })
+      );
+      if (JSON.stringify(legacy) !== JSON.stringify(fixed)) differed++;
+    }
+
+    // 修正が効いていれば、旧版と差が出るシナリオが存在するはず
+    expect(differed).toBeGreaterThan(0);
   });
 
   it('出勤可能件数がまったく入力されていない場合も一致する（全件外注/未割当）', () => {

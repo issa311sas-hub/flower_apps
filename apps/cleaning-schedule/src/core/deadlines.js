@@ -6,17 +6,16 @@
  *   清掃期限 = min(同じユニットの次の予約の開始日 - 1日, チェックアウト日 + 2日)
  *
  * 上限の +2日 は害虫防止のため（ゴミを放置しない）。
+ * 次の予約がなければ +2日 まで延期できる。
  *
- * ⚠【現行踏襲の注意点】
- * 上の式のとおりなら「次の予約がない ＝ +2日まで延期できる」はずだが、
- * 旧 GAS 版の実装は次の予約がない場合に**チェックアウト当日を期限**とし、
- * 延期を一切許していない（Code.gs:488, 500-509）。
- * 次の予約がないユニットこそ延期しても運営上支障がないため、これは
- * 不要な外注（Rクリーン）を生んでいる可能性がある。
+ * 【旧 GAS 版からの修正】
+ * 旧版は次の予約が見つからない場合に期限をチェックアウト当日のままにしており、
+ * 1日も延期できなかった（Code.gs:488, 500-509）。上の式の実装漏れであり、
+ * 次の予約がないユニットこそ延期しても支障がないのに外注へ流れていた。
+ * 経営者に確認のうえ修正した（docs/decisions.md 2026-09-08 参照）。
  *
- * 移植では**まず現行と同じ挙動**を既定とし、
- * `allowDeferWithoutNextBooking: true` で本来の式に切り替えられるようにした。
- * 切り替えるかどうかは経営者の判断（docs/decisions.md 参照）。
+ * `allowDeferWithoutNextBooking: false` を渡すと旧版と同じ挙動になる。
+ * これは新旧一致テスト（parity）専用のスイッチで、本番では使わない。
  */
 
 import { addDays } from './dates.js';
@@ -28,7 +27,7 @@ import { addDays } from './dates.js';
  */
 export function buildCleaningDeadlines(bookings, options = {}) {
   const maxDeferDays = options.maxDeferDays ?? 2;
-  const allowDeferWithoutNextBooking = options.allowDeferWithoutNextBooking ?? false;
+  const allowDeferWithoutNextBooking = options.allowDeferWithoutNextBooking ?? true;
 
   const byUnit = new Map();
   for (const b of bookings) {

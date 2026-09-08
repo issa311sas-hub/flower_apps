@@ -34,9 +34,9 @@ export const DEFAULT_PARAMS = {
   maxDeferDays: 2,
   outsourceWindowDays: 14,
   unassignedLabel: '未割当',
-  // 次の予約がないユニットの清掃を延期してよいか。
-  // false = 旧 GAS 版と同じ挙動（延期しない）。詳細は core/deadlines.js の注記を参照。
-  allowDeferWithoutNextBooking: false
+  // 次の予約がないユニットの清掃を +2日 まで延期してよいか（仕様どおりの挙動）。
+  // false にすると旧 GAS 版の実装漏れを再現する。新旧一致テスト専用。
+  allowDeferWithoutNextBooking: true
 };
 
 function statusFor(staffName, { outsourceName, unassignedLabel }) {
