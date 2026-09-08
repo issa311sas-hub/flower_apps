@@ -1,7 +1,22 @@
 # デプロイ手順（開発者向け）
 
-Cloudflare への接続と、以降の更新方法。
+Cloudflare への接続と、以降の更新方法。ターミナルを使う方法をまとめている。
+
+> 🔰 **Cloudflare を初めて触る場合は [setup-cloudflare-beginner.md](setup-cloudflare-beginner.md) を使うこと。**
+> ブラウザだけで完結する手順を画面単位で書いてある（ターミナル・Node.js のインストール不要）。
+> このページはその補助、および仕組みを理解したい人向け。
+
 経営者・スタッフ向けの操作説明は `setup-guide.md`（別途作成）を参照。
+
+## 採用している構成
+
+| | |
+|---|---|
+| デプロイ方法 | **Cloudflare Workers Builds（Git 連携）**。`main` への push で自動ビルド・デプロイ |
+| Root directory | `apps/cleaning-schedule` |
+| Build command | `npm test`（テストが落ちたらデプロイされない） |
+| Deploy command | `npx wrangler deploy` |
+| GitHub Actions | テスト専用。デプロイはしない（二重デプロイを避けるため） |
 
 ---
 
@@ -42,9 +57,13 @@ Beds24 はトークンを取得するたびにリフレッシュトークンを*
 
 ---
 
-## 初回セットアップ
+## 初回セットアップ（ターミナルを使う場合）
 
-所要 30〜45分。**アカウントは経営者のメールアドレスで作る**（資産を経営者のものにするため）。
+ブラウザだけで済ませるなら [setup-cloudflare-beginner.md](setup-cloudflare-beginner.md) を見ること。
+以下は wrangler CLI を使う場合の手順。所要 30〜45分。
+
+> **アカウント名義**: 今回は開発者のアカウントで作成した。将来経営者に引き継ぐ場合は
+> Manage Account → Members → Invite で経営者を Administrator として追加しておくと移行が容易。
 
 ### 1. Cloudflare アカウント
 
@@ -117,21 +136,23 @@ cron が2件（`0 21 * * *` と `0 9 * * *`）登録されていることを確�
 
 ## 以降の更新
 
-### GitHub Actions（推奨。ターミナル不要）
+### 通常（何もしなくてよい）
 
-`.github/workflows/deploy.yml` を用意してある。
-リポジトリの Settings → Secrets and variables → Actions に以下を登録すれば、
-`apps/cleaning-schedule/**` への push で自動デプロイされる。
+`main` に push すると **Cloudflare Workers Builds** が自動でテスト → デプロイする。
+API トークンや GitHub Secrets の設定は不要。ダッシュボードの **Builds** タブで履歴とログが見られる。
 
-| Secret 名 | 取得方法 |
-|---|---|
-| `CLOUDFLARE_API_TOKEN` | Cloudflare ダッシュボード → My Profile → API Tokens → Create Token<br>権限は **Workers Scripts:Edit** と **D1:Edit** の2つだけ付ける |
-| `CLOUDFLARE_ACCOUNT_ID` | ダッシュボードの Workers ページ右側に表示されている ID |
+`.github/workflows/deploy.yml` はテスト専用にしてある（デプロイはしない）。
+GitHub 上でテスト結果を見たいだけなので、Cloudflare 側と二重にデプロイしない構成。
 
-**マイグレーションは自動実行しない**（`workflow_dispatch` の手動実行にしてある）。
-スキーマ変更が push のついでに本番へ当たる事故を防ぐため。
+### スキーマ変更（マイグレーション）だけは手動
 
-### 手動
+**自動適用はしない。** push のついでに本番のスキーマが変わる事故を防ぐため。
+新しいマイグレーションを追加したら、次のどちらかで適用する。
+
+- ブラウザ: D1 の Console に該当 SQL を貼って実行
+- ターミナル: `npx wrangler d1 migrations apply cleaning-schedule --remote`
+
+### ターミナルから手動でデプロイしたい場合
 
 ```bash
 cd apps/cleaning-schedule

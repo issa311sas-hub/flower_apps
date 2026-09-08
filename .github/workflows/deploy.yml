@@ -1,21 +1,17 @@
-name: Deploy cleaning-schedule
+name: Test cleaning-schedule
 
-# apps/cleaning-schedule/ を更新したら、テストを通してから Cloudflare にデプロイする。
-# 必要な Secrets: CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID
-#   API トークンの権限は Workers Scripts:Edit と D1:Edit のみで足りる。
+# デプロイは Cloudflare 側の Git 連携（Workers Builds）が行う。
+# ここではテストだけを走らせ、GitHub 上で結果が見えるようにする。
+#
+# Cloudflare 側にも Build command として `npm test` を設定しているため、
+# テストが落ちた変更は本番にデプロイされない。
 
 on:
   push:
-    branches: [main]
     paths: ['apps/cleaning-schedule/**', '.github/workflows/deploy.yml']
   pull_request:
     paths: ['apps/cleaning-schedule/**']
   workflow_dispatch:
-    inputs:
-      apply_migrations:
-        description: 'D1 のマイグレーションも適用する（スキーマ変更時のみ）'
-        type: boolean
-        default: false
 
 defaults:
   run:
@@ -28,37 +24,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
+          # データ層のテストが node:sqlite を使うため 22 以上が必要
           node-version: 22
           cache: npm
           cache-dependency-path: apps/cleaning-schedule/package-lock.json
       - run: npm ci
-      # 割り当てエンジンの新旧一致テストを含む。ここが落ちたらデプロイしない。
+      # 旧 GAS 版との新旧一致テストを含む
       - run: npm test
-
-  deploy:
-    needs: test
-    # PR ではデプロイしない
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: apps/cleaning-schedule/package-lock.json
-      - run: npm ci
-
-      # スキーマ変更は push のついでに当たらないよう、手動実行のときだけ適用する
-      - name: マイグレーションを適用
-        if: github.event_name == 'workflow_dispatch' && inputs.apply_migrations
-        run: npx wrangler d1 migrations apply cleaning-schedule --remote
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-      - name: デプロイ
-        run: npx wrangler deploy
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

@@ -1,0 +1,225 @@
+/* 清掃予定管理システム
+ *
+ * 利用者はスタッフ3名と経営者のみ。端末は古いスマホを含む。
+ * CSSフレームワークは使わず、必要なものだけ手で書く。
+ *
+ * 守っていること:
+ *   - タップできるものは高さ48px以上（指で押せる大きさ）
+ *   - 入力欄は font-size:16px 以上（iOSが勝手に拡大するのを防ぐ）
+ *   - 端末のダークモード設定に追従する
+ *   - 文字と背景のコントラストを十分に取る（屋外でも読める）
+ */
+
+:root {
+  --bg: #ffffff;
+  --surface: #f6f7f9;
+  --border: #d8dce3;
+  --text: #1a1d21;
+  --text-muted: #5c6570;
+  --accent: #1f6feb;
+  --accent-text: #ffffff;
+  --danger: #c92a2a;
+  --warn-bg: #fff4e6;
+  --warn-border: #ffa94d;
+  --ok: #2b8a3e;
+
+  --staff-1: #e8f0fa;
+  --staff-2: #faf0e8;
+  --staff-3: #e8fae8;
+  --outsource: #f0e8fa;
+  --unassigned: #fbeae6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181c;
+    --surface: #1f2329;
+    --border: #343a42;
+    --text: #e8eaed;
+    --text-muted: #9aa4b0;
+    --accent: #4c8ef7;
+    --danger: #ff6b6b;
+    --warn-bg: #3a2a15;
+    --warn-border: #b26b1f;
+    --ok: #51cf66;
+
+    --staff-1: #23303f;
+    --staff-2: #3a2f24;
+    --staff-3: #22352a;
+    --outsource: #2f2740;
+    --unassigned: #3d2523;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Kaku Gothic ProN',
+               'Yu Gothic', Meiryo, sans-serif;
+  font-size: 16px;
+  line-height: 1.7;
+  -webkit-text-size-adjust: 100%;
+}
+
+.wrap {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+header.bar {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+header.bar h1 {
+  font-size: 17px;
+  margin: 0;
+}
+
+h2 { font-size: 19px; margin: 24px 0 8px; }
+p  { margin: 8px 0; }
+
+.muted { color: var(--text-muted); }
+.small { font-size: 14px; }
+
+/* --- カード（1件の清掃予定） --- */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  margin: 10px 0;
+}
+
+.card .unit {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.card .note {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+/* --- 日付の見出し --- */
+.day {
+  margin: 22px 0 6px;
+  font-weight: 700;
+  border-bottom: 2px solid var(--border);
+  padding-bottom: 4px;
+}
+.day .sat { color: #1c7ed6; }
+.day .sun { color: var(--danger); }
+
+/* --- ボタン・入力 --- */
+button, .btn {
+  min-height: 48px;
+  padding: 12px 18px;
+  font-size: 16px;
+  font-family: inherit;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+
+button.primary, .btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 700;
+}
+
+button:disabled { opacity: 0.5; cursor: default; }
+
+input, select {
+  min-height: 48px;
+  padding: 10px 12px;
+  font-size: 16px;   /* これ未満だと iOS が自動でズームする */
+  font-family: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: 100%;
+}
+
+label { display: block; margin: 14px 0 4px; font-weight: 700; }
+
+/* --- 件数の選択（0〜9をタップで選ぶ） --- */
+.pills { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.pills input[type="radio"] { position: absolute; opacity: 0; width: 0; height: 0; }
+
+.pills label {
+  margin: 0;
+  min-width: 48px;
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pills input[type="radio"]:checked + label {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+/* --- 警告・状態表示 --- */
+.banner {
+  border: 1px solid var(--warn-border);
+  background: var(--warn-bg);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 12px 0;
+}
+.banner.error { border-color: var(--danger); }
+
+.badge {
+  display: inline-block;
+  font-size: 13px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+.badge.today { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.badge.done  { color: var(--ok); border-color: var(--ok); }
+
+/* --- 表（管理画面・タイムライン） --- */
+.scroll-x { overflow-x: auto; }
+
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { border: 1px solid var(--border); padding: 6px 8px; text-align: left; white-space: nowrap; }
+th { background: var(--surface); }
+
+tr.staff-1 td { background: var(--staff-1); }
+tr.staff-2 td { background: var(--staff-2); }
+tr.staff-3 td { background: var(--staff-3); }
+tr.outsource td { background: var(--outsource); }
+tr.unassigned td { background: var(--unassigned); }
+
+/* タイムラインは横に長いので、左端のユニット列を固定する */
+.timeline th.unit-col,
+.timeline td.unit-col {
+  position: sticky;
+  left: 0;
+  background: var(--surface);
+  z-index: 1;
+}
