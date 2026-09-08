@@ -4,5 +4,6 @@
 
 | app-name | 内容 | 状況 |
 |---|---|---|
-| `schedule-auto-assign` | 予定自動割り当てアプリ | 実装完了・テスト待ち |
+| `cleaning-schedule` | 民泊清掃予定の自動割り当て Web アプリ（Cloudflare） | 実装中（割り当てエンジン完了） |
+| `schedule-auto-assign` | 民泊清掃予定の自動割り当て（GAS版） | 旧版。`cleaning-schedule` へ移行中のため凍結 |
 | `construction-schedule` | ホームメーカー工程表の自動化マクロ | Phase 1 実装完了・テスト待ち |

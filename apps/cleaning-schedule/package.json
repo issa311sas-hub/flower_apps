@@ -1,0 +1,19 @@
+{
+  "name": "cleaning-schedule",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "民泊清掃予定の自動割り当て Web アプリ（Cloudflare Workers + D1）",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:local": "wrangler d1 migrations apply cleaning-schedule --local",
+    "db:remote": "wrangler d1 migrations apply cleaning-schedule --remote"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.9",
+    "wrangler": "^3.114.14"
+  }
+}

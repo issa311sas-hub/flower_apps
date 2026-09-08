@@ -1,0 +1,26 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cleaning-schedule",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-01",
+
+  // 静的ファイル（CSS・アイコン等）。Pages と同等の配信で、リクエスト数は課金対象外。
+  "assets": { "directory": "./public", "binding": "ASSETS" },
+
+  // D1 は `npx wrangler d1 create cleaning-schedule` で作り、出力された ID をここに書く
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "cleaning-schedule",
+      "database_id": "<wrangler d1 create の出力を貼る>",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // ★cron は UTC で指定する。日本時間ではない。
+  //   "0 21 * * *" = 翌日 06:00 JST … Beds24取得 → 割り当て → 通知
+  //   "0 9  * * *" = 当日 18:00 JST … トークン更新・稼働監視・セッション掃除
+  "triggers": { "crons": ["0 21 * * *", "0 9 * * *"] },
+
+  "observability": { "enabled": true }
+}
