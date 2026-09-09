@@ -7,12 +7,13 @@
   // 静的ファイル（CSS・アイコン等）。Pages と同等の配信で、リクエスト数は課金対象外。
   "assets": { "directory": "./public", "binding": "ASSETS" },
 
-  // D1 は `npx wrangler d1 create cleaning-schedule` で作り、出力された ID をここに書く
+  // D1（Cloudflare ダッシュボードで作成したもの）。
+  // database_id は D1 の画面に表示される値。秘密情報ではない（アクセスには別途アカウント認証が要る）。
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "cleaning-schedule",
-      "database_id": "<wrangler d1 create の出力を貼る>",
+      "database_id": "ee9bed69-e8f2-44ec-8f90-04f2c402bbe0",
       "migrations_dir": "migrations"
     }
   ],
