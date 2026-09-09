@@ -513,7 +513,7 @@ function renderKeys(env) {
 async function checkHealth(env) {
   const health = {
     ok: true,
-    stage: 'm9',
+    stage: 'm10',
     d1: { connected: false }
   };
 

@@ -453,3 +453,81 @@ label.checkbox input[type="checkbox"] {
 .availability td.minus { color: var(--danger); font-weight: 700; }
 
 .availability tr.past { opacity: 0.45; }
+
+/* --- 出勤入力: カレンダー --- */
+.views { margin: 4px 0 12px; }
+
+.calendar {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  margin: 12px 0;
+}
+
+.cal-head {
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 4px 0;
+  color: var(--text-muted);
+}
+.cal-head.sat { color: #1c7ed6; }
+.cal-head.sun { color: var(--danger); }
+
+.cal-blank { min-height: 56px; }
+
+.cal-cell {
+  position: relative;
+  min-height: 56px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.cal-cell .cal-day {
+  position: absolute;
+  top: 2px;
+  left: 5px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.cal-cell.sat .cal-day { color: #1c7ed6; }
+.cal-cell.sun .cal-day { color: var(--danger); }
+
+.cal-cell .cal-value {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* マスの中のラジオは見せない。押すのはピッカーのボタン */
+.cal-radios input[type="radio"] { position: absolute; opacity: 0; width: 0; height: 0; }
+
+/* 未入力の未来日。入力漏れがそのまま外注費になるので目立たせる */
+.cal-cell.unset { background: var(--unassigned); }
+.cal-cell.past { opacity: 0.4; cursor: default; }
+.cal-cell.today { border-color: var(--accent); border-width: 2px; }
+.cal-cell.open { outline: 3px solid var(--accent); outline-offset: -3px; }
+
+.cal-picker {
+  border: 2px solid var(--accent);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 10px 12px;
+  margin: 12px 0;
+}
+
+.cal-picker .cal-picker-date { margin: 0 0 8px; font-weight: 700; }
+
+.cal-picker .pick {
+  min-width: 48px;
+  min-height: 48px;
+  border-radius: 999px;
+  font-weight: 700;
+}

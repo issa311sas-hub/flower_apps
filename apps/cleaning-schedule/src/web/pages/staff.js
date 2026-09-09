@@ -12,7 +12,7 @@ import { html, page, htmlResponse, redirect, raw, escapeHtml } from '../html.js'
 import { requireUser, checkOrigin, readForm } from '../auth.js';
 import { jstToday, addDays, dayNameOf, dowOf, toDisplayDate, monthDays, shiftMonth, monthLabel } from '../../core/dates.js';
 import { listAssignments, markCompleted, clearCompleted, getAssignment } from '../../db/assignments.js';
-import { listForStaff, setCapacityBulk } from '../../db/availability.js';
+import { listForStaff, setCapacityBulk, clearCapacity } from '../../db/availability.js';
 import { getStaffById } from '../../db/staff.js';
 import { setPassword } from '../../db/users.js';
 import { getSetting } from '../../db/settings.js';
@@ -139,13 +139,21 @@ export async function completeAssignment(request, env, params, options = {}) {
 // ------------------------------------------------------------------
 const CAPACITY_CHOICES = [0, 1, 2, 3, 4, 5];
 
+/** 「未入力に戻す」を表す値。0件（出勤できない）とは意味が違う */
+const CLEAR_VALUE = -1;
+
+const DOW_HEADS = ['日', '月', '火', '水', '木', '金', '土'];
+
 export async function showAvailability(request, env, options = {}) {
   const auth = await requireStaff(request, env, options);
   if (auth.response) return auth.response;
 
+  const url = new URL(request.url);
   const today = jstToday(options.now);
-  const month = new URL(request.url).searchParams.get('month') ?? today.slice(0, 7);
-  const saved = new URL(request.url).searchParams.get('saved') === '1';
+  const month = url.searchParams.get('month') ?? today.slice(0, 7);
+  const saved = url.searchParams.get('saved') === '1';
+  // 既定はカレンダー。一覧入力は ?view=list で開ける
+  const view = url.searchParams.get('view') === 'list' ? 'list' : 'calendar';
 
   const days = monthDays(month);
   const current = await listForStaff(env.DB, auth.staff.id, {
@@ -154,29 +162,7 @@ export async function showAvailability(request, env, options = {}) {
   });
 
   const missing = days.filter((d) => d >= today && current[d] === undefined).length;
-
-  const rows = days
-    .map((date) => {
-      const dow = dowOf(date);
-      const dowClass = dow === 0 ? 'sun' : dow === 6 ? 'sat' : '';
-      const value = current[date];
-      const isPast = date < today;
-
-      const pills = CAPACITY_CHOICES.map((n) => {
-        const id = `d${date}-${n}`;
-        return `<input type="radio" id="${id}" name="cap_${date}" value="${n}"${value === n ? ' checked' : ''}${isPast ? ' disabled' : ''}>
-                <label for="${id}">${n}</label>`;
-      }).join('');
-
-      return `<div class="avail-row${isPast ? ' past' : ''}${value === undefined && !isPast ? ' unset' : ''}">
-                <div class="avail-date ${dowClass}">${Number(date.slice(8, 10))}<span class="small">(${dayNameOf(date)})</span></div>
-                <div class="pills">${pills}</div>
-              </div>`;
-    })
-    .join('');
-
-  const prev = shiftMonth(month, -1);
-  const next = shiftMonth(month, 1);
+  const ctx = { days, current, today, month };
 
   return htmlResponse(
     page({
@@ -185,6 +171,15 @@ export async function showAvailability(request, env, options = {}) {
       body: html`
         <h2>${monthLabel(month)}の出勤</h2>
         ${raw(saved ? '<div class="banner ok">保存しました。</div>' : '')}
+
+        <p class="views small">
+          ${raw(
+            view === 'calendar'
+              ? `<strong>カレンダー</strong> / <a href="/me/availability?month=${month}&view=list">一覧入力</a>`
+              : `<a href="/me/availability?month=${month}">カレンダー</a> / <strong>一覧入力</strong>`
+          )}
+        </p>
+
         <div class="banner">
           <strong>入力がない日は「出勤できない（0件）」として扱われます。</strong>
           <p class="small">その日に清掃できる件数を選んでください。
@@ -197,6 +192,7 @@ export async function showAvailability(request, env, options = {}) {
 
         <form method="post" action="/me/availability">
           <input type="hidden" name="month" value="${month}">
+          <input type="hidden" name="view" value="${view}">
 
           <div class="presets small">
             まとめて入力:
@@ -204,19 +200,124 @@ export async function showAvailability(request, env, options = {}) {
             <button type="button" class="bulk" data-days="all" data-value="0">すべて0件</button>
           </div>
 
-          <div class="avail-list">${raw(rows)}</div>
+          ${raw(view === 'calendar' ? calendarView(ctx) : listView(ctx))}
 
           <p class="sticky-save"><button type="submit" class="primary">この月をまとめて保存</button></p>
         </form>
 
         <p class="small">
-          <a href="/me/availability?month=${prev}">← ${monthLabel(prev)}</a>
+          <a href="/me/availability?month=${shiftMonth(month, -1)}${view === 'list' ? '&view=list' : ''}">← ${monthLabel(shiftMonth(month, -1))}</a>
           &nbsp;/&nbsp;
-          <a href="/me/availability?month=${next}">${monthLabel(next)} →</a>
+          <a href="/me/availability?month=${shiftMonth(month, 1)}${view === 'list' ? '&view=list' : ''}">${monthLabel(shiftMonth(month, 1))} →</a>
         </p>
       `
     })
   );
+}
+
+/**
+ * 1日分のラジオボタン。
+ *
+ * カレンダーでも一覧でも**まったく同じ入力欄**を使う。
+ * 送信されるのは `cap_YYYY-MM-DD` だけなので、保存処理は1つで済む。
+ */
+function radiosFor(date, value, isPast, { hidden = false } = {}) {
+  const choices = hidden ? [...CAPACITY_CHOICES, CLEAR_VALUE] : CAPACITY_CHOICES;
+
+  return choices
+    .map((n) => {
+      const id = `d${date}-${n}`;
+      const label = n === CLEAR_VALUE ? '消す' : String(n);
+      return `<input type="radio" id="${id}" name="cap_${date}" value="${n}"${
+        value === n ? ' checked' : ''
+      }${isPast ? ' disabled' : ''}>${hidden ? '' : `<label for="${id}">${label}</label>`}`;
+    })
+    .join('');
+}
+
+function dayClass(date, value, today) {
+  const dow = dowOf(date);
+  return {
+    dowClass: dow === 0 ? 'sun' : dow === 6 ? 'sat' : '',
+    isPast: date < today,
+    isUnset: value === undefined && date >= today
+  };
+}
+
+/**
+ * カレンダー入力（既定）。
+ *
+ * マスを押すと、下のピッカーで件数を選ぶ。ピッカーはマスの中の
+ * ラジオボタンを選ぶだけなので、保存の仕組みは一覧入力と同一。
+ * ピッカーの操作には JavaScript が要るため、動かない端末向けに
+ * 一覧入力への案内を出す（一覧入力は JS なしで完全に動く）。
+ */
+function calendarView({ days, current, today }) {
+  const heads = DOW_HEADS.map(
+    (name, i) => `<div class="cal-head ${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${name}</div>`
+  ).join('');
+
+  // 月初の曜日まで空セルで埋める（1日が水曜なら先頭に3つ）
+  const blanks = '<div class="cal-blank"></div>'.repeat(dowOf(days[0]));
+
+  const cells = days
+    .map((date) => {
+      const value = current[date];
+      const { dowClass, isPast, isUnset } = dayClass(date, value, today);
+      const classes = ['cal-cell', dowClass, isPast ? 'past' : '', isUnset ? 'unset' : '', date === today ? 'today' : '']
+        .filter(Boolean)
+        .join(' ');
+
+      return `<div class="${classes}" data-day="${date}"${isPast ? ' data-past="1"' : ''}${
+        dowClass ? ' data-weekend="1"' : ''
+      }>
+          <span class="cal-day">${Number(date.slice(8, 10))}</span>
+          <span class="cal-value">${value === undefined ? '' : value}</span>
+          <span class="cal-radios">${radiosFor(date, value, isPast, { hidden: true })}</span>
+        </div>`;
+    })
+    .join('');
+
+  return `<noscript>
+      <div class="banner error">
+        <strong>この端末ではカレンダーから入力できません。</strong>
+        <p class="small">「一覧入力」に切り替えてください。同じ内容を入力できます。</p>
+      </div>
+    </noscript>
+
+    <div class="calendar">${heads}${blanks}${cells}</div>
+
+    <div class="cal-picker" id="cal-picker" hidden>
+      <p class="cal-picker-date small"></p>
+      <div class="pills">
+        ${[...CAPACITY_CHOICES, CLEAR_VALUE]
+          .map(
+            (n) =>
+              `<button type="button" class="pick" data-value="${n}">${n === CLEAR_VALUE ? '消す' : n}</button>`
+          )
+          .join('')}
+      </div>
+    </div>
+
+    <p class="small muted">マスを押すと件数を選べます。「消す」で未入力に戻せます。</p>`;
+}
+
+/** 一覧入力（1日1行）。JavaScript が無くても動く */
+function listView({ days, current, today }) {
+  const rows = days
+    .map((date) => {
+      const value = current[date];
+      const { dowClass, isPast, isUnset } = dayClass(date, value, today);
+
+      return `<div class="avail-row${isPast ? ' past' : ''}${isUnset ? ' unset' : ''}"
+                   data-day="${date}"${isPast ? ' data-past="1"' : ''}${dowClass ? ' data-weekend="1"' : ''}>
+                <div class="avail-date ${dowClass}">${Number(date.slice(8, 10))}<span class="small">(${dayNameOf(date)})</span></div>
+                <div class="pills">${radiosFor(date, value, isPast)}</div>
+              </div>`;
+    })
+    .join('');
+
+  return `<div class="avail-list">${rows}</div>`;
 }
 
 export async function saveAvailability(request, env, options = {}) {
@@ -229,6 +330,8 @@ export async function saveAvailability(request, env, options = {}) {
   const today = jstToday(options.now);
 
   const entries = [];
+  const clears = [];
+
   for (const [key, value] of Object.entries(form)) {
     if (!key.startsWith('cap_')) continue;
     const date = key.slice(4);
@@ -237,13 +340,21 @@ export async function saveAvailability(request, env, options = {}) {
     if (date < today) continue;
 
     const capacity = Number(Array.isArray(value) ? value[0] : value);
+
+    // 「消す」＝未入力に戻す。0件（出勤できない）とは意味が違うので別扱いにする
+    if (capacity === CLEAR_VALUE) {
+      clears.push(date);
+      continue;
+    }
     if (!Number.isInteger(capacity) || capacity < 0 || capacity > 9) continue;
     entries.push({ date, capacity });
   }
 
   await setCapacityBulk(env.DB, auth.staff.id, entries, { updatedBy: auth.user.id });
+  for (const date of clears) await clearCapacity(env.DB, auth.staff.id, date);
 
-  return redirect(`/me/availability?month=${month}&saved=1`);
+  const view = String(form.view ?? '') === 'list' ? '&view=list' : '';
+  return redirect(`/me/availability?month=${month}&saved=1${view}`);
 }
 
 // ------------------------------------------------------------------
