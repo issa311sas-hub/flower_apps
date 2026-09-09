@@ -19,3 +19,7 @@ CREATE INDEX idx_avail_date ON availability(date);
 CREATE INDEX idx_runs_started ON runs(started_at DESC);
 
 CREATE INDEX idx_notif_kind ON notifications(kind, created_at DESC);
+
+CREATE INDEX idx_reports_staff_date ON completion_reports(staff_id, cleaning_date);
+
+CREATE INDEX idx_reports_date ON completion_reports(cleaning_date);

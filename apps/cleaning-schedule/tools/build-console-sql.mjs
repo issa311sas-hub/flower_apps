@@ -12,7 +12,7 @@
  *   node tools/build-console-sql.mjs --check  … 最新かどうかを確認する（テスト用）
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -53,8 +53,14 @@ const FILES = [
 ];
 
 export function buildConsoleSql() {
+  // migrations/*.sql を全部読む。対象を書き並べると、
+  // マイグレーションを足したときに黙って古くなる
+  const files = readdirSync(MIGRATIONS)
+    .filter((f) => f.endsWith('.sql'))
+    .sort();
+
   const statements = [];
-  for (const file of ['0001_init.sql', '0002_seed_master.sql']) {
+  for (const file of files) {
     statements.push(...splitStatements(readFileSync(join(MIGRATIONS, file), 'utf8')));
   }
 

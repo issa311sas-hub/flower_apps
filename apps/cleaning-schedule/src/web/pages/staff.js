@@ -11,7 +11,8 @@
 import { html, page, htmlResponse, redirect, raw, escapeHtml } from '../html.js';
 import { requireUser, checkOrigin, readForm } from '../auth.js';
 import { jstToday, addDays, dayNameOf, dowOf, toDisplayDate, monthDays, shiftMonth, monthLabel } from '../../core/dates.js';
-import { listAssignments, markCompleted, clearCompleted, getAssignment } from '../../db/assignments.js';
+import { listAssignments, getAssignment } from '../../db/assignments.js';
+import { sumSettlementsFor } from '../../db/reports.js';
 import { listForStaff, setCapacityBulk, clearCapacity } from '../../db/availability.js';
 import { getStaffById } from '../../db/staff.js';
 import { setPassword } from '../../db/users.js';
@@ -52,8 +53,16 @@ export async function showMySchedule(request, env, options = {}) {
 
   const today = jstToday(options.now);
   const to = addDays(today, SCHEDULE_DAYS);
+  const reported = new URL(request.url).searchParams.get('reported') === '1';
 
   const rows = await listAssignments(env.DB, { from: today, to, staffName: auth.staff.name });
+
+  // 給与から差し引かれる額なので、本人も確認できるようにする
+  const month = today.slice(0, 7);
+  const settlement = await sumSettlementsFor(env.DB, auth.staff.id, {
+    from: `${month}-01`,
+    to: `${month}-31`
+  });
 
   const byDate = new Map();
   for (const row of rows) {
@@ -82,13 +91,12 @@ export async function showMySchedule(request, env, options = {}) {
           ${
             a.completedAt
               ? `<p><span class="badge done">完了</span>
-                 <form method="post" action="/me/complete/${encodeURIComponent(a.bookingId)}" class="inline">
-                   <input type="hidden" name="undo" value="1">
+                 <a class="link small" href="/me/report/${encodeURIComponent(a.bookingId)}">報告を直す</a>
+                 <form method="post" action="/me/report/${encodeURIComponent(a.bookingId)}/undo" class="inline"
+                       data-confirm="完了報告を取り消します。入力した現地精算金額も消えます。よろしいですか？">
                    <button type="submit" class="link small">取り消す</button>
                  </form></p>`
-              : `<form method="post" action="/me/complete/${encodeURIComponent(a.bookingId)}">
-                   <button type="submit">清掃おわりました</button>
-                 </form>`
+              : `<p><a class="btn primary" href="/me/report/${encodeURIComponent(a.bookingId)}">清掃おわりました</a></p>`
           }
         </div>`
       )
@@ -103,6 +111,15 @@ export async function showMySchedule(request, env, options = {}) {
       user: auth.user,
       body: html`
         <h2>${auth.staff.name}の予定</h2>
+        ${raw(reported ? '<div class="banner ok">報告しました。おつかれさまでした。</div>' : '')}
+        ${raw(
+          settlement.total > 0
+            ? `<div class="banner">
+                 <strong>今月の現地精算 ${settlement.total.toLocaleString()}円</strong>
+                 <p class="small">お客さんから受け取った分の合計です。あとで給与から差し引かれます。</p>
+               </div>`
+            : ''
+        )}
         <p class="small muted">
           ${todayCount > 0 ? `今日は ${todayCount}件です。` : '今日の予定はありません。'}
           （${toDisplayDate(today)} から ${SCHEDULE_DAYS}日分）
@@ -111,27 +128,6 @@ export async function showMySchedule(request, env, options = {}) {
       `
     })
   );
-}
-
-/** 完了報告。自分の担当以外は変更できない */
-export async function completeAssignment(request, env, params, options = {}) {
-  const auth = await requireStaff(request, env, options);
-  if (auth.response) return auth.response;
-  if (!checkOrigin(request)) return new Response('送信元を確認できませんでした。', { status: 403 });
-
-  const assignment = await getAssignment(env.DB, params.bookingId);
-  if (!assignment || assignment.staffName !== auth.staff.name) {
-    return new Response('対象が見つかりません。', { status: 404 });
-  }
-
-  const form = await readForm(request);
-  if (form.undo) {
-    await clearCompleted(env.DB, params.bookingId);
-  } else {
-    await markCompleted(env.DB, params.bookingId, { userId: auth.user.id });
-  }
-
-  return redirect('/me');
 }
 
 // ------------------------------------------------------------------

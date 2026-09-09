@@ -143,6 +143,23 @@ describe('出勤入力', () => {
   });
 });
 
+/** 報告フォームの最小の入力（項目は 0003 の初期値） */
+function reportBody(extra = {}) {
+  return {
+    condition: 'B',
+    equipment_FireStick: 'ok',
+    equipment_電気: 'ok',
+    equipment_エアコン: 'ok',
+    equipment_キッチンガス: 'ok',
+    'equipment_お風呂のお湯': 'ok',
+    equipment_iPad: 'ok',
+    'service_バーベキュー': 'none',
+    'service_海遊び': 'none',
+    settlement: '0',
+    ...extra
+  };
+}
+
 describe('自分の予定', () => {
   async function seedAssignment(staffName, { bookingId = '1', unit = 'b4', date = '2099-01-10' } = {}) {
     await applyFetchedBookings(
@@ -192,11 +209,23 @@ describe('自分の予定', () => {
     expect(body).not.toContain('s1');
   });
 
-  it('完了報告を記録できる', async () => {
+  it('自分の担当なら報告フォームを開ける', async () => {
+    const { cookie } = await loginAs('hosoda', '細田さん');
+    await seedAssignment('細田さん');
+
+    const form = await worker.fetch(get('/me/report/1', cookie), env);
+    expect(form.status).toBe(200);
+
+    const body = await form.text();
+    expect(body).toContain('完了報告');
+    expect(body).toContain('現地精算金額');
+  });
+
+  it('報告すると完了になる', async () => {
     const { cookie, userId } = await loginAs('hosoda', '細田さん');
     await seedAssignment('細田さん');
 
-    const res = await worker.fetch(post('/me/complete/1', {}, cookie), env);
+    const res = await worker.fetch(post('/me/report/1', reportBody(), cookie), env);
     expect(res.status).toBe(303);
 
     const rows = await listAssignments(env.DB);
@@ -208,23 +237,23 @@ describe('自分の予定', () => {
     expect(completedBy).toBe(userId);
   });
 
-  it('完了報告を取り消せる', async () => {
+  it('報告を取り消せる', async () => {
     const { cookie } = await loginAs('hosoda', '細田さん');
     await seedAssignment('細田さん');
 
-    await worker.fetch(post('/me/complete/1', {}, cookie), env);
-    await worker.fetch(post('/me/complete/1', { undo: '1' }, cookie), env);
+    await worker.fetch(post('/me/report/1', reportBody(), cookie), env);
+    await worker.fetch(post('/me/report/1/undo', {}, cookie), env);
 
     const rows = await listAssignments(env.DB);
     expect(rows[0].completedAt).toBeNull();
   });
 
-  it('他人の担当は完了報告できない', async () => {
+  it('他人の担当は報告できない', async () => {
     const { cookie } = await loginAs('hosoda', '細田さん');
     await seedAssignment('普久原さん', { bookingId: '9' });
 
-    const res = await worker.fetch(post('/me/complete/9', {}, cookie), env);
-    expect(res.status).toBe(404);
+    expect((await worker.fetch(get('/me/report/9', cookie), env)).status).toBe(404);
+    expect((await worker.fetch(post('/me/report/9', reportBody(), cookie), env)).status).toBe(404);
 
     const rows = await listAssignments(env.DB);
     expect(rows[0].completedAt).toBeNull();

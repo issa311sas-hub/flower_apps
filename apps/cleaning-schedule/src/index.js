@@ -12,7 +12,7 @@ import { getCurrentUser, requireUser } from './web/auth.js';
 import { listUnitNames, listUnitMap } from './db/units.js';
 import { listStaff } from './db/staff.js';
 import { getRunHealth } from './db/runs.js';
-import { applyMigrations, getSchemaState } from './db/migrate.js';
+import { applyMigrations, getSchemaState, listPendingMigrations } from './db/migrate.js';
 import { getAuthStatus, STATE } from './db/beds24Auth.js';
 import { countUsers, createUser, listUsers } from './db/users.js';
 import { getSetting, recordPepperFingerprint, checkPepperFingerprint } from './db/settings.js';
@@ -24,7 +24,6 @@ import { flushNotifications } from './jobs/notify.js';
 import { showLogin, doLogin, doLogout } from './web/pages/login.js';
 import {
   showMySchedule,
-  completeAssignment,
   showAvailability,
   saveAvailability,
   showPasswordForm,
@@ -47,13 +46,13 @@ import {
 } from './web/pages/assignments.js';
 import { showTimeline } from './web/pages/timeline.js';
 import { showAvailabilityOverview } from './web/pages/availability.js';
+import { showReportForm, saveReportForm, undoReport } from './web/pages/report.js';
+import { showReports, showReportDetail } from './web/pages/reports.js';
 import { runNow, showRuns, showRun, ackNotification } from './web/pages/runs.js';
 import { showSettings, saveSettings, testNotification } from './web/pages/settings.js';
 
-// migrations/*.sql を文字列として取り込む（wrangler が .sql を Text として扱う）。
-// スキーマの正は .sql のままにして、JS側に写し直さない。
-import initSql from '../migrations/0001_init.sql';
-import seedSql from '../migrations/0002_seed_master.sql';
+// 適用するマイグレーションの一覧。スキーマの正は migrations/*.sql のまま
+import { MIGRATIONS } from './db/migrations.js';
 
 /** 見張り役の cron（UTC 9時 = JST 18時）。wrangler.jsonc と一致させること */
 const KEEPALIVE_CRON = '0 9 * * *';
@@ -71,7 +70,9 @@ router.post('/login', (request, env) => doLogin(request, env));
 router.post('/logout', (request, env) => doLogout(request, env));
 
 router.get('/me', (request, env) => showMySchedule(request, env));
-router.post('/me/complete/:bookingId', (request, env, params) => completeAssignment(request, env, params));
+router.get('/me/report/:bookingId', (request, env, params) => showReportForm(request, env, params));
+router.post('/me/report/:bookingId', (request, env, params) => saveReportForm(request, env, params));
+router.post('/me/report/:bookingId/undo', (request, env, params) => undoReport(request, env, params));
 router.get('/me/availability', (request, env) => showAvailability(request, env));
 router.post('/me/availability', (request, env) => saveAvailability(request, env));
 router.get('/me/password', (request, env) => showPasswordForm(request, env));
@@ -96,6 +97,9 @@ router.post('/admin/assignments/:bookingId/reset', (request, env, params) => res
 
 router.get('/admin/timeline', (request, env) => showTimeline(request, env));
 router.get('/admin/availability', (request, env) => showAvailabilityOverview(request, env));
+
+router.get('/admin/reports', (request, env) => showReports(request, env));
+router.get('/admin/reports/:bookingId', (request, env, params) => showReportDetail(request, env, params));
 
 router.get('/admin/settings', (request, env) => showSettings(request, env));
 router.post('/admin/settings', (request, env) => saveSettings(request, env));
@@ -217,10 +221,7 @@ async function renderSetup(request, env) {
       if (auth.response) return auth.response;
     }
 
-    const result = await applyMigrations(env.DB, [
-      { name: '0001_init.sql', sql: initSql },
-      { name: '0002_seed_master.sql', sql: seedSql }
-    ]);
+    const result = await applyMigrations(env.DB, MIGRATIONS);
 
     // 管理者が1人もいなければ作る（ここでしか平文パスワードは表示されない）。
     //
@@ -302,7 +303,7 @@ async function renderSetup(request, env) {
     const internal =
       s.internalTables && s.internalTables.length > 0
         ? `<p class="small muted">※ ほかに ${escapeHtml(s.internalTables.join(', '))} という表もありますが、
-             これは SQLite / Cloudflare が自動で作る管理用のもので、このアプリのデータではありません。</p>`
+             これは管理用のもので、このアプリのデータではありません。</p>`
         : '';
 
     const summary = `${checklist(steps)}
@@ -513,7 +514,7 @@ function renderKeys(env) {
 async function checkHealth(env) {
   const health = {
     ok: true,
-    stage: 'm10',
+    stage: 'm11',
     d1: { connected: false }
   };
 
@@ -530,6 +531,7 @@ async function checkHealth(env) {
     const schema = await getSchemaState(env.DB);
     const auth = await getAuthStatus(env.DB);
     const fingerprint = await checkPepperFingerprint(env.DB, env.SESSION_PEPPER ?? '');
+    const pending = await listPendingMigrations(env.DB, MIGRATIONS);
 
     health.d1 = {
       connected: true,
@@ -542,6 +544,8 @@ async function checkHealth(env) {
       internalTables: schema.internalTables,
       users: await countUsers(env.DB),
       unitMap: (await listUnitMap(env.DB)).length,
+      // 未適用があると、アプリが古いスキーマのまま動くことになる
+      pendingMigrations: pending,
       lastSuccessRunAt: run.lastSuccessAt,
       staleDays: run.staleDays
     };
@@ -579,6 +583,9 @@ async function checkHealth(env) {
     }
     if (fingerprint.known && !fingerprint.matches) {
       problems.push('SESSION_PEPPER が変わっているため、誰もログインできません。');
+    }
+    if (pending.length > 0) {
+      problems.push(`未適用のデータベース更新が ${pending.length}件あります。/setup を開いてください。`);
     }
 
     health.problems = problems;

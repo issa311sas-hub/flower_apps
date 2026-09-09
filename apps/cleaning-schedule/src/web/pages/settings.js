@@ -85,6 +85,18 @@ async function settingsPage(env, user, view = {}) {
           異常のときしか通知が来ません。
         </p>
 
+        <h2>完了報告の項目</h2>
+        <p class="small muted">
+          スタッフの報告フォームに出す項目です。<strong>1行に1つ</strong>書いてください。
+          変えても、過去の報告は当時の項目名のまま残ります。
+        </p>
+
+        <label for="report_equipment">設備の確認（◯ / ✕ で答える）</label>
+        <textarea id="report_equipment" name="report_equipment" rows="7">${escapeHtml(settings.report_equipment ?? '')}</textarea>
+
+        <label for="report_services">追加サービス（なし / あり・清掃済 / あり・未清掃 で答える）</label>
+        <textarea id="report_services" name="report_services" rows="4">${escapeHtml(settings.report_services ?? '')}</textarea>
+
         <h2>割り当ての設定</h2>
         ${raw(numberFields)}
 
@@ -118,6 +130,17 @@ export async function saveSettings(request, env, options = {}) {
   }
 
   values.notify_daily_summary = form.notify_daily_summary ? '1' : '0';
+
+  // 完了報告の項目（1行1項目）。改行コードを揃え、空行は落とす
+  for (const key of ['report_equipment', 'report_services']) {
+    if (form[key] === undefined) continue;
+    values[key] = String(form[key])
+      .replace(/\r\n?/g, '\n')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .join('\n');
+  }
 
   // 通知に載せるリンク先。管理者がいま開いているURLがそのまま正解なので、自動で覚える
   values.app_base_url = new URL(request.url).origin;

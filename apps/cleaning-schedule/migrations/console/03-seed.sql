@@ -24,3 +24,13 @@ INSERT INTO settings (key, value, updated_at) VALUES
   ('last_success_run_at',   '',    '2026-09-08T00:00:00Z');
 
 INSERT INTO beds24_auth (id, state, updated_at) VALUES (1, '未接続', '2026-09-08T00:00:00Z');
+
+INSERT INTO settings (key, value, updated_at) VALUES
+  ('report_equipment', 'FireStick
+電気
+エアコン
+キッチンガス
+お風呂のお湯
+iPad', '2026-09-09T00:00:00Z'),
+  ('report_services', 'バーベキュー
+海遊び', '2026-09-09T00:00:00Z');

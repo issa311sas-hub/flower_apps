@@ -142,6 +142,7 @@ export async function showAdminHome(request, env, options = {}) {
           <a class="btn" href="/admin/assignments">割り当て一覧</a>
           <a class="btn" href="/admin/timeline">タイムライン</a>
           <a class="btn" href="/admin/availability">出勤入力の状況</a>
+          <a class="btn" href="/admin/reports">完了報告・現地精算</a>
           <a class="btn" href="/admin/beds24">Beds24・ユニット対応づけ</a>
           <a class="btn" href="/admin/runs">実行ログと警告</a>
           <a class="btn" href="/admin/staff">スタッフのアカウント</a>

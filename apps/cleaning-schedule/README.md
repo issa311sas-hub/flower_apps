@@ -33,6 +33,7 @@
 migrations/
   0001_init.sql       ← D1 のスキーマ
   0002_seed_master.sql←   9ユニット・担当者4名・既定の設定
+  0003_completion_reports.sql ← 清掃完了報告と現地精算
 src/
   index.js            ← Worker のエントリ（fetch / scheduled）
   core/               ← ★Cloudflare に依存しない純粋ロジック（テスト対象）
@@ -53,6 +54,8 @@ src/
     settings.js staff.js units.js bookings.js
     availability.js assignments.js runs.js notifications.js
     beds24Auth.js     ←   Beds24のトークン（暗号化して保存）
+    reports.js        ←   完了報告と現地精算の集計
+    migrations.js     ←   適用するマイグレーションの一覧（足したらここに1行）
     migrate.js        ←   /setup で使う初回セットアップ（空のDBのときだけ動く）
   integrations/
     beds24.js         ←   Beds24 API V2（認証・予約取得）
@@ -95,6 +98,7 @@ npm run dev       # ローカルで Worker を起動
 - [x] Beds24 接続・ユニット対応づけ・手動実行・割り当て一覧（読み取り）・実行ログ
 - [x] Slack 通知・死活監視（/api/health は異常時に 503 を返す）
 - [x] 担当の手動変更・タイムライン・出勤入力の状況一覧
+- [x] 清掃完了報告（設備・追加サービス・現地精算金額）と、清掃員ごとの月次集計
 
 ## ステータス
 

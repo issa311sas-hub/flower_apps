@@ -155,3 +155,27 @@ CREATE TABLE notifications (
   send_error      TEXT,
   acknowledged_at TEXT
 );
+
+CREATE TABLE completion_reports (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  booking_id     TEXT    NOT NULL UNIQUE,
+  cleaning_date  TEXT    NOT NULL,
+  unit_name      TEXT    NOT NULL,
+  staff_id       INTEGER NOT NULL REFERENCES staff(id),
+  staff_name     TEXT    NOT NULL,
+  condition      TEXT    NOT NULL CHECK (condition IN ('A','B','C','F')),
+  settlement_yen INTEGER NOT NULL DEFAULT 0,
+  note           TEXT,
+  reported_by    INTEGER REFERENCES users(id),
+  reported_at    TEXT    NOT NULL,
+  updated_at     TEXT    NOT NULL
+);
+
+CREATE TABLE report_answers (
+  report_id  INTEGER NOT NULL REFERENCES completion_reports(id) ON DELETE CASCADE,
+  kind       TEXT    NOT NULL CHECK (kind IN ('equipment','service')),
+  label      TEXT    NOT NULL,
+  value      TEXT    NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (report_id, kind, label)
+);

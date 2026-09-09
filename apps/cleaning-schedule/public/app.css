@@ -531,3 +531,36 @@ label.checkbox input[type="checkbox"] {
   border-radius: 999px;
   font-weight: 700;
 }
+
+/* --- 完了報告 --- */
+textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: 10px 12px;
+  font-size: 16px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+/* 使用状況のように、選択肢の文字が長いものは縦に積む */
+.pills.stacked { flex-direction: column; align-items: stretch; }
+.pills.stacked label { justify-content: flex-start; padding: 0 14px; border-radius: 8px; }
+
+.answer-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.answer-row .answer-label { flex: 1 1 120px; font-weight: 700; }
+.answer-row .pills { flex: 0 1 auto; }
+.answer-row .pills label { padding: 0 12px; min-width: 0; }
+
+/* 金額は右寄せで桁を読みやすく */
+td.yen, th.yen { text-align: right; font-variant-numeric: tabular-nums; }

@@ -106,9 +106,18 @@ export function createTestDb(options = {}) {
     .filter((f) => f.endsWith('.sql'))
     .sort();
 
+  // 本番と同じく、適用したことを記録しておく。
+  // これが無いと「未適用のマイグレーションがある」と判定されてしまう
+  d1.db.exec(
+    'CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)'
+  );
+
   for (const file of files) {
     if (!seed && file.startsWith('0002')) continue;
     d1.db.exec(readFileSync(join(MIGRATIONS_DIR, file), 'utf8'));
+    d1.db
+      .prepare('INSERT OR IGNORE INTO schema_migrations (name, applied_at) VALUES (?, ?)')
+      .run(file, '2026-01-01T00:00:00Z');
   }
 
   return d1;
