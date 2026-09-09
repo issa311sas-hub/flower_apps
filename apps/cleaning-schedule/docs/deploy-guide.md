@@ -13,7 +13,7 @@ Cloudflare への接続と、以降の更新方法。ターミナルを使う方
 | | |
 |---|---|
 | デプロイ方法 | **Cloudflare Workers Builds（Git 連携）**。`main` への push で自動ビルド・デプロイ |
-| Root directory | `apps/cleaning-schedule` |
+| Root directory（画面上は **Path**。Advanced settings の中） | `apps/cleaning-schedule` |
 | Build command | `npm test`（テストが落ちたらデプロイされない） |
 | Deploy command | `npx wrangler deploy` |
 | GitHub Actions | テスト専用。デプロイはしない（二重デプロイを避けるため） |

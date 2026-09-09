@@ -16,16 +16,18 @@
         ↓
   ③ Database ID を開発者に渡す            ← ここで一度止まります
         ↓
-  ④ GitHubのコードとCloudflareをつなぐ     ← 以降、コードを更新すると自動で反映される
+  ④ GitHubの既定ブランチを main にする     ← これを忘れると⑤が必ず失敗します
         ↓
-  ⑤ 秘密の鍵を2つ登録する
+  ⑤ GitHubのコードとCloudflareをつなぐ     ← 以降、コードを更新すると自動で反映される
         ↓
-  ⑥ /setup を開く                        ← 箱の中の表と初期データが自動でできる
+  ⑥ 秘密の鍵を2つ登録する
         ↓
-  ⑦ 動いているか確認する
+  ⑦ /setup を開く                        ← 箱の中の表と初期データが自動でできる
+        ↓
+  ⑧ 動いているか確認する
 ```
 
-> **SQLを手で貼る作業はありません。** ⑥でURLを開くだけで、13個のテーブルと
+> **SQLを手で貼る作業はありません。** ⑦でURLを開くだけで、13個のテーブルと
 > 初期データ（9ユニット・担当者4名）が自動で作られます。
 
 **用語**（初回だけ気になるので）
@@ -68,7 +70,7 @@
 
 ## ③ Database ID を開発者に渡す
 
-**テーブルを作る作業はここではやりません。**（⑥で自動的に作られます）
+**テーブルを作る作業はここではやりません。**（⑦で自動的に作られます）
 
 1. データベース画面の右側（または Settings）に **Database ID** が表示されています
 2. `1a2b3c4d-...` のような文字列です。**これをコピーしてチャットに貼ってください**
@@ -80,7 +82,24 @@
 
 ---
 
-## ④ GitHub のコードと Cloudflare をつなぐ
+## ④ GitHub の既定ブランチを `main` にする（先にやること）
+
+⚠ **これを先にやらないと、次の⑤で必ずビルドが失敗します。**
+
+このリポジトリの既定ブランチは、いま `claude/agent-team-skills-review-w07g3a` という
+古い作業用ブランチになっています。そのブランチには清掃予定管理のコードが入っていません。
+Cloudflare は既定ブランチを本番用として自動で選ぶため、切り替えておく必要があります。
+
+1. https://github.com/issa311sas-hub/flower_apps を開く
+2. **Settings**（リポジトリの設定。上部のタブ） → 左メニューの **Branches**
+3. **Default branch** の欄にある切り替えボタン（⇄ のアイコン）を押す
+4. **`main`** を選んで **Update** → 確認ダイアログで **I understand, update the default branch**
+
+これで既定ブランチが `main` になります。
+
+---
+
+## ⑤ GitHub のコードと Cloudflare をつなぐ
 
 ここまでで箱ができました。次は中で動くプログラムを載せます。
 一度つないでおけば、**以降はコードを更新するだけで自動で反映**されます。
@@ -93,17 +112,30 @@
    - 「すべてのリポジトリ」ではなく、このリポジトリだけを許可すれば十分です
 5. 設定画面が出るので、次のとおり入力します
 
-| 項目 | 入れる値 | 補足 |
+| 画面の項目 | 入れる値 | 補足 |
 |---|---|---|
 | Project name | `cleaning-schedule` | URL の一部になります |
-| Production branch | `main` | |
-| **Root directory** | **`apps/cleaning-schedule`** | ⚠ **ここが最重要。** 指定を忘れるとリポジトリの一番上を見に行って必ず失敗します |
 | Build command | `npm test` | テストが落ちたらデプロイされない安全装置になります |
 | Deploy command | `npx wrangler deploy` | |
+| **Path**（Advanced settings の中） | **`apps/cleaning-schedule`** | ⚠ **ここが最重要。** 既定は `/` になっています。必ず書き換えてください |
+| Non-production branch deploy command | そのまま（`npx wrangler versions upload`） | 変更不要 |
+| API token | **Create new token** のまま | |
+| API token name | `cleaning-schedule-builds` など任意 | Cloudflare が自分で作って保持します。**どこかに貼る必要はありません** |
 
-6. **Save and Deploy**（または Create and deploy）を押す
+6. **Deploy** を押す
 
 初回は3〜5分かかります。ログが流れるので眺めていてください。
+
+### 迷いやすいところ
+
+- **「Root directory」という名前の欄はありません。** 画面では **Path** です。
+  Advanced settings（詳細設定）を開かないと出てきません。
+  ツールチップに「The root directory describes where the command(s) will run」と書かれているのが目印です。
+- **「Production branch」の欄が見当たらない場合**は、④で既定ブランチを `main` にしてあれば
+  自動的に `main` が使われるので、そのまま進めて構いません。
+  作成後に **Settings → Builds** から変更もできます。
+- 画面の項目名は Cloudflare 側の更新で変わることがあります。
+  探している項目が見つからないときは、まず **Advanced settings** を開いてみてください。
 
 ### 失敗したときの見方
 
@@ -111,14 +143,15 @@
 
 | ログに出る内容 | 原因 |
 |---|---|
-| `package.json` が見つからない | Root directory の指定漏れ（④の5番） |
+| `package.json` が見つからない | **Path** の指定漏れ（`/` のままになっている） |
+| `apps/cleaning-schedule` が無い / ファイルが見つからない | 既定ブランチが `main` になっていない（④をやり直す） |
 | `Missing entry-point` / `public` が無い | コードが古い。最新の `main` になっているか確認 |
-| `database_id` に関するエラー | ③の最後で控えたIDが設定に入っていない |
+| `database_id` に関するエラー | ③のIDが設定に入っていない |
 | テストの失敗 | プログラム側の問題です。ログを貼ってください |
 
 ---
 
-## ⑤ 秘密の鍵を2つ登録する
+## ⑥ 秘密の鍵を2つ登録する
 
 ログインの仕組みと、Beds24 のトークンを暗号化して保存するために使います。
 
@@ -157,7 +190,7 @@ crypto.getRandomValues(new Uint8Array(32)).reduce((s, b) => s + b.toString(16).p
 
 ---
 
-## ⑥ /setup を開いてテーブルを作る
+## ⑦ /setup を開いてテーブルを作る
 
 ここまでで、プログラムは動いているがデータベースは空っぽ、という状態です。
 ブラウザで次のURLを開くだけで、テーブルと初期データが作られます。
@@ -185,7 +218,7 @@ https://cleaning-schedule.<あなたのサブドメイン>.workers.dev/setup
 
 ---
 
-## ⑦ 動いているか確認する
+## ⑧ 動いているか確認する
 
 次の5つを確認できたら完了です。
 
@@ -227,7 +260,7 @@ https://cleaning-schedule.<あなたのサブドメイン>.workers.dev/setup
 
 ### 4. GitHub 側のテストも通っている
 
-GitHub のリポジトリ → **Actions** タブ → 最新の実行が緑のチェックになっていること（テスト92件）。
+GitHub のリポジトリ → **Actions** タブ → 最新の実行が緑のチェックになっていること（テスト105件）。
 
 ### 5. コードの更新が自動で反映される
 
