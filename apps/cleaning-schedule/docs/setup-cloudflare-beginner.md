@@ -97,6 +97,10 @@ Cloudflare は既定ブランチを本番用として自動で選ぶため、切
 
 これで既定ブランチが `main` になります。
 
+> **すでに⑤（Cloudflareへの接続）をやってしまった場合**は、この切り替えだけでは直りません。
+> Cloudflare 側にも接続時のブランチが保存されているため、
+> ⑤の「[古いブランチのまま作ってしまった場合の直し方](#-古いブランチのまま作ってしまった場合の直し方)」を見てください。
+
 ---
 
 ## ⑤ GitHub のコードと Cloudflare をつなぐ
@@ -139,12 +143,41 @@ Cloudflare は既定ブランチを本番用として自動で選ぶため、切
 
 ### 失敗したときの見方
 
-**Builds** タブに履歴が出ます。失敗したビルドを開くとログが読めます。よくある原因:
+**Builds** タブに履歴が出ます。赤い ● が付いていたら失敗です。
+
+#### まず Source 列を見る（ログを読む前に）
+
+Build history の **Source** 列に、どのブランチからビルドしたかが出ています。
+
+```
+Source                              Status
+claude/agent-team-skills-review-w…  ● 失敗    ← main になっていない
+```
+
+**ここが `main` 以外なら、ログを読むまでもなくそれが原因です。**
+古いブランチには `apps/cleaning-schedule` が入っていないので、Path が正しくても必ず失敗します。
+
+#### ⚠ 古いブランチのまま作ってしまった場合の直し方
+
+**GitHub 側で既定ブランチを `main` に変えても、Cloudflare 側の設定は自動では変わりません。**
+接続した時点のブランチが保存されたままなので、Cloudflare 側でも変更が必要です。
+
+1. GitHub の既定ブランチを `main` にする（④。まだなら先にこちら）
+2. Cloudflare → **Workers & Pages** → `cleaning-schedule` → **Settings** → **Builds**
+3. **Production branch** を `main` に変更して保存
+4. ついでに次も確認する
+   - **Path** が `apps/cleaning-schedule` になっているか（`/` のままなら修正）
+   - Build command が `npm test`
+   - Deploy command が `npx wrangler deploy`
+5. **Retry build**（再実行）を押す
+
+Source 列が `main` になって成功すればOKです。
+
+#### そのほかの原因
 
 | ログに出る内容 | 原因 |
 |---|---|
 | `package.json` が見つからない | **Path** の指定漏れ（`/` のままになっている） |
-| `apps/cleaning-schedule` が無い / ファイルが見つからない | 既定ブランチが `main` になっていない（④をやり直す） |
 | `Missing entry-point` / `public` が無い | コードが古い。最新の `main` になっているか確認 |
 | `database_id` に関するエラー | ③のIDが設定に入っていない |
 | テストの失敗 | プログラム側の問題です。ログを貼ってください |
