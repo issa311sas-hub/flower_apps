@@ -32,16 +32,32 @@ export function splitSqlStatements(sql) {
     .filter((s) => s.length > 0);
 }
 
+/**
+ * このアプリのものではない、基盤側が勝手に作る表。
+ *
+ *   sqlite_*  … SQLite が自動で作る（AUTOINCREMENT を使うと sqlite_sequence ができる）
+ *   _cf_*     … D1 が内部で使う
+ *   d1_*      … wrangler の migrations 機能が使う（d1_migrations）
+ *
+ * ローカルのテスト環境（node:sqlite）と本番の D1 では、これらの有無が違う。
+ * 数が合わないと「壊れているのでは」と不安になるため、アプリの表だけを数える。
+ */
+const INTERNAL_TABLE_PREFIXES = ['sqlite_', '_cf_', 'd1_'];
+
+const isInternalTable = (name) => INTERNAL_TABLE_PREFIXES.some((p) => name.startsWith(p));
+
 /** いま DB がどういう状態かを調べる */
 export async function getSchemaState(db) {
   const tables = await db
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
     .all();
 
-  const tableNames = tables.results.map((r) => r.name);
+  const allNames = tables.results.map((r) => r.name);
+  const tableNames = allNames.filter((n) => !isInternalTable(n));
   const state = {
     tables: tableNames,
     tableCount: tableNames.length,
+    internalTables: allNames.filter(isInternalTable),
     hasSchema: tableNames.includes('staff') && tableNames.includes('units'),
     staffCount: 0,
     unitCount: 0

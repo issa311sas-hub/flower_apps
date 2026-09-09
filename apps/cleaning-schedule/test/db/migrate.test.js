@@ -74,6 +74,30 @@ describe('初回セットアップ', () => {
     expect(staff.results.map((r) => r.name)).toEqual(['細田さん', '普久原さん', '福田さん', 'Rクリーン']);
   });
 
+  it('SQLite/D1 が自動で作る管理用の表は数に入れない', async () => {
+    // 本番の D1 には、アプリが作っていない管理用の表が存在する。
+    // これを数に入れると「テーブル13個のはずが14個ある」と不安にさせるため除外する。
+    await db.prepare('CREATE TABLE _cf_KV (key TEXT PRIMARY KEY, value BLOB)').run();
+    await db.prepare('CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY, name TEXT)').run();
+
+    await applyMigrations(db, SOURCES);
+    const state = await getSchemaState(db);
+
+    expect(state.tableCount).toBe(13);
+    expect(state.tables).not.toContain('_cf_KV');
+    expect(state.tables).not.toContain('d1_migrations');
+    expect(state.internalTables).toEqual(expect.arrayContaining(['_cf_KV', 'd1_migrations']));
+  });
+
+  it('AUTOINCREMENT で生まれる sqlite_sequence も数に入れない', async () => {
+    await applyMigrations(db, SOURCES);
+    // staff への INSERT で sqlite_sequence が作られている
+    const state = await getSchemaState(db);
+
+    expect(state.internalTables).toContain('sqlite_sequence');
+    expect(state.tableCount).toBe(13);
+  });
+
   it('2回実行しても壊れない（何もしない）', async () => {
     await applyMigrations(db, SOURCES);
     const second = await applyMigrations(db, SOURCES);

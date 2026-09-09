@@ -62,12 +62,17 @@ async function checkHealth(env) {
     const units = await listUnitNames(env.DB);
     const staff = await listStaff(env.DB);
     const run = await getRunHealth(env.DB);
+    const schema = await getSchemaState(env.DB);
 
     health.d1 = {
       connected: true,
       units: units.length,
       unitOrder: units,
       staff: staff.map((s) => s.name),
+      tableCount: schema.tableCount,
+      tables: schema.tables,
+      // SQLite / Cloudflare が自動で作る管理用の表。アプリのデータではない
+      internalTables: schema.internalTables,
       lastSuccessRunAt: run.lastSuccessAt,
       staleDays: run.staleDays
     };
@@ -108,11 +113,21 @@ async function renderSetup(env) {
     ]);
 
     const s = result.state;
+    const internal =
+      s.internalTables && s.internalTables.length > 0
+        ? `<p class="small muted">※ ほかに ${escapeHtml(s.internalTables.join(', '))} という表もありますが、
+             これは SQLite / Cloudflare が自動で作る管理用のもので、このアプリのデータではありません。</p>`
+        : '';
+
     const summary = `<table>
         <tr><th>テーブル</th><td>${s.tableCount} 個</td></tr>
         <tr><th>ユニット</th><td>${s.unitCount} 件</td></tr>
         <tr><th>担当者</th><td>${s.staffCount} 名</td></tr>
-      </table>`;
+      </table>
+      <details class="small"><summary>テーブルの一覧を見る</summary>
+        <p>${escapeHtml(s.tables.join(', '))}</p>
+      </details>
+      ${internal}`;
 
     if (!result.applied) {
       return setupPage(
