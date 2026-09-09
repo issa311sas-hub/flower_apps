@@ -51,17 +51,28 @@ export async function showMySchedule(request, env, options = {}) {
   const auth = await requireStaff(request, env, options);
   if (auth.response) return auth.response;
 
+  const url = new URL(request.url);
   const today = jstToday(options.now);
-  const to = addDays(today, SCHEDULE_DAYS);
-  const reported = new URL(request.url).searchParams.get('reported') === '1';
+  const reported = url.searchParams.get('reported') === '1';
 
-  const rows = await listAssignments(env.DB, { from: today, to, staffName: auth.staff.name });
+  // 既定は日付順のリスト。「清掃おわりました」を押すのは毎日の作業なので、
+  // 押せる画面を最初に出す。カレンダーは月全体を見渡すためのもの（表示だけ）
+  const view = url.searchParams.get('view') === 'calendar' ? 'calendar' : 'list';
+  const requested = url.searchParams.get('month') ?? '';
+  const month = /^\d{4}-\d{2}$/.test(requested) ? requested : today.slice(0, 7);
 
-  // 給与から差し引かれる額なので、本人も確認できるようにする
-  const month = today.slice(0, 7);
+  const days = monthDays(month);
+  const range =
+    view === 'calendar'
+      ? { from: days[0], to: days[days.length - 1] }
+      : { from: today, to: addDays(today, SCHEDULE_DAYS) };
+
+  const rows = await listAssignments(env.DB, { ...range, staffName: auth.staff.name });
+
+  // 給与から差し引かれる額なので、本人も確認できるようにする（表示中の月ではなく今月）
   const settlement = await sumSettlementsFor(env.DB, auth.staff.id, {
-    from: `${month}-01`,
-    to: `${month}-31`
+    from: `${today.slice(0, 7)}-01`,
+    to: `${today.slice(0, 7)}-31`
   });
 
   const byDate = new Map();
@@ -70,6 +81,40 @@ export async function showMySchedule(request, env, options = {}) {
     byDate.get(row.cleaningDate).push(row);
   }
 
+  const ctx = { today, month, days, byDate };
+
+  return htmlResponse(
+    page({
+      title: '予定',
+      user: auth.user,
+      body: html`
+        <h2>${auth.staff.name}の予定</h2>
+        ${raw(reported ? '<div class="banner ok">報告しました。おつかれさまでした。</div>' : '')}
+        ${raw(
+          settlement.total > 0
+            ? `<div class="banner">
+                 <strong>今月の現地精算 ${settlement.total.toLocaleString()}円</strong>
+                 <p class="small">お客さんから受け取った分の合計です。あとで給与から差し引かれます。</p>
+               </div>`
+            : ''
+        )}
+
+        <p class="views small">
+          ${raw(
+            view === 'list'
+              ? `<strong>これからの予定</strong> / <a href="/me?view=calendar">カレンダー</a>`
+              : `<a href="/me">これからの予定</a> / <strong>カレンダー</strong>`
+          )}
+        </p>
+
+        ${raw(view === 'calendar' ? scheduleCalendar(ctx) : scheduleList(ctx))}
+      `
+    })
+  );
+}
+
+/** 日付順のカード。ここから完了報告に進む */
+function scheduleList({ today, byDate }) {
   const todayCount = (byDate.get(today) ?? []).length;
 
   const sections = [...byDate.entries()].map(([date, items]) => {
@@ -105,29 +150,74 @@ export async function showMySchedule(request, env, options = {}) {
     return `<div class="day"><span class="${dowClass}">${escapeHtml(toDisplayDate(date))}</span> ${badge}</div>${cards}`;
   });
 
-  return htmlResponse(
-    page({
-      title: '予定',
-      user: auth.user,
-      body: html`
-        <h2>${auth.staff.name}の予定</h2>
-        ${raw(reported ? '<div class="banner ok">報告しました。おつかれさまでした。</div>' : '')}
-        ${raw(
-          settlement.total > 0
-            ? `<div class="banner">
-                 <strong>今月の現地精算 ${settlement.total.toLocaleString()}円</strong>
-                 <p class="small">お客さんから受け取った分の合計です。あとで給与から差し引かれます。</p>
-               </div>`
-            : ''
-        )}
-        <p class="small muted">
-          ${todayCount > 0 ? `今日は ${todayCount}件です。` : '今日の予定はありません。'}
-          （${toDisplayDate(today)} から ${SCHEDULE_DAYS}日分）
-        </p>
-        ${raw(sections.length > 0 ? sections.join('') : '<div class="card"><p>予定はありません。</p></div>')}
-      `
+  return `<p class="small muted">
+      ${todayCount > 0 ? `今日は ${todayCount}件です。` : '今日の予定はありません。'}
+      （${toDisplayDate(today)} から ${SCHEDULE_DAYS}日分）
+    </p>
+    ${sections.length > 0 ? sections.join('') : '<div class="card"><p>予定はありません。</p></div>'}`;
+}
+
+/**
+ * 月表示（見るだけ）。
+ *
+ * 旧運用では Google カレンダーで予定を確認してもらっていたので、
+ * 同じ見え方を用意する。**押せるボタンは置かない**（完了報告はリスト側から）。
+ * どの日に何棟あるかを月単位で把握するためのもの。
+ */
+function scheduleCalendar({ today, month, days, byDate }) {
+  const heads = DOW_HEADS.map(
+    (name, i) => `<div class="cal-head ${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${name}</div>`
+  ).join('');
+
+  const blanks = '<div class="cal-blank"></div>'.repeat(dowOf(days[0]));
+
+  const cells = days
+    .map((date) => {
+      const items = byDate.get(date) ?? [];
+      const dow = dowOf(date);
+      const classes = [
+        'cal-cell',
+        dow === 0 ? 'sun' : dow === 6 ? 'sat' : '',
+        date < today ? 'past' : '',
+        date === today ? 'today' : '',
+        items.length > 0 ? 'has-jobs' : ''
+      ]
+        .filter(Boolean)
+        .join(' ');
+
+      const jobs = items
+        .map(
+          (a) =>
+            `<span class="cal-job${a.completedAt ? ' done' : ''}">${escapeHtml(a.unit)}${
+              a.completedAt ? ' ✓' : ''
+            }</span>`
+        )
+        .join('');
+
+      return `<div class="${classes}">
+          <span class="cal-day">${Number(date.slice(8, 10))}</span>
+          <span class="cal-jobs">${jobs}</span>
+        </div>`;
     })
-  );
+    .join('');
+
+  const total = [...byDate.values()].reduce((sum, items) => sum + items.length, 0);
+  const doneCount = [...byDate.values()].flat().filter((a) => a.completedAt).length;
+
+  return `<p class="small muted">${monthLabel(month)}は ${total}件（完了 ${doneCount}件）です。</p>
+
+    <div class="calendar readonly">${heads}${blanks}${cells}</div>
+
+    <p class="small muted">✓ は完了報告が済んだものです。清掃おわりましたのボタンは
+      <a href="/me">これからの予定</a> にあります。</p>
+
+    <p class="small">
+      <a href="/me?view=calendar&month=${shiftMonth(month, -1)}">← ${monthLabel(shiftMonth(month, -1))}</a>
+      &nbsp;/&nbsp;
+      <a href="/me?view=calendar&month=${today.slice(0, 7)}">今月</a>
+      &nbsp;/&nbsp;
+      <a href="/me?view=calendar&month=${shiftMonth(month, 1)}">${monthLabel(shiftMonth(month, 1))} →</a>
+    </p>`;
 }
 
 // ------------------------------------------------------------------

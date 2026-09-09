@@ -564,3 +564,34 @@ textarea {
 
 /* 金額は右寄せで桁を読みやすく */
 td.yen, th.yen { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* --- 予定のカレンダー（見るだけ） --- */
+.calendar.readonly .cal-cell {
+  cursor: default;
+  justify-content: flex-start;
+  padding: 16px 2px 2px;
+  gap: 2px;
+}
+
+.calendar.readonly .cal-cell.has-jobs { background: var(--staff-1); }
+.calendar.readonly .cal-cell.past { opacity: 0.45; }
+
+.cal-jobs {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  width: 100%;
+}
+
+.cal-job {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-align: center;
+  border-radius: 4px;
+  background: var(--bg);
+  padding: 1px 2px;
+}
+
+.cal-job.done { color: var(--ok); }
