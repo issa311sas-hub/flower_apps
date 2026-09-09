@@ -16,7 +16,7 @@ Cloudflare への接続と、以降の更新方法。ターミナルを使う方
 | Root directory（画面上は **Path**。Advanced settings の中） | `apps/cleaning-schedule` |
 | Build command | `npm test`（テストが落ちたらデプロイされない） |
 | Deploy command | `npx wrangler deploy` |
-| Production branch | `main`（Cloudflare → Settings → **Builds** で後から変更可） |
+| Production branch | `main`（Cloudflare → Settings → **Builds** → **Branch control** セクション内で後から変更可） |
 
 > ⚠ Cloudflare は**接続した時点のリポジトリ既定ブランチ**を Production branch として保存する。
 > あとから GitHub 側の既定ブランチを変えても**自動では追従しない**ので、

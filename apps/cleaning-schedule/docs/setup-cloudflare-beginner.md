@@ -164,14 +164,25 @@ claude/agent-team-skills-review-w…  ● 失敗    ← main になっていな�
 
 1. GitHub の既定ブランチを `main` にする（④。まだなら先にこちら）
 2. Cloudflare → **Workers & Pages** → `cleaning-schedule` → **Settings** → **Builds**
-3. **Production branch** を `main` に変更して保存
-4. ついでに次も確認する
-   - **Path** が `apps/cleaning-schedule` になっているか（`/` のままなら修正）
+3. 少し下にスクロールして **「Branch control」** という見出しを探す
+   - その下の **Production branch** がブランチの設定です
+   - ドロップダウン（右端の ▼）を押して **`main`** を選び、保存する
+4. ついでに上の **Build configuration** も確認する
+   - **Root directory** が `apps/cleaning-schedule`（`/` や空欄なら修正）
    - Build command が `npm test`
    - Deploy command が `npx wrangler deploy`
-5. **Retry build**（再実行）を押す
+5. **Retry build**（再実行）を押す。または `main` に何か push すれば自動で走ります
 
 Source 列が `main` になって成功すればOKです。
+
+> **画面によって呼び名が違うので注意**
+>
+> | 作成画面（Create an app） | 設定画面（Settings → Builds） |
+> |---|---|
+> | **Path**（Advanced settings の中） | **Root directory**（Build configuration の中） |
+> | 表示されないことがある | **Production branch**（**Branch control** の中） |
+>
+> 同じものを指しています。作成時に見つからなかった項目も、設定画面には必ずあります。
 
 #### そのほかの原因
 
