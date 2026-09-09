@@ -182,6 +182,25 @@ label { display: block; margin: 14px 0 4px; font-weight: 700; }
   color: var(--accent-text);
 }
 
+/* --- コピーできる値（鍵の生成画面など） --- */
+.copy-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+  margin-bottom: 18px;
+}
+
+.copy-row input {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+}
+
+.copy-row button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 /* --- 警告・状態表示 --- */
 .banner {
   border: 1px solid var(--warn-border);

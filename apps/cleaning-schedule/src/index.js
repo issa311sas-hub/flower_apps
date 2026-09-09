@@ -36,6 +36,10 @@ export default {
       return htmlResponse(await renderSetup(env));
     }
 
+    if (url.pathname === '/setup/keys') {
+      return htmlResponse(renderKeys());
+    }
+
     return htmlResponse(await renderPlaceholder(env));
   },
 
@@ -184,6 +188,54 @@ async function renderSetup(env) {
   }
 }
 
+/**
+ * Cloudflare に登録する秘密の鍵を生成して表示する。
+ *
+ * ブラウザの開発者ツール（コンソール）にコードを貼らせる案内は、
+ * 詐欺の手口と同じ形であり、Chrome もそれを警告で止める。
+ * 回避方法を教えるのではなく、アプリ側で生成する。
+ *
+ * - 値はリクエストのたびに新しく作り、保存も記録もしない
+ * - 他人がこのURLを開いても、その人用の別の乱数が出るだけ
+ * - 形式は src/integrations/crypto.js の要件（32バイトのbase64）に合わせている
+ */
+function renderKeys() {
+  const generate = () => {
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    let binary = '';
+    for (const b of bytes) binary += String.fromCharCode(b);
+    return btoa(binary);
+  };
+
+  const field = (name, note, value) => `
+    <label for="${name}">${name}</label>
+    <p class="small muted">${note}</p>
+    <div class="copy-row">
+      <input id="${name}" type="text" value="${escapeHtml(value)}" readonly spellcheck="false">
+      <button type="button" class="copy" data-target="${name}">コピー</button>
+    </div>`;
+
+  return page(
+    '鍵の生成',
+    `<h2>秘密の鍵</h2>
+     <div class="banner">
+       <strong>この画面の値は他人に見せないでください。</strong>
+       <p class="small">パスワードと同じ扱いです。チャットやメールに貼らないでください。
+       Cloudflare に登録し終えたら、このページを閉じてください。</p>
+     </div>
+
+     <p>Cloudflare の <strong>Settings → Variables and Secrets</strong> に、
+     下の2つを <strong>Secret</strong> として登録してください。</p>
+
+     ${field('SESSION_PEPPER', 'ログイン情報を保護するために使います。', generate())}
+     ${field('TOKEN_ENC_KEY', 'Beds24 のトークンを暗号化して保存するために使います。', generate())}
+
+     <p class="small muted">※ 画面を再読み込みすると別の値になります。
+     登録に使うのは1回だけなので、コピーしたらそのまま登録してください。</p>
+     <p class="small muted">※ 一度登録すれば、作り直す必要はありません。</p>`
+  );
+}
+
 function setupPage(status, title, body) {
   const banner =
     status === 'error'
@@ -234,6 +286,7 @@ function page(title, body) {
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#1f6feb">
 <link rel="stylesheet" href="/app.css">
+<script src="/app.js" defer></script>
 </head>
 <body>
 <header class="bar"><h1>清掃予定管理</h1><span class="badge">${escapeHtml(title)}</span></header>
