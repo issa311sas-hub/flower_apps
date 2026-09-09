@@ -45,7 +45,8 @@ CREATE TABLE report_answers (
 );
 
 -- ── 報告フォームに出す項目（1行1項目）────────────────
-INSERT INTO settings (key, value, updated_at) VALUES
+-- OR IGNORE: 途中まで適用された状態から流し直しても落ちないようにする
+INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES
   ('report_equipment', 'FireStick
 電気
 エアコン

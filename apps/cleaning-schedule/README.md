@@ -49,7 +49,7 @@ src/
       assignments.js  ←   割り当て一覧と手動変更
       timeline.js     ←   ユニット×日付の俯瞰（下段に出勤枠）
       availability.js ←   出勤入力の状況（枠が足りない日＝外注になる日を予告）
-      runs.js settings.js
+      runs.js settings.js migrate.js
   db/                 ← D1 アクセス（1テーブル群につき1ファイル）
     settings.js staff.js units.js bookings.js
     availability.js assignments.js runs.js notifications.js

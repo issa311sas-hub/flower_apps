@@ -25,7 +25,7 @@ INSERT INTO settings (key, value, updated_at) VALUES
 
 INSERT INTO beds24_auth (id, state, updated_at) VALUES (1, '未接続', '2026-09-08T00:00:00Z');
 
-INSERT INTO settings (key, value, updated_at) VALUES
+INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES
   ('report_equipment', 'FireStick
 電気
 エアコン

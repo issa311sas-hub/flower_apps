@@ -18,6 +18,8 @@ import { listUnitMap } from '../../db/units.js';
 import { listAssignments } from '../../db/assignments.js';
 import { DEFAULT_PARAMS } from '../../core/assign.js';
 import { hasWebhook } from '../../integrations/slack.js';
+import { listPendingMigrations } from '../../db/migrate.js';
+import { MIGRATIONS } from '../../db/migrations.js';
 import { countMissingDays } from '../../db/availability.js';
 import { getSetting } from '../../db/settings.js';
 import { jstToday, addDays } from '../../core/dates.js';
@@ -29,7 +31,7 @@ export async function showAdminHome(request, env, options = {}) {
   const nowMs = options.now ?? Date.now();
   const today = jstToday(nowMs);
 
-  const [health, beds24, notices, runs, missing, unitMap, slackOn, soon, allStaff] = await Promise.all([
+  const [health, beds24, notices, runs, missing, unitMap, slackOn, soon, allStaff, pending] = await Promise.all([
     getRunHealth(env.DB, nowMs),
     getAuthStatus(env.DB, nowMs),
     listUnacknowledged(env.DB, 5),
@@ -39,7 +41,8 @@ export async function showAdminHome(request, env, options = {}) {
     hasWebhook(env.DB),
     // 外注は実費なので、いちばん先に目に入る場所で件数を出す
     listAssignments(env.DB, { from: today, to: addDays(today, 14) }),
-    listStaff(env.DB, { includeInactive: true })
+    listStaff(env.DB, { includeInactive: true }),
+    listPendingMigrations(env.DB, MIGRATIONS)
   ]);
 
   const outsourceName = allStaff.find((s) => s.kind === 'outsource')?.name ?? null;
@@ -74,6 +77,19 @@ export async function showAdminHome(request, env, options = {}) {
       title: '管理',
       user: auth.user,
       body: html`
+        ${raw(
+          pending.length > 0
+            ? `<div class="banner error">
+                 <strong>データベースの更新が ${pending.length}件 あります。</strong>
+                 <p class="small">新しく足した機能は、更新するまで使えません。
+                 既存のデータには触りません。</p>
+                 <form method="post" action="/admin/migrate">
+                   <p><button type="submit" class="primary">いま更新する</button></p>
+                 </form>
+               </div>`
+            : ''
+        )}
+
         <h2>状況</h2>
         ${raw(banners)}
 

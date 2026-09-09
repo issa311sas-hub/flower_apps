@@ -17,6 +17,7 @@ import { getAuthStatus, STATE } from './db/beds24Auth.js';
 import { countUsers, createUser, listUsers } from './db/users.js';
 import { getSetting, recordPepperFingerprint, checkPepperFingerprint } from './db/settings.js';
 
+import { recordNotification } from './db/notifications.js';
 import { runDaily } from './jobs/dailyRun.js';
 import { runKeepAlive } from './jobs/keepAlive.js';
 import { flushNotifications } from './jobs/notify.js';
@@ -48,6 +49,7 @@ import { showTimeline } from './web/pages/timeline.js';
 import { showAvailabilityOverview } from './web/pages/availability.js';
 import { showReportForm, saveReportForm, undoReport } from './web/pages/report.js';
 import { showReports, showReportDetail } from './web/pages/reports.js';
+import { runMigrations } from './web/pages/migrate.js';
 import { runNow, showRuns, showRun, ackNotification } from './web/pages/runs.js';
 import { showSettings, saveSettings, testNotification } from './web/pages/settings.js';
 
@@ -104,6 +106,8 @@ router.get('/admin/reports/:bookingId', (request, env, params) => showReportDeta
 router.get('/admin/settings', (request, env) => showSettings(request, env));
 router.post('/admin/settings', (request, env) => saveSettings(request, env));
 router.post('/admin/settings/test', (request, env) => testNotification(request, env));
+
+router.post('/admin/migrate', (request, env) => runMigrations(request, env));
 
 router.post('/admin/run', (request, env) => runNow(request, env));
 router.get('/admin/runs', (request, env) => showRuns(request, env));
@@ -166,6 +170,28 @@ export default {
     const isKeepAlive = event.cron === KEEPALIVE_CRON;
     const job = isKeepAlive ? runKeepAlive : runDaily;
     const label = isKeepAlive ? '見張り' : '日次処理';
+
+    // 誰も管理画面を開かなくても、いずれ当たるようにしておく。
+    // 適用は1マイグレーションごとに db.batch（＝1トランザクション）なので、
+    // 途中まで適用されて壊れることはない。
+    try {
+      const migrated = await applyMigrations(env.DB, MIGRATIONS);
+      if (migrated.applied) {
+        console.log(`[cleaning-schedule] データベースを更新: ${migrated.executed.map((e) => e.name).join(', ')}`);
+      }
+    } catch (error) {
+      console.error(`[cleaning-schedule] データベースの更新に失敗: ${error?.message ?? error}`);
+      await recordNotification(
+        env.DB,
+        {
+          kind: 'migration_failed',
+          level: 'error',
+          subject: 'データベースの更新に失敗しました',
+          body: `${error?.message ?? error}\n\n新しく足した機能が使えない状態です。開発者に連絡してください。`
+        },
+        { throttleHours: 12 }
+      ).catch(() => {});
+    }
 
     try {
       const result = await job(env, { kind: 'cron' });
@@ -585,7 +611,9 @@ async function checkHealth(env) {
       problems.push('SESSION_PEPPER が変わっているため、誰もログインできません。');
     }
     if (pending.length > 0) {
-      problems.push(`未適用のデータベース更新が ${pending.length}件あります。/setup を開いてください。`);
+      problems.push(
+        `未適用のデータベース更新が ${pending.length}件あります。管理画面を開いて「いま更新する」を押してください。`
+      );
     }
 
     health.problems = problems;
