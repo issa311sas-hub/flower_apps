@@ -6,15 +6,15 @@
  */
 
 import { createRouter } from './router.js';
-import { html, page, htmlResponse, jsonResponse, redirect, raw, escapeHtml } from './web/html.js';
-import { getCurrentUser } from './web/auth.js';
+import { html, page, htmlResponse, jsonResponse, redirect, escapeHtml } from './web/html.js';
+import { getCurrentUser, requireUser } from './web/auth.js';
 
-import { listUnitNames } from './db/units.js';
+import { listUnitNames, listUnitMap } from './db/units.js';
 import { listStaff } from './db/staff.js';
 import { getRunHealth } from './db/runs.js';
 import { applyMigrations, getSchemaState } from './db/migrate.js';
 import { getAuthStatus } from './db/beds24Auth.js';
-import { countUsers, createUser } from './db/users.js';
+import { countUsers, createUser, listUsers } from './db/users.js';
 import { getSetting } from './db/settings.js';
 
 import { runDaily } from './jobs/dailyRun.js';
@@ -36,6 +36,9 @@ import {
   reissuePassword,
   toggleStaffUser
 } from './web/pages/admin.js';
+import { showBeds24, connectBeds24, discoverUnits, saveUnitMap } from './web/pages/beds24.js';
+import { showAssignments } from './web/pages/assignments.js';
+import { runNow, showRuns, showRun, ackNotification } from './web/pages/runs.js';
 
 // migrations/*.sql を文字列として取り込む（wrangler が .sql を Text として扱う）。
 // スキーマの正は .sql のままにして、JS側に写し直さない。
@@ -70,8 +73,20 @@ router.post('/admin/staff', (request, env) => createStaffUser(request, env));
 router.post('/admin/staff/:id/password', (request, env, params) => reissuePassword(request, env, params));
 router.post('/admin/staff/:id/active', (request, env, params) => toggleStaffUser(request, env, params));
 
-router.get('/setup', (request, env) => renderSetup(env).then(htmlResponse));
-router.get('/setup/keys', () => htmlResponse(renderKeys()));
+router.get('/admin/beds24', (request, env) => showBeds24(request, env));
+router.post('/admin/beds24', (request, env) => connectBeds24(request, env));
+router.post('/admin/beds24/discover', (request, env) => discoverUnits(request, env));
+router.post('/admin/beds24/map', (request, env) => saveUnitMap(request, env));
+
+router.get('/admin/assignments', (request, env) => showAssignments(request, env));
+
+router.post('/admin/run', (request, env) => runNow(request, env));
+router.get('/admin/runs', (request, env) => showRuns(request, env));
+router.get('/admin/runs/:id', (request, env, params) => showRun(request, env, params));
+router.post('/admin/notifications/:id/ack', (request, env, params) => ackNotification(request, env, params));
+
+router.get('/setup', (request, env) => renderSetup(request, env));
+router.get('/setup/keys', (request, env) => htmlResponse(renderKeys(env)));
 router.get('/api/health', async (request, env) => jsonResponse(await checkHealth(env)));
 
 export default {
@@ -131,20 +146,34 @@ export default {
 // ------------------------------------------------------------------
 
 /**
- * テーブル作成・初期データ投入・最初の管理者の作成。
- * **空のDBに対してしか動かない。** 既にデータがある場合は何も変更しない。
+ * テーブル作成・初期データ投入・最初の管理者の作成、そして「いまどこまで進んだか」の表示。
+ *
+ * **空のDBに対してしか変更を加えない。** 既にデータがある場合は状態を見せるだけ。
+ *
+ * 管理者がすでに居る＝運用が始まっているので、そこからはログインを要求する。
+ * まだ誰も居ない間だけ無認証で通す（そうしないと最初の1人が作れない）。
  */
-async function renderSetup(env) {
+async function renderSetup(request, env) {
   if (!env.DB) {
-    return setupPage(
-      'error',
-      'データベースにつながっていません',
-      `<p>D1 のバインディング（DB）が設定されていません。</p>
-       <p class="small muted">wrangler.jsonc の <code>database_id</code> を確認してください。</p>`
+    return htmlResponse(
+      setupPage(
+        'error',
+        'データベースにつながっていません',
+        `<p>D1 のバインディング（DB）が設定されていません。</p>
+         <p class="small muted">wrangler.jsonc の <code>database_id</code> を確認してください。</p>`
+      )
     );
   }
 
   try {
+    const before = await getSchemaState(env.DB);
+    const hadUsers = before.hasSchema ? (await countUsers(env.DB)) > 0 : false;
+
+    if (hadUsers) {
+      const auth = await requireUser(request, env, { role: 'admin' });
+      if (auth.response) return auth.response;
+    }
+
     const result = await applyMigrations(env.DB, [
       { name: '0001_init.sql', sql: initSql },
       { name: '0002_seed_master.sql', sql: seedSql }
@@ -162,18 +191,67 @@ async function renderSetup(env) {
       admin = { loginId: 'admin', password: created.password };
     }
 
+    const [beds24, unitMap, users] = await Promise.all([
+      getAuthStatus(env.DB),
+      listUnitMap(env.DB),
+      listUsers(env.DB)
+    ]);
+
     const s = result.state;
+    const steps = [
+      {
+        label: '秘密の鍵を Cloudflare に登録する',
+        done: !!env.SESSION_PEPPER && !!env.TOKEN_ENC_KEY,
+        detail: 'SESSION_PEPPER と TOKEN_ENC_KEY の2つ',
+        href: '/setup/keys',
+        action: '鍵を作る'
+      },
+      {
+        label: 'データベースの表を作る',
+        done: s.hasSchema,
+        detail: `${s.tableCount} 個`
+      },
+      {
+        label: '初期データを入れる',
+        done: s.isSeeded,
+        detail: `ユニット ${s.unitCount} 件 / 担当者 ${s.staffCount} 名`
+      },
+      {
+        label: '管理者アカウントを作る',
+        done: users.length > 0 || !!admin,
+        detail: admin ? 'いま作成しました' : 'ID: admin'
+      },
+      {
+        label: 'Beds24 につなぐ',
+        done: beds24.hasToken,
+        detail: beds24.state,
+        href: '/admin/beds24',
+        action: 'Beds24 につなぐ'
+      },
+      {
+        label: 'ユニットの対応づけを登録する',
+        done: unitMap.length > 0,
+        detail: `${unitMap.length} 件`,
+        href: '/admin/beds24',
+        action: '対応づけを登録する'
+      },
+      {
+        label: 'スタッフのアカウントを発行する',
+        done: users.some((u) => u.role === 'staff'),
+        detail: `${users.filter((u) => u.role === 'staff').length} 名`,
+        href: '/admin/staff',
+        action: 'アカウントを発行する'
+      }
+    ];
+
     const internal =
       s.internalTables && s.internalTables.length > 0
         ? `<p class="small muted">※ ほかに ${escapeHtml(s.internalTables.join(', '))} という表もありますが、
              これは SQLite / Cloudflare が自動で作る管理用のもので、このアプリのデータではありません。</p>`
         : '';
 
-    const summary = `<table>
-        <tr><th>テーブル</th><td>${s.tableCount} 個</td></tr>
-        <tr><th>ユニット</th><td>${s.unitCount} 件</td></tr>
-        <tr><th>担当者</th><td>${s.staffCount} 名</td></tr>
-      </table>
+    const summary = `${checklist(steps)}
+      ${nextAction(steps, admin)}
       <details class="small"><summary>テーブルの一覧を見る</summary>
         <p>${escapeHtml(s.tables.join(', '))}</p>
       </details>
@@ -182,7 +260,7 @@ async function renderSetup(env) {
     const adminBlock = admin
       ? `<div class="banner ok">
            <strong>管理者アカウントを作成しました</strong>
-           <p class="small">このパスワードは**この画面にしか表示されません**。いま控えてください。
+           <p class="small">このパスワードは<strong>この画面にしか表示されません</strong>。いま控えてください。
            ログイン後すぐに、自分だけが分かるパスワードへの変更を求められます。</p>
            <p>ID: <strong>${escapeHtml(admin.loginId)}</strong></p>
            <div class="copy-row">
@@ -191,31 +269,64 @@ async function renderSetup(env) {
            </div>
            <p><a class="btn primary" href="/login">ログインする</a></p>
          </div>`
-      : '<p><a class="btn" href="/login">ログイン画面へ</a></p>';
+      : '';
 
     if (!result.applied) {
-      return setupPage(
-        'done',
-        'セットアップはすでに完了しています',
-        `<p>データベースの中身はそのままです。何も変更していません。</p>${summary}${adminBlock}`
+      return htmlResponse(
+        setupPage(
+          'done',
+          'セットアップはすでに完了しています',
+          `<p>データベースの中身はそのままです。何も変更していません。</p>${adminBlock}${summary}`
+        )
       );
     }
 
     const ran = result.executed.map((e) => `<li>${escapeHtml(e.name)}（${e.statements} 文）</li>`).join('');
-    return setupPage(
-      'ok',
-      'セットアップが完了しました',
-      `<p>データベースの準備ができました。</p>${summary}
-       <p class="small muted">実行した内容:</p><ul class="small">${ran}</ul>${adminBlock}`
+    return htmlResponse(
+      setupPage(
+        'ok',
+        'セットアップが完了しました',
+        `<p>データベースの準備ができました。</p>${adminBlock}${summary}
+         <p class="small muted">実行した内容:</p><ul class="small">${ran}</ul>`
+      )
     );
   } catch (e) {
-    return setupPage(
-      'error',
-      'セットアップに失敗しました',
-      `<p class="small">${escapeHtml(e.message)}</p>
-       <p class="small muted">このメッセージをそのまま開発者に伝えてください。</p>`
+    return htmlResponse(
+      setupPage(
+        'error',
+        'セットアップに失敗しました',
+        `<p class="small">${escapeHtml(e.message)}</p>
+         <p class="small muted">このメッセージをそのまま開発者に伝えてください。</p>`
+      )
     );
   }
+}
+
+/** 進み具合を1画面で見せる。「次に何をすればいいか」で迷わせないため */
+function checklist(steps) {
+  const items = steps
+    .map(
+      (s) => `<li class="${s.done ? 'done' : 'todo'}">
+        <span class="mark">${s.done ? '✓' : '未'}</span>
+        <span>${escapeHtml(s.label)}
+          ${s.detail ? `<br><span class="small muted">${escapeHtml(s.detail)}</span>` : ''}
+        </span>
+      </li>`
+    )
+    .join('');
+
+  return `<ul class="checklist">${items}</ul>`;
+}
+
+/** 未完了のうち、いちばん最初のものだけをボタンにする */
+function nextAction(steps, admin) {
+  // 管理者を作った直後は、まずパスワードを控えてログインしてもらう
+  if (admin) return '';
+
+  const next = steps.find((s) => !s.done && s.href);
+  if (!next) return '<p><a class="btn primary" href="/admin">管理画面へ</a></p>';
+
+  return `<p><a class="btn primary" href="${next.href}">${escapeHtml(next.action)}</a></p>`;
 }
 
 function setupPage(status, title, body) {
@@ -244,8 +355,50 @@ function setupPage(status, title, body) {
  * - 値はリクエストのたびに新しく作り、保存も記録もしない
  * - 他人がこのURLを開いても、その人用の別の乱数が出るだけ
  * - 形式は src/integrations/crypto.js の要件（32バイトのbase64）に合わせている
+ * - **すでに登録済みの鍵は作り直さない**（作り直すと復号できなくなるため）
  */
-function renderKeys() {
+function renderKeys(env) {
+  const keys = [
+    {
+      name: 'SESSION_PEPPER',
+      note: 'ログイン情報を保護するために使います。',
+      registered: !!env.SESSION_PEPPER,
+      breaks: 'これを変えると、全員がログインできなくなります。'
+    },
+    {
+      name: 'TOKEN_ENC_KEY',
+      note: 'Beds24 のトークンを暗号化して保存するために使います。',
+      registered: !!env.TOKEN_ENC_KEY,
+      breaks: 'これを変えると、Beds24 のトークンを読めなくなり、つなぎ直しが必要になります。'
+    }
+  ];
+
+  const signpost = `<div class="banner">
+      <strong>この画面は「秘密の鍵を作る」専用です。</strong>
+      <p class="small">初回セットアップ（テーブル作成・管理者アカウント）は
+      <a href="/setup">/setup</a> です。</p>
+      <p><a class="btn" href="/setup">初回セットアップ（/setup）へ</a></p>
+    </div>`;
+
+  const missing = keys.filter((k) => !k.registered);
+
+  if (missing.length === 0) {
+    return page({
+      title: '鍵の生成',
+      nav: false,
+      body: `<h2>秘密の鍵</h2>
+        <div class="banner ok"><strong>2つとも登録済みです。この画面はもう使いません。</strong></div>
+        <div class="banner error">
+          <strong>鍵を作り直さないでください。</strong>
+          <ul class="small">
+            ${keys.map((k) => `<li>${escapeHtml(k.name)}: ${escapeHtml(k.breaks)}</li>`).join('')}
+          </ul>
+        </div>
+        ${signpost}
+        <p><a class="btn" href="/login">ログイン画面へ</a></p>`
+    });
+  }
+
   const generate = () => {
     const bytes = crypto.getRandomValues(new Uint8Array(32));
     let binary = '';
@@ -253,18 +406,24 @@ function renderKeys() {
     return btoa(binary);
   };
 
-  const field = (name, note, value) => `
-    <label for="${name}">${name}</label>
-    <p class="small muted">${note}</p>
+  const field = (key) => `
+    <label for="${key.name}">${key.name}</label>
+    <p class="small muted">${escapeHtml(key.note)}</p>
     <div class="copy-row">
-      <input id="${name}" type="text" value="${escapeHtml(value)}" readonly spellcheck="false">
-      <button type="button" class="copy" data-target="${name}">コピー</button>
+      <input id="${key.name}" type="text" value="${escapeHtml(generate())}" readonly spellcheck="false">
+      <button type="button" class="copy" data-target="${key.name}">コピー</button>
     </div>`;
+
+  const done = keys
+    .filter((k) => k.registered)
+    .map((k) => `<p class="small">${escapeHtml(k.name)} … <strong>登録済み</strong>（作り直しません）</p>`)
+    .join('');
 
   return page({
     title: '鍵の生成',
     nav: false,
     body: `<h2>秘密の鍵</h2>
+     ${signpost}
      <div class="banner">
        <strong>この画面の値は他人に見せないでください。</strong>
        <p class="small">パスワードと同じ扱いです。チャットやメールに貼らないでください。
@@ -272,10 +431,10 @@ function renderKeys() {
      </div>
 
      <p>Cloudflare の <strong>Settings → Variables and Secrets</strong> に、
-     下の2つを <strong>Secret</strong> として登録してください。</p>
+     下の値を <strong>Secret</strong> として登録してください。</p>
 
-     ${field('SESSION_PEPPER', 'ログイン情報を保護するために使います。', generate())}
-     ${field('TOKEN_ENC_KEY', 'Beds24 のトークンを暗号化して保存するために使います。', generate())}
+     ${done}
+     ${missing.map(field).join('')}
 
      <p class="small muted">※ 画面を再読み込みすると別の値になります。
      登録に使うのは1回だけなので、コピーしたらそのまま登録してください。</p>
@@ -287,7 +446,7 @@ function renderKeys() {
 async function checkHealth(env) {
   const health = {
     ok: true,
-    stage: 'm4',
+    stage: 'm5',
     d1: { connected: false }
   };
 
@@ -313,6 +472,7 @@ async function checkHealth(env) {
       // SQLite / Cloudflare が自動で作る管理用の表。アプリのデータではない
       internalTables: schema.internalTables,
       users: await countUsers(env.DB),
+      unitMap: (await listUnitMap(env.DB)).length,
       lastSuccessRunAt: run.lastSuccessAt,
       staleDays: run.staleDays
     };

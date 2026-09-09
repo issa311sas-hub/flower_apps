@@ -14,6 +14,7 @@ import { listStaff } from '../../db/staff.js';
 import { getRunHealth, listRuns } from '../../db/runs.js';
 import { listUnacknowledged } from '../../db/notifications.js';
 import { getAuthStatus } from '../../db/beds24Auth.js';
+import { listUnitMap } from '../../db/units.js';
 import { countMissingDays } from '../../db/availability.js';
 import { getSetting } from '../../db/settings.js';
 import { jstToday, addDays } from '../../core/dates.js';
@@ -25,12 +26,13 @@ export async function showAdminHome(request, env, options = {}) {
   const nowMs = options.now ?? Date.now();
   const today = jstToday(nowMs);
 
-  const [health, beds24, notices, runs, missing] = await Promise.all([
+  const [health, beds24, notices, runs, missing, unitMap] = await Promise.all([
     getRunHealth(env.DB, nowMs),
     getAuthStatus(env.DB, nowMs),
     listUnacknowledged(env.DB, 5),
     listRuns(env.DB, 5),
-    countMissingDays(env.DB, { from: today, to: addDays(today, 30) })
+    countMissingDays(env.DB, { from: today, to: addDays(today, 30) }),
+    listUnitMap(env.DB)
   ]);
 
   const banners = notices
@@ -75,6 +77,8 @@ export async function showAdminHome(request, env, options = {}) {
           }</td></tr>
         </table>
 
+        ${raw(setupWarning(beds24, unitMap.length))}
+
         <h2>スタッフの入力状況（今後30日）</h2>
         <div class="scroll-x"><table>
           <tr><th>担当者</th><th>入力済み</th></tr>
@@ -87,11 +91,51 @@ export async function showAdminHome(request, env, options = {}) {
           ${raw(runRows || '<tr><td colspan="4">まだ実行されていません</td></tr>')}
         </table></div>
 
-        <p style="margin-top:24px"><a class="btn" href="/admin/staff">スタッフのアカウント管理</a></p>
-        <p class="small muted">割り当て一覧・タイムライン・Beds24接続の画面は次の工程で作ります。</p>
+        <h2>操作</h2>
+        <form method="post" action="/admin/run">
+          <p><button type="submit" class="primary">いま実行する</button></p>
+          <p class="small muted">
+            Beds24 から予約を取り直し、担当を割り当て直します。20秒ほどかかることがあります。
+          </p>
+        </form>
+
+        <p class="links">
+          <a class="btn" href="/admin/assignments">割り当て一覧</a>
+          <a class="btn" href="/admin/beds24">Beds24・ユニット対応づけ</a>
+          <a class="btn" href="/admin/runs">実行ログと警告</a>
+          <a class="btn" href="/admin/staff">スタッフのアカウント</a>
+        </p>
+
+        <p class="small muted">担当の手動変更とタイムラインは次の工程で作ります。</p>
       `
     })
   );
+}
+
+/**
+ * 「まだ使える状態になっていない」ことを最初に伝える。
+ * 接続と対応づけのどちらが欠けても予約は1件も入らないため、
+ * 空の一覧を見て悩ませない。
+ */
+function setupWarning(beds24, unitMapCount) {
+  if (!beds24.hasToken) {
+    return `<div class="banner error">
+        <strong>Beds24 につながっていません。</strong>
+        <p class="small">予約を取り込めないため、清掃予定は作られません。</p>
+        <p><a class="btn primary" href="/admin/beds24">Beds24 につなぐ</a></p>
+      </div>`;
+  }
+
+  if (unitMapCount === 0) {
+    return `<div class="banner error">
+        <strong>ユニットの対応づけが未登録です。</strong>
+        <p class="small">Beds24 の部屋がこちらの b2〜c4 のどれに当たるか分からないため、
+        取得した予約を1件も取り込めません。</p>
+        <p><a class="btn primary" href="/admin/beds24">対応づけを登録する</a></p>
+      </div>`;
+  }
+
+  return '';
 }
 
 // ------------------------------------------------------------------

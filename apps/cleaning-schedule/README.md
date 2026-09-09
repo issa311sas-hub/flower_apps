@@ -41,6 +41,11 @@ src/
     diff.js           ←   前回との差分計算
     nextGuests.js     ←   「次に泊まる人数」の算出
     dates.js          ←   JST前提の日付ユーティリティ
+  web/
+    pages/            ← 画面（1画面群につき1ファイル）
+      login.js staff.js admin.js
+      beds24.js       ←   Beds24接続とユニット対応づけ（★予約が入る入口）
+      assignments.js runs.js
   db/                 ← D1 アクセス（1テーブル群につき1ファイル）
     settings.js staff.js units.js bookings.js
     availability.js assignments.js runs.js notifications.js
@@ -59,6 +64,7 @@ test/
   legacy/             ←   比較用にコピーした旧ロジック
   core/               ←   業務ルール・日付・純粋性のテスト
   db/                 ←   データ層のテスト（実スキーマ・実SQLで検証）
+  web/                ←   画面のテスト（Worker の fetch を直接叩く）
   support/d1-sqlite.js←   node:sqlite の上に D1 互換APIをかぶせたテスト用アダプタ
 wrangler.jsonc        ← Worker 設定（D1 バインディング・cron）
 ```
@@ -81,10 +87,12 @@ npm run dev       # ローカルで Worker を起動
 - [x] D1 スキーマとデータ層（実スキーマに対するテスト42件）
 - [x] Beds24 API 連携・日次処理・見張り役（cron 接続済み。Beds24 への実接続は未実施）
 - [x] 認証とスタッフ画面（ログイン・予定確認・出勤入力・完了報告）
-- [ ] 管理画面（割り当て一覧・タイムライン・Beds24接続・設定）
+- [x] Beds24 接続・ユニット対応づけ・手動実行・割り当て一覧（読み取り）・実行ログ
+- [ ] 管理画面の続き（担当の手動変更・タイムライン・設定）
 - [ ] Slack 通知・稼働監視
-- [ ] デプロイと移行
+- [ ] 旧 GAS 版との並行稼働と切り替え
 
 ## ステータス
 
-実装中（割り当てエンジンのみ完了）
+実装中。Cloudflare 上で動作中で、スタッフ画面と Beds24 連携まで使える状態。
+セットアップ手順は `docs/setup-cloudflare-beginner.md`。

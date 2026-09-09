@@ -285,14 +285,59 @@ describe('初回セットアップでの管理者作成', () => {
     expect(Number(count)).toBe(1);
   });
 
-  it('2回目は管理者を作り直さない', async () => {
+  it('2回目は管理者を作り直さず、ログインを求める', async () => {
+    // 管理者が居る＝運用が始まっている。DBの状態を誰にでも見せない
     const fresh = { DB: createTestDb({ applyMigrations: false }), SESSION_PEPPER: PEPPER };
     await worker.fetch(get('/setup'), fresh);
-    const second = await worker.fetch(get('/setup'), fresh);
-    const body = await second.text();
 
-    expect(body).toContain('すでに完了しています');
+    const second = await worker.fetch(get('/setup'), fresh);
+    expect(second.status).toBe(303);
+    expect(second.headers.get('location')).toContain('/login');
+
     const count = await fresh.DB.prepare('SELECT COUNT(*) AS n FROM users').first('n');
     expect(Number(count)).toBe(1);
+  });
+
+  it('管理者でログインしていれば、2回目も進み具合を確認できる', async () => {
+    const admin = await seedAdmin();
+    const { cookie } = await login(admin.loginId, admin.password);
+
+    const res = await worker.fetch(get('/setup', { cookie }), env);
+    const body = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(body).toContain('セットアップはすでに完了しています');
+    expect(body).toContain('Beds24 につなぐ');
+  });
+
+  it('スタッフは初回セットアップの画面に入れない', async () => {
+    await seedAdmin();
+    const staff = await seedStaff('hosoda', '細田さん');
+    const { cookie } = await login(staff.loginId, staff.password);
+
+    const res = await worker.fetch(get('/setup', { cookie }), env);
+    expect(res.headers.get('location')).toBe('/me');
+  });
+});
+
+describe('秘密の鍵の画面', () => {
+  it('登録済みなら鍵を作り直さない', async () => {
+    const res = await worker.fetch(get('/setup/keys'), env);
+    const body = await res.text();
+
+    expect(body).toContain('2つとも登録済みです');
+    expect(body).toContain('鍵を作り直さないでください');
+    expect(body).not.toContain('id="SESSION_PEPPER"');
+  });
+
+  it('未登録の鍵だけを生成し、/setup への案内を出す', async () => {
+    const res = await worker.fetch(get('/setup/keys'), { DB: env.DB });
+    const body = await res.text();
+
+    expect(body).toContain('id="SESSION_PEPPER"');
+    expect(body).toContain('id="TOKEN_ENC_KEY"');
+    // /setup と間違えやすいので、必ず行き先を示す
+    expect(body).toContain('この画面は「秘密の鍵を作る」専用です');
+    expect(body).toContain('href="/setup"');
   });
 });

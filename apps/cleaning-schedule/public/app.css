@@ -338,3 +338,66 @@ tr.unassigned td { background: var(--unassigned); }
   background: var(--surface);
   z-index: 1;
 }
+
+/* --- セットアップの進み具合 --- */
+.checklist {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.checklist li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.checklist li:last-child { border-bottom: none; }
+.checklist li.todo { background: var(--warn-bg); }
+
+.checklist .mark {
+  flex: 0 0 32px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.checklist li.done .mark { color: var(--ok); }
+.checklist li.todo .mark { font-size: 13px; color: var(--text-muted); }
+
+/* --- 絞り込みフォーム（管理画面） --- */
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+  margin: 12px 0;
+}
+
+.filters > div { flex: 1 1 140px; }
+.filters label { margin: 0 0 2px; font-size: 14px; }
+.filters button { width: 100%; }
+
+/* --- 画面への入り口を並べる --- */
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.links .btn {
+  flex: 1 1 200px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  text-decoration: none;
+  color: var(--text);
+}
+
+.badge.error { color: var(--danger); border-color: var(--danger); }
