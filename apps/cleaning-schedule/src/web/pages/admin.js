@@ -15,6 +15,7 @@ import { getRunHealth, listRuns } from '../../db/runs.js';
 import { listUnacknowledged } from '../../db/notifications.js';
 import { getAuthStatus } from '../../db/beds24Auth.js';
 import { listUnitMap } from '../../db/units.js';
+import { hasWebhook } from '../../integrations/slack.js';
 import { countMissingDays } from '../../db/availability.js';
 import { getSetting } from '../../db/settings.js';
 import { jstToday, addDays } from '../../core/dates.js';
@@ -26,13 +27,14 @@ export async function showAdminHome(request, env, options = {}) {
   const nowMs = options.now ?? Date.now();
   const today = jstToday(nowMs);
 
-  const [health, beds24, notices, runs, missing, unitMap] = await Promise.all([
+  const [health, beds24, notices, runs, missing, unitMap, slackOn] = await Promise.all([
     getRunHealth(env.DB, nowMs),
     getAuthStatus(env.DB, nowMs),
     listUnacknowledged(env.DB, 5),
     listRuns(env.DB, 5),
     countMissingDays(env.DB, { from: today, to: addDays(today, 30) }),
-    listUnitMap(env.DB)
+    listUnitMap(env.DB),
+    hasWebhook(env.DB)
   ]);
 
   const banners = notices
@@ -75,7 +77,18 @@ export async function showAdminHome(request, env, options = {}) {
           <tr><th>Beds24</th><td>${escapeHtml(beds24.state)}${
             beds24.daysUntilExpiry !== null ? `（失効まで約${beds24.daysUntilExpiry}日）` : ''
           }</td></tr>
+          <tr><th>Slack 通知</th><td>${slackOn ? '設定済み' : '未設定'}</td></tr>
         </table>
+
+        ${raw(
+          slackOn
+            ? ''
+            : `<div class="banner">
+                 <strong>Slack への通知が未設定です。</strong>
+                 <p class="small">いまは、自動実行が止まってもこの画面を開くまで気づけません。</p>
+                 <p><a class="btn" href="/admin/settings">通知を設定する</a></p>
+               </div>`
+        )}
 
         ${raw(setupWarning(beds24, unitMap.length))}
 
@@ -104,6 +117,7 @@ export async function showAdminHome(request, env, options = {}) {
           <a class="btn" href="/admin/beds24">Beds24・ユニット対応づけ</a>
           <a class="btn" href="/admin/runs">実行ログと警告</a>
           <a class="btn" href="/admin/staff">スタッフのアカウント</a>
+          <a class="btn" href="/admin/settings">設定・Slack通知</a>
         </p>
 
         <p class="small muted">担当の手動変更とタイムラインは次の工程で作ります。</p>

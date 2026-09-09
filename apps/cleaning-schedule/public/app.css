@@ -401,3 +401,19 @@ tr.unassigned td { background: var(--unassigned); }
 }
 
 .badge.error { color: var(--danger); border-color: var(--danger); }
+
+/* --- チェックボックス（設定画面） --- */
+label.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 400;
+  margin-top: 20px;
+}
+
+label.checkbox input[type="checkbox"] {
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  flex: 0 0 auto;
+}

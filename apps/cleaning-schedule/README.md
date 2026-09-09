@@ -53,10 +53,12 @@ src/
     migrate.js        ←   /setup で使う初回セットアップ（空のDBのときだけ動く）
   integrations/
     beds24.js         ←   Beds24 API V2（認証・予約取得）
+    slack.js          ←   Incoming Webhook（URLは暗号化して保存）
     crypto.js         ←   AES-GCM / PBKDF2（Web Cryptoのみ）
   jobs/
     dailyRun.js       ←   毎朝6時: 取得→割り当て→保存→通知
     keepAlive.js      ←   毎日18時: トークン維持・稼働監視・セッション掃除
+    notify.js         ←   記録済みの通知をまとめてSlackへ送る（送信失敗は次回再送）
 tools/
   build-console-sql.mjs ← migrations から Console 貼り付け用SQLを生成（保険）
 test/
@@ -88,11 +90,10 @@ npm run dev       # ローカルで Worker を起動
 - [x] Beds24 API 連携・日次処理・見張り役（cron 接続済み。Beds24 への実接続は未実施）
 - [x] 認証とスタッフ画面（ログイン・予定確認・出勤入力・完了報告）
 - [x] Beds24 接続・ユニット対応づけ・手動実行・割り当て一覧（読み取り）・実行ログ
-- [ ] 管理画面の続き（担当の手動変更・タイムライン・設定）
-- [ ] Slack 通知・稼働監視
-- [ ] 旧 GAS 版との並行稼働と切り替え
+- [x] Slack 通知・死活監視（/api/health は異常時に 503 を返す）
+- [ ] 管理画面の続き（担当の手動変更・タイムライン）
 
 ## ステータス
 
-実装中。Cloudflare 上で動作中で、スタッフ画面と Beds24 連携まで使える状態。
+運用中。旧 GAS 版は停止済みで、こちらが本番。
 セットアップ手順は `docs/setup-cloudflare-beginner.md`。

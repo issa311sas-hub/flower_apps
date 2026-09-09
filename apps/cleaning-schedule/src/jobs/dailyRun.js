@@ -114,6 +114,22 @@ export async function runDaily(env, options = {}) {
     });
 
     // 6. 気づいてほしいことを通知に積む
+    //
+    // 正常時も1日1回だけ知らせる。「今日も動いた」が届かないこと自体が、
+    // 止まっていることの合図になる（旧版はこれが無くて止まっても気づけなかった）。
+    if (String(settings.notify_daily_summary ?? '1') === '1') {
+      await recordNotification(
+        db,
+        {
+          kind: 'daily_summary',
+          level: 'info',
+          subject: `清掃の割り当てを更新しました（${today}）`,
+          body: message
+        },
+        { at, throttleHours: 6 }
+      );
+    }
+
     if (result.stats.unassigned > 0) {
       await recordNotification(
         db,

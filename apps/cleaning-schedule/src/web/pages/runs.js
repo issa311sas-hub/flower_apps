@@ -15,6 +15,7 @@ import { requireUser, checkOrigin } from '../auth.js';
 import { listRuns, getRun } from '../../db/runs.js';
 import { listNotifications, acknowledge } from '../../db/notifications.js';
 import { runDaily } from '../../jobs/dailyRun.js';
+import { flushNotifications } from '../../jobs/notify.js';
 
 const KIND_LABEL = { cron: '自動', manual: '手動', keepalive: '見張り' };
 
@@ -31,6 +32,13 @@ export async function runNow(request, env, options = {}) {
     fetchImpl: options.fetchImpl,
     sleep: options.sleep
   });
+
+  // Slack にも同じ内容を流す。手動実行でも動作確認になる
+  try {
+    await flushNotifications(env, { now: options.now, fetchImpl: options.fetchImpl });
+  } catch {
+    // 通知が送れなくても実行結果は見せる（記録はこの画面に残っている）
+  }
 
   // 成否にかかわらず詳細へ送る（失敗したときこそ中身を見てほしい）
   return redirect(`/admin/runs/${result.runId}`);

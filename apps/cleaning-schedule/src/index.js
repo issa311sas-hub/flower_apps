@@ -13,12 +13,13 @@ import { listUnitNames, listUnitMap } from './db/units.js';
 import { listStaff } from './db/staff.js';
 import { getRunHealth } from './db/runs.js';
 import { applyMigrations, getSchemaState } from './db/migrate.js';
-import { getAuthStatus } from './db/beds24Auth.js';
+import { getAuthStatus, STATE } from './db/beds24Auth.js';
 import { countUsers, createUser, listUsers } from './db/users.js';
 import { getSetting, recordPepperFingerprint, checkPepperFingerprint } from './db/settings.js';
 
 import { runDaily } from './jobs/dailyRun.js';
 import { runKeepAlive } from './jobs/keepAlive.js';
+import { flushNotifications } from './jobs/notify.js';
 
 import { showLogin, doLogin, doLogout } from './web/pages/login.js';
 import {
@@ -39,6 +40,7 @@ import {
 import { showBeds24, connectBeds24, discoverUnits, saveUnitMap } from './web/pages/beds24.js';
 import { showAssignments } from './web/pages/assignments.js';
 import { runNow, showRuns, showRun, ackNotification } from './web/pages/runs.js';
+import { showSettings, saveSettings, testNotification } from './web/pages/settings.js';
 
 // migrations/*.sql を文字列として取り込む（wrangler が .sql を Text として扱う）。
 // スキーマの正は .sql のままにして、JS側に写し直さない。
@@ -80,6 +82,10 @@ router.post('/admin/beds24/map', (request, env) => saveUnitMap(request, env));
 
 router.get('/admin/assignments', (request, env) => showAssignments(request, env));
 
+router.get('/admin/settings', (request, env) => showSettings(request, env));
+router.post('/admin/settings', (request, env) => saveSettings(request, env));
+router.post('/admin/settings/test', (request, env) => testNotification(request, env));
+
 router.post('/admin/run', (request, env) => runNow(request, env));
 router.get('/admin/runs', (request, env) => showRuns(request, env));
 router.get('/admin/runs/:id', (request, env, params) => showRun(request, env, params));
@@ -87,7 +93,18 @@ router.post('/admin/notifications/:id/ack', (request, env, params) => ackNotific
 
 router.get('/setup', (request, env) => renderSetup(request, env));
 router.get('/setup/keys', (request, env) => htmlResponse(renderKeys(env)));
-router.get('/api/health', async (request, env) => jsonResponse(await checkHealth(env)));
+/**
+ * 死活監視の窓口。
+ *
+ * 異常時は **HTTP 503** を返す。無料の監視サービス（UptimeRobot 等）は
+ * ステータスコードしか見ないものが多く、これだけで
+ * 「システムごと止まった」「自動実行が滞っている」を外から検知できる。
+ * Worker 自身が落ちたときは、そもそも応答が返らないので同じく検知される。
+ */
+router.get('/api/health', async (request, env) => {
+  const health = await checkHealth(env);
+  return jsonResponse(health, { status: health.ok ? 200 : 503 });
+});
 
 export default {
   async fetch(request, env) {
@@ -137,6 +154,17 @@ export default {
     } catch (error) {
       console.error(`[cleaning-schedule] ${label}が異常終了: ${error?.message ?? error}`);
       throw error;
+    } finally {
+      // 通知は必ず最後に送る。ジョブが失敗したときこそ届いてほしいので finally に置く。
+      // Slack 側の障害でジョブを失敗扱いにはしない（記録は管理画面に残っている）。
+      try {
+        const notified = await flushNotifications(env);
+        if (notified.sent > 0 || notified.failed > 0) {
+          console.log(`[cleaning-schedule] 通知: 送信 ${notified.sent}件 / 失敗 ${notified.failed}件`);
+        }
+      } catch (error) {
+        console.error(`[cleaning-schedule] 通知の送信に失敗: ${error?.message ?? error}`);
+      }
     }
   }
 };
@@ -470,7 +498,7 @@ function renderKeys(env) {
 async function checkHealth(env) {
   const health = {
     ok: true,
-    stage: 'm5',
+    stage: 'm6',
     d1: { connected: false }
   };
 
@@ -485,6 +513,8 @@ async function checkHealth(env) {
     const staff = await listStaff(env.DB);
     const run = await getRunHealth(env.DB);
     const schema = await getSchemaState(env.DB);
+    const auth = await getAuthStatus(env.DB);
+    const fingerprint = await checkPepperFingerprint(env.DB, env.SESSION_PEPPER ?? '');
 
     health.d1 = {
       connected: true,
@@ -501,7 +531,6 @@ async function checkHealth(env) {
       staleDays: run.staleDays
     };
 
-    const auth = await getAuthStatus(env.DB);
     health.beds24 = {
       state: auth.state,
       connected: auth.hasToken,
@@ -511,7 +540,6 @@ async function checkHealth(env) {
     };
 
     // 秘密の設定は「あるかどうか」だけ返す（値は絶対に返さない）
-    const fingerprint = await checkPepperFingerprint(env.DB, env.SESSION_PEPPER ?? '');
     health.secrets = {
       SESSION_PEPPER: !!env.SESSION_PEPPER,
       TOKEN_ENC_KEY: !!env.TOKEN_ENC_KEY,
@@ -520,10 +548,26 @@ async function checkHealth(env) {
       pepperMatchesPasswords: fingerprint.known ? fingerprint.matches : null
     };
 
+    // 外から見て「いま異常か」を判定する。
+    // 初回セットアップ中（まだ一度も実行していない）は異常扱いにしない。
+    const problems = [];
+
     if (units.length === 0 || staff.length === 0) {
-      health.ok = false;
+      problems.push('初期データが入っていません。/setup を開いてください。');
       health.d1.error = '初期データが入っていません。/setup を開いてください。';
     }
+    if (auth.state === STATE.NEEDS_RECONNECT) {
+      problems.push('Beds24 の再接続が必要です。招待コードを発行し直してください。');
+    }
+    if (run.isStale) {
+      problems.push(`自動実行が ${run.staleDays}日間 成功していません。`);
+    }
+    if (fingerprint.known && !fingerprint.matches) {
+      problems.push('SESSION_PEPPER が変わっているため、誰もログインできません。');
+    }
+
+    health.problems = problems;
+    health.ok = problems.length === 0;
   } catch (e) {
     health.ok = false;
     health.d1.error = `D1 へのクエリに失敗しました: ${e.message}`;

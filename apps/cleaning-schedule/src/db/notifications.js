@@ -38,6 +38,22 @@ export async function recordNotification(
   return { recorded: true, id: result.meta.last_row_id };
 }
 
+/**
+ * まだ送れていない通知。
+ *
+ * 送信に失敗したものは sent_at が空のままなので、次の実行で自動的に再送される。
+ * ただし古すぎるものは対象外にする（Slack を後から設定したときに、
+ * 何日も前の警告がまとめて流れてこないように）。
+ */
+export async function listUnsent(db, { limit = 10, sinceHours = 72, at = nowIso() } = {}) {
+  const since = new Date(Date.parse(at) - sinceHours * 3600 * 1000).toISOString();
+  const { results } = await db
+    .prepare('SELECT * FROM notifications WHERE sent_at IS NULL AND created_at > ? ORDER BY created_at LIMIT ?')
+    .bind(since, limit)
+    .all();
+  return results;
+}
+
 export async function markSent(db, id, { error = null, at = nowIso() } = {}) {
   await db
     .prepare('UPDATE notifications SET sent_at = ?, send_error = ? WHERE id = ?')
