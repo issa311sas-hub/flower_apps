@@ -55,3 +55,13 @@ document.addEventListener('click', async (event) => {
   button.textContent = 'コピーしました';
   setTimeout(() => (button.textContent = original), 2000);
 });
+
+/* 取り返しのつかない操作の確認
+ *
+ * data-confirm を持つ form は、送信前に一度確認する。
+ * このJSが読み込まれなくても、押せば実行されるだけで壊れない。
+ */
+document.addEventListener('submit', (event) => {
+  const message = event.target?.dataset?.confirm;
+  if (message && !window.confirm(message)) event.preventDefault();
+});

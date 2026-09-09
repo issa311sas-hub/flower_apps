@@ -12,6 +12,7 @@
  * ■ フェーズ構成
  *   Phase 0   : 前回の割り当てを引き継ぐ（変更のない予約）
  *   Phase 1   : チェックアウト日当日にスタッフを割り当て（延期できない予約を優先）
+ *   Phase 1.4 : 外注に回した清掃を、空き枠ができていれば未割当に戻す
  *   Phase 1.5 : 既存の未割当を、空いたスタッフ枠に再割り当て
  *   Phase 2   : 未割当を +1日 / +2日 のスタッフ枠に振り替え（早い日を優先）
  *   Phase 2.5 : Rクリーン回避スワップ（延期できる予約を動かして枠を空ける）
@@ -36,7 +37,10 @@ export const DEFAULT_PARAMS = {
   unassignedLabel: '未割当',
   // 次の予約がないユニットの清掃を +2日 まで延期してよいか（仕様どおりの挙動）。
   // false にすると旧 GAS 版の実装漏れを再現する。新旧一致テスト専用。
-  allowDeferWithoutNextBooking: true
+  allowDeferWithoutNextBooking: true,
+  // 一度 外注 に回した清掃でも、スタッフの空き枠ができたら取り戻すか。
+  // false にすると旧 GAS 版の挙動を再現する。新旧一致テスト専用。
+  reclaimOutsourced: true
 };
 
 /**
@@ -279,6 +283,40 @@ export function assign(input) {
         all.push(makeAssignment(items[idx], unassignedLabel, ctx));
         addUsage(usageByDate, date, unassignedLabel);
       }
+    }
+  }
+
+  // --------------------------------------------------------
+  // Phase 1.4: 外注の引き戻し
+  //
+  //   前回 外注 に回した清掃でも、その日にスタッフの空き枠ができていれば
+  //   未割当に戻す。直後の Phase 1.5 がスタッフに割り当て直す。
+  //
+  //   ★旧 GAS 版にはこの処理がない。旧版は出勤予定が常に先に入っていたため
+  //   問題になりにくかったが、一度 外注 に落ちた清掃はどのフェーズも拾わないため、
+  //   **あとから出勤可能件数を入れても外注のまま**になる（外注は実費）。
+  //   Phase 0 に「14日以上先の外注は未割当に戻す」があるだけで、
+  //   直近14日はまったく取り戻せなかった。
+  //
+  //   params.reclaimOutsourced = false で旧版の挙動を再現できる（新旧一致テスト用）。
+  // --------------------------------------------------------
+  if (params.reclaimOutsourced && outsourceName) {
+    for (const a of all) {
+      if (a.isManual) continue; // 管理者が手で決めたものは動かさない
+      if (a.staffName !== outsourceName) continue;
+      if (a.cleaningDate < input.today) continue; // 過去は書き換えない
+      // 終わった清掃を別の人の担当にしない
+      if (existingMap.get(a.bookingId)?.completedAt) continue;
+
+      const hasRoom = workers.some((m) => remainingFor(capacity, usageByDate, m, a.cleaningDate) > 0);
+      if (!hasRoom) continue;
+
+      a.staffName = unassignedLabel;
+      a.status = STATUS.NEEDS_REVIEW;
+
+      const used = usageByDate[a.cleaningDate];
+      if (used && used[outsourceName]) used[outsourceName]--;
+      addUsage(usageByDate, a.cleaningDate, unassignedLabel);
     }
   }
 

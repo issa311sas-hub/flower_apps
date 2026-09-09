@@ -216,7 +216,11 @@ function randomScenario(rng) {
 // （旧版の実装漏れの修正。docs/decisions.md 参照）。
 // 一致テストは移植の忠実性を見るのが目的なので、この1点だけ旧版互換に戻して比較する。
 // ここ以外に意図的な挙動の違いはない。
-const LEGACY_COMPAT = { allowDeferWithoutNextBooking: false };
+const LEGACY_COMPAT = {
+  allowDeferWithoutNextBooking: false,
+  // 旧版は一度 外注 に回した清掃を取り戻さない（Phase 1.4 は新実装で追加した挙動）
+  reclaimOutsourced: false
+};
 
 function runBoth(sc) {
   const legacy = normalizeLegacy(legacyDoMatching(toLegacyInput(sc)));

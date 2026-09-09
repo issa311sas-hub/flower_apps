@@ -15,6 +15,8 @@ import { getRunHealth, listRuns } from '../../db/runs.js';
 import { listUnacknowledged } from '../../db/notifications.js';
 import { getAuthStatus } from '../../db/beds24Auth.js';
 import { listUnitMap } from '../../db/units.js';
+import { listAssignments } from '../../db/assignments.js';
+import { DEFAULT_PARAMS } from '../../core/assign.js';
 import { hasWebhook } from '../../integrations/slack.js';
 import { countMissingDays } from '../../db/availability.js';
 import { getSetting } from '../../db/settings.js';
@@ -27,15 +29,22 @@ export async function showAdminHome(request, env, options = {}) {
   const nowMs = options.now ?? Date.now();
   const today = jstToday(nowMs);
 
-  const [health, beds24, notices, runs, missing, unitMap, slackOn] = await Promise.all([
+  const [health, beds24, notices, runs, missing, unitMap, slackOn, soon, allStaff] = await Promise.all([
     getRunHealth(env.DB, nowMs),
     getAuthStatus(env.DB, nowMs),
     listUnacknowledged(env.DB, 5),
     listRuns(env.DB, 5),
     countMissingDays(env.DB, { from: today, to: addDays(today, 30) }),
     listUnitMap(env.DB),
-    hasWebhook(env.DB)
+    hasWebhook(env.DB),
+    // 外注は実費なので、いちばん先に目に入る場所で件数を出す
+    listAssignments(env.DB, { from: today, to: addDays(today, 14) }),
+    listStaff(env.DB, { includeInactive: true })
   ]);
+
+  const outsourceName = allStaff.find((s) => s.kind === 'outsource')?.name ?? null;
+  const soonOutsourced = soon.filter((a) => a.staffName === outsourceName).length;
+  const soonUnassigned = soon.filter((a) => a.staffName === DEFAULT_PARAMS.unassignedLabel).length;
 
   const banners = notices
     .map(
@@ -78,6 +87,11 @@ export async function showAdminHome(request, env, options = {}) {
             beds24.daysUntilExpiry !== null ? `（失効まで約${beds24.daysUntilExpiry}日）` : ''
           }</td></tr>
           <tr><th>Slack 通知</th><td>${slackOn ? '設定済み' : '未設定'}</td></tr>
+          <tr><th>今後14日</th><td>
+            清掃 ${soon.length}件 /
+            <strong>外注 ${soonOutsourced}件</strong> /
+            未割当 ${soonUnassigned}件
+          </td></tr>
         </table>
 
         ${raw(
@@ -109,6 +123,17 @@ export async function showAdminHome(request, env, options = {}) {
           <p><button type="submit" class="primary">いま実行する</button></p>
           <p class="small muted">
             Beds24 から予約を取り直し、担当を割り当て直します。20秒ほどかかることがあります。
+          </p>
+        </form>
+
+        <form method="post" action="/admin/run"
+              data-confirm="いまの割り当てをいったん白紙に戻して、決め直します。よろしいですか？">
+          <input type="hidden" name="rebuild" value="1">
+          <p><button type="submit">ゼロから割り当て直す</button></p>
+          <p class="small muted">
+            いまの担当をいったん白紙に戻してから決め直します。
+            <strong>あとから出勤入力を増やしたのに担当が変わらないとき</strong>に使ってください。
+            手で固定した分と、完了報告が済んだ分はそのまま残ります。
           </p>
         </form>
 

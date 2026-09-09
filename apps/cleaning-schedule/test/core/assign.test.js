@@ -436,3 +436,106 @@ describe('スタッフ構成の一般化（旧版はコード変更が必要だ�
     expect(r.warnings.join()).toContain('稼働スタッフ');
   });
 });
+
+describe('外注の引き戻し（Phase 1.4）', () => {
+  // 実運用で踏んだ問題。出勤入力が空のまま初回実行した結果、今後14日分が
+  // まるごと外注に落ち、あとから出勤可能件数を入れても外注のままだった。
+  const staff = [
+    { name: '細田さん', priority: 1, kind: 'staff', defaultCapacity: 0 },
+    { name: 'Rクリーン', priority: 99, kind: 'outsource', defaultCapacity: 99 }
+  ];
+  const bookings = [{ bookingId: '1', checkoutDate: '2026-09-10', unit: 'b4', guests: 2, title: '' }];
+
+  const outsourced = (extra = {}) => [
+    {
+      bookingId: '1',
+      checkoutDate: '2026-09-10',
+      cleaningDate: '2026-09-10',
+      unit: 'b4',
+      staffName: 'Rクリーン',
+      status: '外注',
+      isManual: false,
+      ...extra
+    }
+  ];
+
+  const run = (existing, capacity, params) =>
+    assign({ today: '2026-09-09', bookings, existing, staff, capacity, params }).assignments[0];
+
+  const withRoom = { '細田さん': { '2026-09-10': 3 } };
+
+  it('あとから出勤可能件数を入れれば、外注からスタッフに戻る', () => {
+    const result = run(outsourced(), withRoom);
+    expect(result.staffName).toBe('細田さん');
+    expect(result.status).toBe('確定');
+  });
+
+  it('空き枠が無ければ外注のまま', () => {
+    expect(run(outsourced(), {}).staffName).toBe('Rクリーン');
+    expect(run(outsourced(), { '細田さん': { '2026-09-10': 0 } }).staffName).toBe('Rクリーン');
+  });
+
+  it('手動で固定した行は動かさない', () => {
+    expect(run(outsourced({ isManual: true }), withRoom).staffName).toBe('Rクリーン');
+  });
+
+  it('完了報告が済んだ行は動かさない', () => {
+    expect(run(outsourced({ completedAt: '2026-09-10T02:00:00Z' }), withRoom).staffName).toBe('Rクリーン');
+  });
+
+  it('過去の清掃日は書き換えない', () => {
+    const past = [{ bookingId: '1', checkoutDate: '2026-09-05', unit: 'b4', guests: 2, title: '' }];
+    const existing = [
+      {
+        bookingId: '1',
+        checkoutDate: '2026-09-05',
+        cleaningDate: '2026-09-05',
+        unit: 'b4',
+        staffName: 'Rクリーン',
+        status: '外注',
+        isManual: false
+      }
+    ];
+
+    const result = assign({
+      today: '2026-09-09',
+      bookings: past,
+      existing,
+      staff,
+      capacity: { '細田さん': { '2026-09-05': 3 } }
+    }).assignments[0];
+
+    expect(result.staffName).toBe('Rクリーン');
+  });
+
+  it('旧版互換モードでは引き戻さない（新旧一致テストが守られる）', () => {
+    expect(run(outsourced(), withRoom, { reclaimOutsourced: false }).staffName).toBe('Rクリーン');
+  });
+
+  it('空き枠より外注が多ければ、埋まる分だけ戻る', () => {
+    const two = [
+      { bookingId: '1', checkoutDate: '2026-09-10', unit: 'b4', guests: 2, title: '' },
+      { bookingId: '2', checkoutDate: '2026-09-10', unit: 'b5', guests: 2, title: '' }
+    ];
+    const existing = two.map((b) => ({
+      bookingId: b.bookingId,
+      checkoutDate: b.checkoutDate,
+      cleaningDate: b.checkoutDate,
+      unit: b.unit,
+      staffName: 'Rクリーン',
+      status: '外注',
+      isManual: false
+    }));
+
+    const result = assign({
+      today: '2026-09-09',
+      bookings: two,
+      existing,
+      staff,
+      capacity: { '細田さん': { '2026-09-10': 1 } }
+    });
+
+    const names = result.assignments.map((a) => a.staffName).sort();
+    expect(names).toEqual(['Rクリーン', '細田さん']);
+  });
+});

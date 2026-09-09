@@ -17,6 +17,7 @@ import { listAssignments, getAssignment, saveAssignments } from '../../src/db/as
 import { applyFetchedBookings } from '../../src/db/bookings.js';
 import { saveTokens } from '../../src/db/beds24Auth.js';
 import { runDaily } from '../../src/jobs/dailyRun.js';
+import { runNow } from '../../src/web/pages/runs.js';
 
 const ORIGIN = 'https://cleaning.example.workers.dev';
 const PEPPER = 'test-pepper';
@@ -87,30 +88,48 @@ async function seed({ staffName = '細田さん', cleaningDate = CHECKOUT } = {}
   );
 }
 
-/** 自動実行を1回まわす（Beds24 は同じ予約を返す） */
-async function runAuto() {
+/** Beds24 の代わり。毎回おなじ予約1件を返す */
+const beds24Stub = async () => ({
+  ok: true,
+  status: 200,
+  json: async () => [
+    {
+      id: 555,
+      roomId: 100,
+      unitId: 1,
+      guestTitle: '消毒ポット',
+      arrival: '2026-09-08',
+      departure: CHECKOUT,
+      numAdult: 2,
+      status: 'confirmed'
+    }
+  ],
+  text: async () => ''
+});
+
+async function connectBeds24() {
   await replaceUnitMap(env.DB, [{ roomId: '100', unitId: '1', unitName: 'b4' }]);
   await saveTokens(env.DB, ENC_KEY, { refreshToken: 'r', accessToken: 'a', expiresInSec: 86400 }, '2026-09-10T00:00:00Z');
+}
 
-  const fetchImpl = async () => ({
-    ok: true,
-    status: 200,
-    json: async () => [
-      {
-        id: 555,
-        roomId: 100,
-        unitId: 1,
-        guestTitle: '消毒ポット',
-        arrival: '2026-09-08',
-        departure: CHECKOUT,
-        numAdult: 2,
-        status: 'confirmed'
-      }
-    ],
-    text: async () => ''
+/** 自動実行を1回まわす */
+async function runAuto() {
+  await connectBeds24();
+  return runDaily(env, { kind: 'manual', now: NOW, fetchImpl: beds24Stub, sleep: async () => {} });
+}
+
+/**
+ * 管理画面の実行ボタン。
+ * ルート経由（worker.fetch）だと fetch を差し替えられず実際に外へ出てしまうため、
+ * ハンドラを直接呼ぶ。ルーティング自体は別のテストで確認している。
+ */
+async function pressRun({ rebuild = false, cookie: cookieValue = cookie } = {}) {
+  await connectBeds24();
+  return runNow(post('/admin/run', rebuild ? { rebuild: '1' } : {}, { cookie: cookieValue }), env, {
+    now: NOW,
+    fetchImpl: beds24Stub,
+    sleep: async () => {}
   });
-
-  return runDaily(env, { kind: 'manual', now: NOW, fetchImpl, sleep: async () => {} });
 }
 
 describe('担当の手動変更', () => {
@@ -337,5 +356,87 @@ describe('タイムライン', () => {
   it('未ログインだとログイン画面に送られる', async () => {
     const res = await worker.fetch(new Request(`${ORIGIN}/admin/timeline`), env);
     expect(res.headers.get('location')).toContain('/login');
+  });
+});
+
+describe('ゼロから割り当て直す', () => {
+  /** 出勤入力が空のまま実行して、全部を外注に落とす（実運用で踏んだ状態を作る） */
+  async function outsourceEverything() {
+    await runAuto();
+    expect((await getAssignment(env.DB, '555')).staffName).toBe('Rクリーン');
+  }
+
+  it('あとから出勤入力を入れれば、押さなくても取り戻せる（Phase 1.4）', async () => {
+    await outsourceEverything();
+
+    const hosoda = await getStaffByName(env.DB, '細田さん');
+    await setCapacityBulk(env.DB, hosoda.id, [{ date: CHECKOUT, capacity: 3 }]);
+
+    await runAuto();
+    expect((await getAssignment(env.DB, '555')).staffName).toBe('細田さん');
+  });
+
+  it('ボタンを押すと白紙に戻してから決め直す', async () => {
+    await outsourceEverything();
+
+    const hosoda = await getStaffByName(env.DB, '細田さん');
+    await setCapacityBulk(env.DB, hosoda.id, [{ date: CHECKOUT, capacity: 3 }]);
+
+    const res = await pressRun({ rebuild: true });
+    expect(res.status).toBe(303);
+
+    expect((await getAssignment(env.DB, '555')).staffName).toBe('細田さん');
+  });
+
+  it('手で固定した分は白紙に戻さない', async () => {
+    await seed({ staffName: '細田さん' });
+    await worker.fetch(
+      post('/admin/assignments/555', { staff_name: '福田さん', cleaning_date: CHECKOUT }, { cookie }),
+      env
+    );
+
+    await pressRun({ rebuild: true });
+
+    const after = await getAssignment(env.DB, '555');
+    expect(after.staffName).toBe('福田さん');
+    expect(after.isManual).toBe(true);
+  });
+
+  it('完了報告が済んだ分は白紙に戻さない', async () => {
+    await seed({ staffName: '細田さん' });
+    await env.DB.prepare("UPDATE assignments SET completed_at = '2026-09-12T02:00:00Z' WHERE booking_id = '555'").run();
+
+    await pressRun({ rebuild: true });
+
+    const after = await getAssignment(env.DB, '555');
+    expect(after.staffName).toBe('細田さん');
+    expect(after.completedAt).toBeTruthy();
+  });
+
+  it('過去の割り当ては白紙に戻さない', async () => {
+    const { resetAllAssignments } = await import('../../src/db/assignments.js');
+    await seed({ staffName: '細田さん', cleaningDate: CHECKOUT });
+
+    const result = await resetAllAssignments(env.DB, { from: '2026-12-01' });
+
+    expect(result.reset).toBe(0);
+    expect((await getAssignment(env.DB, '555')).staffName).toBe('細田さん');
+  });
+
+  it('スタッフは押せない', async () => {
+    await seed({ staffName: '細田さん' });
+    const staff = await getStaffByName(env.DB, '細田さん');
+    const created = await createUser(
+      env.DB,
+      { loginId: 'hosoda', displayName: '細田さん', role: 'staff', staffId: staff.id, mustChange: false },
+      FAST
+    );
+    const login = await worker.fetch(post('/login', { login_id: 'hosoda', password: created.password }), env);
+    const sid = (login.headers.get('set-cookie') ?? '').match(/sid=[^;]+/)?.[0];
+
+    const res = await pressRun({ rebuild: true, cookie: sid });
+
+    expect(res.headers.get('location')).toBe('/me');
+    expect((await getAssignment(env.DB, '555')).staffName).toBe('細田さん');
   });
 });

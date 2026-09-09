@@ -208,6 +208,30 @@ export async function setManual(db, bookingId, patch, { userId = null, changedBy
   return getAssignment(db, bookingId);
 }
 
+/**
+ * すべての割り当てを未割当に戻す（管理画面の「ゼロから割り当て直す」）。
+ *
+ * 行は消さない。消すと完了報告と手動固定が失われるため、
+ * 未割当に戻して清掃日も退去日に戻し、次の自動実行に決め直させる。
+ *
+ * 触らないもの:
+ *   - 手動固定（管理者が手で決めたもの）
+ *   - 完了報告済み（終わった清掃）
+ *   - `from` より前の清掃日（過去は書き換えない）
+ */
+export async function resetAllAssignments(db, { from, unassignedLabel = '未割当', status = '要確認', at = nowIso() } = {}) {
+  const result = await db
+    .prepare(
+      `UPDATE assignments
+          SET staff_name = ?, status = ?, cleaning_date = checkout_date, updated_at = ?
+        WHERE is_manual = 0 AND completed_at IS NULL AND cleaning_date >= ?`
+    )
+    .bind(unassignedLabel, status, at, from)
+    .run();
+
+  return { reset: result.meta?.changes ?? 0 };
+}
+
 /** 手動固定を解除する（次回の自動割り当てで再計算される） */
 export async function clearManual(db, bookingId, at = nowIso()) {
   await db

@@ -13,17 +13,32 @@
 import { html, page, htmlResponse, redirect, raw, escapeHtml } from '../html.js';
 import { requireUser, checkOrigin } from '../auth.js';
 import { listRuns, getRun } from '../../db/runs.js';
+import { resetAllAssignments } from '../../db/assignments.js';
 import { listNotifications, acknowledge } from '../../db/notifications.js';
 import { runDaily } from '../../jobs/dailyRun.js';
+import { jstToday } from '../../core/dates.js';
+import { readForm } from '../auth.js';
 import { flushNotifications } from '../../jobs/notify.js';
 
 const KIND_LABEL = { cron: '自動', manual: '手動', keepalive: '見張り' };
 
-/** 実行ボタン。取得から割り当てまで通しで走らせる */
+/**
+ * 実行ボタン。取得から割り当てまで通しで走らせる。
+ *
+ * `rebuild=1` を付けると、先にすべての割り当てを未割当に戻してから実行する。
+ * 割り当てエンジンは前回の担当を引き継ぐ設計なので、
+ * 「出勤入力を後から入れた」ような場合はこれを使わないと結果が変わらない。
+ */
 export async function runNow(request, env, options = {}) {
   const auth = await requireUser(request, env, { role: 'admin', at: options.at });
   if (auth.response) return auth.response;
   if (!checkOrigin(request)) return new Response('送信元を確認できませんでした。', { status: 403 });
+
+  const form = await readForm(request);
+  if (String(form.rebuild ?? '') === '1') {
+    // 手動固定・完了報告・過去の清掃は残す
+    await resetAllAssignments(env.DB, { from: jstToday(options.now) });
+  }
 
   const result = await runDaily(env, {
     kind: 'manual',
