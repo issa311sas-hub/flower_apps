@@ -11,6 +11,12 @@
 import { listUnitNames } from './db/units.js';
 import { listStaff } from './db/staff.js';
 import { getRunHealth } from './db/runs.js';
+import { applyMigrations, getSchemaState } from './db/migrate.js';
+
+// migrations/*.sql を文字列として取り込む（wrangler.jsonc の Text ルール）。
+// スキーマの正は .sql のままにして、JS側に写し直さない。
+import initSql from '../migrations/0001_init.sql';
+import seedSql from '../migrations/0002_seed_master.sql';
 
 export default {
   async fetch(request, env) {
@@ -18,6 +24,10 @@ export default {
 
     if (url.pathname === '/api/health') {
       return jsonResponse(await checkHealth(env));
+    }
+
+    if (url.pathname === '/setup') {
+      return htmlResponse(await renderSetup(env));
     }
 
     return htmlResponse(await renderPlaceholder(env));
@@ -76,6 +86,76 @@ async function checkHealth(env) {
   return health;
 }
 
+/**
+ * 初回セットアップ画面。
+ * テーブル作成と初期データ投入を、ブラウザでこのURLを開くだけで済ませる。
+ * すでに初期データが入っている場合は何もしない（既存データを壊さない）。
+ */
+async function renderSetup(env) {
+  if (!env.DB) {
+    return setupPage(
+      'error',
+      'データベースにつながっていません',
+      `<p>D1 のバインディング（DB）が設定されていません。</p>
+       <p class="small muted">wrangler.jsonc の <code>database_id</code> が正しいか確認してください。</p>`
+    );
+  }
+
+  try {
+    const result = await applyMigrations(env.DB, [
+      { name: '0001_init.sql', sql: initSql },
+      { name: '0002_seed_master.sql', sql: seedSql }
+    ]);
+
+    const s = result.state;
+    const summary = `<table>
+        <tr><th>テーブル</th><td>${s.tableCount} 個</td></tr>
+        <tr><th>ユニット</th><td>${s.unitCount} 件</td></tr>
+        <tr><th>担当者</th><td>${s.staffCount} 名</td></tr>
+      </table>`;
+
+    if (!result.applied) {
+      return setupPage(
+        'done',
+        'セットアップはすでに完了しています',
+        `<p>データベースの中身はそのままです。何も変更していません。</p>${summary}`
+      );
+    }
+
+    const ran = result.executed.map((e) => `<li>${escapeHtml(e.name)}（${e.statements} 文）</li>`).join('');
+    return setupPage(
+      'ok',
+      'セットアップが完了しました',
+      `<p>データベースの準備ができました。</p>${summary}
+       <p class="small muted">実行した内容:</p><ul class="small">${ran}</ul>`
+    );
+  } catch (e) {
+    return setupPage(
+      'error',
+      'セットアップに失敗しました',
+      `<p class="small">${escapeHtml(e.message)}</p>
+       <p class="small muted">このメッセージをそのまま開発者に伝えてください。</p>`
+    );
+  }
+}
+
+function setupPage(status, title, body) {
+  const banner =
+    status === 'error'
+      ? '<div class="banner error"><strong>エラー</strong></div>'
+      : status === 'done'
+        ? '<div class="banner">すでに完了済みです</div>'
+        : '';
+
+  return page(
+    '初回セットアップ',
+    `<h2>${escapeHtml(title)}</h2>
+     ${banner}
+     ${body}
+     <p style="margin-top:24px"><a class="btn" href="/api/health">動作確認（/api/health）を見る</a></p>`
+  );
+}
+
 async function renderPlaceholder(env) {
   const health = await checkHealth(env);
 
@@ -83,24 +163,37 @@ async function renderPlaceholder(env) {
     ? `<p class="small">データベース: 接続OK（ユニット ${health.d1.units} 件 / 担当者 ${health.d1.staff.length} 名）</p>`
     : `<div class="banner error"><strong>データベース未接続</strong><p class="small">${escapeHtml(health.d1.error || '')}</p></div>`;
 
+  const setupLink = health.d1.connected
+    ? ''
+    : '<p><a class="btn primary" href="/setup">初回セットアップを実行する</a></p>';
+
+  return page(
+    '準備中',
+    `<h2>まだ画面はありません</h2>
+     <p>割り当ての計算とデータの保存はすでに動きます。スタッフ用の画面と管理画面はこれから作ります。</p>
+     ${d1Line}
+     ${setupLink}
+     <p class="small muted">動作確認: <a href="/api/health">/api/health</a></p>`
+  );
+}
+
+/** 共通のHTML枠 */
+function page(title, body) {
   return `<!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>清掃予定管理（準備中）</title>
+<title>清掃予定管理 - ${escapeHtml(title)}</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#1f6feb">
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-<header class="bar"><h1>清掃予定管理</h1><span class="badge">準備中</span></header>
+<header class="bar"><h1>清掃予定管理</h1><span class="badge">${escapeHtml(title)}</span></header>
 <div class="wrap">
-  <h2>まだ画面はありません</h2>
-  <p>割り当ての計算とデータの保存はすでに動きます。スタッフ用の画面と管理画面はこれから作ります。</p>
-  ${d1Line}
-  <p class="small muted">動作確認: <a href="/api/health">/api/health</a></p>
+${body}
 </div>
 </body>
 </html>`;

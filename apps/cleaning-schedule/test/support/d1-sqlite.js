@@ -89,12 +89,18 @@ class TestD1 {
 }
 
 /**
- * マイグレーションを適用済みのテスト用DBを作る
- * @param {{seed?: boolean}} [options] seed=false で 0002（初期データ）を適用しない
+ * テスト用DBを作る
+ *
+ * @param {{seed?: boolean, applyMigrations?: boolean}} [options]
+ *   applyMigrations=false … 何も適用しない空のDB（/setup のテスト用）
+ *   seed=false            … テーブルだけ作り、初期データ（0002）は入れない
  */
 export function createTestDb(options = {}) {
   const seed = options.seed ?? true;
+  const apply = options.applyMigrations ?? true;
   const d1 = new TestD1();
+
+  if (!apply) return d1;
 
   const files = readdirSync(MIGRATIONS_DIR)
     .filter((f) => f.endsWith('.sql'))

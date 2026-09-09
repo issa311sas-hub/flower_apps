@@ -44,6 +44,9 @@ src/
   db/                 ← D1 アクセス（1テーブル群につき1ファイル）
     settings.js staff.js units.js bookings.js
     availability.js assignments.js runs.js notifications.js
+    migrate.js        ←   /setup で使う初回セットアップ（空のDBのときだけ動く）
+tools/
+  build-console-sql.mjs ← migrations から Console 貼り付け用SQLを生成（保険）
 test/
   parity.test.js      ← ★旧 GAS 版との出力一致テスト（ランダム2000シナリオ）
   legacy/             ←   比較用にコピーした旧ロジック
