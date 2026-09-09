@@ -44,7 +44,14 @@ src/
   db/                 ← D1 アクセス（1テーブル群につき1ファイル）
     settings.js staff.js units.js bookings.js
     availability.js assignments.js runs.js notifications.js
+    beds24Auth.js     ←   Beds24のトークン（暗号化して保存）
     migrate.js        ←   /setup で使う初回セットアップ（空のDBのときだけ動く）
+  integrations/
+    beds24.js         ←   Beds24 API V2（認証・予約取得）
+    crypto.js         ←   AES-GCM / PBKDF2（Web Cryptoのみ）
+  jobs/
+    dailyRun.js       ←   毎朝6時: 取得→割り当て→保存→通知
+    keepAlive.js      ←   毎日18時: トークン維持・稼働監視・セッション掃除
 tools/
   build-console-sql.mjs ← migrations から Console 貼り付け用SQLを生成（保険）
 test/
@@ -72,7 +79,7 @@ npm run dev       # ローカルで Worker を起動
 - [x] 割り当てエンジンの移植（旧版とのランダム2000シナリオ一致を確認）
 - [x] 清掃期限・差分計算・JST日付ユーティリティ
 - [x] D1 スキーマとデータ層（実スキーマに対するテスト42件）
-- [ ] Beds24 API 連携・日次処理
+- [x] Beds24 API 連携・日次処理・見張り役（cron 接続済み。Beds24 への実接続は未実施）
 - [ ] 認証とスタッフ画面
 - [ ] 管理画面
 - [ ] Slack 通知・稼働監視

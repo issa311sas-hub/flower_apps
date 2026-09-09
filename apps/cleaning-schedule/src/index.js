@@ -12,6 +12,12 @@ import { listUnitNames } from './db/units.js';
 import { listStaff } from './db/staff.js';
 import { getRunHealth } from './db/runs.js';
 import { applyMigrations, getSchemaState } from './db/migrate.js';
+import { getAuthStatus } from './db/beds24Auth.js';
+import { runDaily } from './jobs/dailyRun.js';
+import { runKeepAlive } from './jobs/keepAlive.js';
+
+/** 見張り役の cron（UTC 9時 = JST 18時）。wrangler.jsonc と一致させること */
+const KEEPALIVE_CRON = '0 9 * * *';
 
 // migrations/*.sql を文字列として取り込む（wrangler.jsonc の Text ルール）。
 // スキーマの正は .sql のままにして、JS側に写し直さない。
@@ -35,11 +41,25 @@ export default {
 
   /**
    * 定期実行。cron は UTC 指定なので注意（wrangler.jsonc のコメント参照）。
-   *   0 21 * * * = 翌日 06:00 JST … 日次処理
-   *   0 9  * * * = 当日 18:00 JST … 見張り
+   *   0 21 * * * = 翌日 06:00 JST … 日次処理（取得→割り当て）
+   *   0 9  * * * = 当日 18:00 JST … 見張り（トークン維持・稼働監視）
+   *
+   * どちらも結果は runs テーブルに残るので、管理画面と /api/health から確認できる。
+   * 旧版はエラーを握りつぶして誰も気づけなかったため、ここでは必ず記録する。
    */
   async scheduled(event, env, ctx) {
-    console.log(`[cleaning-schedule] scheduled 起動: ${event.cron}（処理は未実装）`);
+    const isKeepAlive = event.cron === KEEPALIVE_CRON;
+    const job = isKeepAlive ? runKeepAlive : runDaily;
+    const label = isKeepAlive ? '見張り' : '日次処理';
+
+    try {
+      const result = await job(env, { kind: 'cron' });
+      console.log(`[cleaning-schedule] ${label}: ${result.ok ? '完了' : '失敗'} ${result.message ?? result.error ?? ''}`);
+    } catch (error) {
+      // ジョブ側で記録できなかった場合の最後の砦
+      console.error(`[cleaning-schedule] ${label}が異常終了: ${error?.message ?? error}`);
+      throw error;
+    }
   }
 };
 
@@ -75,6 +95,16 @@ async function checkHealth(env) {
       internalTables: schema.internalTables,
       lastSuccessRunAt: run.lastSuccessAt,
       staleDays: run.staleDays
+    };
+
+    // Beds24 の接続状態（トークンそのものは出さない）
+    const auth = await getAuthStatus(env.DB);
+    health.beds24 = {
+      state: auth.state,
+      connected: auth.hasToken,
+      lastOkAt: auth.lastOkAt,
+      daysUntilExpiry: auth.daysUntilExpiry,
+      lastError: auth.lastError
     };
 
     // 初期データ（migrations/0002）が入っていなければ、それも異常として知らせる
