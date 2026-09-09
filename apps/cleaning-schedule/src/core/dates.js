@@ -87,3 +87,32 @@ export function toDisplayDate(ymd) {
   const d = Number(ymd.slice(8, 10));
   return `${m}/${d}(${dayNameOf(ymd)})`;
 }
+
+// ------------------------------------------------------------------
+// 月まわり（出勤入力の画面で使う）
+// ------------------------------------------------------------------
+
+/** 'YYYY-MM' の月に含まれる日付を並べた配列（月末の日数は自動で決まる） */
+export function monthDays(month) {
+  const days = [];
+  let cursor = `${month}-01`;
+  while (cursor.slice(0, 7) === month) {
+    days.push(cursor);
+    cursor = addDays(cursor, 1);
+  }
+  return days;
+}
+
+/** 'YYYY-MM' を delta ヶ月ずらす（年またぎも扱う） */
+export function shiftMonth(month, delta) {
+  const year = Number(month.slice(0, 4));
+  const m = Number(month.slice(5, 7)) + delta;
+  const y = year + Math.floor((m - 1) / 12);
+  const mm = ((((m - 1) % 12) + 12) % 12) + 1;
+  return `${y}-${String(mm).padStart(2, '0')}`;
+}
+
+/** 'YYYY-MM' を表示用の '2026年9月' に変換 */
+export function monthLabel(month) {
+  return `${Number(month.slice(0, 4))}年${Number(month.slice(5, 7))}月`;
+}

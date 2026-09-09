@@ -46,6 +46,7 @@ import {
   resetAssignment
 } from './web/pages/assignments.js';
 import { showTimeline } from './web/pages/timeline.js';
+import { showAvailabilityOverview } from './web/pages/availability.js';
 import { runNow, showRuns, showRun, ackNotification } from './web/pages/runs.js';
 import { showSettings, saveSettings, testNotification } from './web/pages/settings.js';
 
@@ -94,6 +95,7 @@ router.post('/admin/assignments/:bookingId/auto', (request, env, params) => rele
 router.post('/admin/assignments/:bookingId/reset', (request, env, params) => resetAssignment(request, env, params));
 
 router.get('/admin/timeline', (request, env) => showTimeline(request, env));
+router.get('/admin/availability', (request, env) => showAvailabilityOverview(request, env));
 
 router.get('/admin/settings', (request, env) => showSettings(request, env));
 router.post('/admin/settings', (request, env) => saveSettings(request, env));
@@ -511,7 +513,7 @@ function renderKeys(env) {
 async function checkHealth(env) {
   const health = {
     ok: true,
-    stage: 'm8',
+    stage: 'm9',
     d1: { connected: false }
   };
 

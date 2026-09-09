@@ -10,7 +10,7 @@
 
 import { html, page, htmlResponse, redirect, raw, escapeHtml } from '../html.js';
 import { requireUser, checkOrigin, readForm } from '../auth.js';
-import { jstToday, addDays, dayNameOf, dowOf, toDisplayDate } from '../../core/dates.js';
+import { jstToday, addDays, dayNameOf, dowOf, toDisplayDate, monthDays, shiftMonth, monthLabel } from '../../core/dates.js';
 import { listAssignments, markCompleted, clearCompleted, getAssignment } from '../../db/assignments.js';
 import { listForStaff, setCapacityBulk } from '../../db/availability.js';
 import { getStaffById } from '../../db/staff.js';
@@ -147,7 +147,7 @@ export async function showAvailability(request, env, options = {}) {
   const month = new URL(request.url).searchParams.get('month') ?? today.slice(0, 7);
   const saved = new URL(request.url).searchParams.get('saved') === '1';
 
-  const { first, days } = monthDays(month);
+  const days = monthDays(month);
   const current = await listForStaff(env.DB, auth.staff.id, {
     from: days[0],
     to: days[days.length - 1]
@@ -317,30 +317,3 @@ export async function changePassword(request, env, options = {}) {
 
   return redirect(auth.user.role === 'admin' ? '/admin' : '/me');
 }
-
-// ------------------------------------------------------------------
-// 日付まわりの小道具
-// ------------------------------------------------------------------
-function monthDays(month) {
-  const first = `${month}-01`;
-  const days = [];
-  let cursor = first;
-  while (cursor.slice(0, 7) === month) {
-    days.push(cursor);
-    cursor = addDays(cursor, 1);
-  }
-  return { first, days };
-}
-
-function shiftMonth(month, delta) {
-  const year = Number(month.slice(0, 4));
-  const m = Number(month.slice(5, 7)) + delta;
-  const y = year + Math.floor((m - 1) / 12);
-  const mm = ((((m - 1) % 12) + 12) % 12) + 1;
-  return `${y}-${String(mm).padStart(2, '0')}`;
-}
-
-function monthLabel(month) {
-  return `${Number(month.slice(0, 4))}年${Number(month.slice(5, 7))}月`;
-}
-

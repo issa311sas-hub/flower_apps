@@ -107,6 +107,7 @@ export async function showAdminHome(request, env, options = {}) {
         ${raw(setupWarning(beds24, unitMap.length))}
 
         <h2>スタッフの入力状況（今後30日）</h2>
+        <p class="small muted"><a href="/admin/availability">月ごとの入力内容を見る</a></p>
         <div class="scroll-x"><table>
           <tr><th>担当者</th><th>入力済み</th></tr>
           ${raw(missingRows)}
@@ -140,6 +141,7 @@ export async function showAdminHome(request, env, options = {}) {
         <p class="links">
           <a class="btn" href="/admin/assignments">割り当て一覧</a>
           <a class="btn" href="/admin/timeline">タイムライン</a>
+          <a class="btn" href="/admin/availability">出勤入力の状況</a>
           <a class="btn" href="/admin/beds24">Beds24・ユニット対応づけ</a>
           <a class="btn" href="/admin/runs">実行ログと警告</a>
           <a class="btn" href="/admin/staff">スタッフのアカウント</a>

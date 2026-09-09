@@ -117,6 +117,7 @@ export async function showTimeline(request, env, options = {}) {
           下段は各スタッフがその日に清掃できる件数です。<strong>「-」は未入力</strong>で、
           「出勤できない（0件）」として扱われます。
           外注や未割当が出ている日は、その日の枠が足りていないか、入力がありません。
+          <a href="/admin/availability">月ごとの入力状況を見る</a>
         </p>
 
         <p class="links">

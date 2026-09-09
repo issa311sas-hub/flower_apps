@@ -440,3 +440,16 @@ label.checkbox input[type="checkbox"] {
   border-top: 3px solid var(--border);
   background: var(--surface);
 }
+
+/* --- 出勤入力の状況（管理画面） --- */
+.availability th a { color: inherit; }
+.availability td { text-align: center; }
+
+/* 未入力。「0件」の入力とは意味が違うので必ず見分けが付くようにする */
+.availability td.unset { color: var(--danger); font-weight: 700; }
+
+/* 枠が足りない日＝その日は外注か未割当になる */
+.availability tr.short td, .availability tr.short th { background: var(--unassigned); }
+.availability td.minus { color: var(--danger); font-weight: 700; }
+
+.availability tr.past { opacity: 0.45; }
