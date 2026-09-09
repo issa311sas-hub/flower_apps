@@ -39,7 +39,13 @@ export const DEFAULT_PARAMS = {
   allowDeferWithoutNextBooking: true
 };
 
-function statusFor(staffName, { outsourceName, unassignedLabel }) {
+/**
+ * 担当者名から状態を決める。
+ *
+ * 管理画面の手動変更でも同じ規則を使うため export している。
+ * 判定を2か所に書くと、自動と手動で状態がずれる。
+ */
+export function statusFor(staffName, { outsourceName, unassignedLabel }) {
   if (staffName === outsourceName) return STATUS.OUTSOURCED;
   if (staffName === unassignedLabel) return STATUS.NEEDS_REVIEW;
   return STATUS.CONFIRMED;

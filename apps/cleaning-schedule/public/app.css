@@ -417,3 +417,26 @@ label.checkbox input[type="checkbox"] {
   min-height: 24px;
   flex: 0 0 auto;
 }
+
+/* --- タイムライン --- */
+.timeline td, .timeline th { text-align: center; padding: 4px 6px; }
+.timeline td a { color: inherit; text-decoration: none; font-weight: 700; }
+.timeline th.sat, .timeline td.sat { background: color-mix(in srgb, #1c7ed6 8%, transparent); }
+.timeline th.sun, .timeline td.sun { background: color-mix(in srgb, #c92a2a 8%, transparent); }
+
+.timeline td.cell-staff-1 { background: var(--staff-1); }
+.timeline td.cell-staff-2 { background: var(--staff-2); }
+.timeline td.cell-staff-3 { background: var(--staff-3); }
+.timeline td.cell-outsource { background: var(--outsource); }
+.timeline td.cell-unassigned { background: var(--unassigned); font-weight: 700; }
+
+.timeline .done-mark { color: var(--ok); font-size: 12px; }
+.timeline .manual-mark { font-size: 11px; color: var(--text-muted); }
+
+/* 出勤枠の未入力。ここが「-」の日に外注が出ていたら、原因は入力漏れ */
+.timeline td.unset { color: var(--danger); font-weight: 700; }
+
+.timeline tr.section th, .timeline tr.section td {
+  border-top: 3px solid var(--border);
+  background: var(--surface);
+}

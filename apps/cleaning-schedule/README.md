@@ -45,7 +45,9 @@ src/
     pages/            ← 画面（1画面群につき1ファイル）
       login.js staff.js admin.js
       beds24.js       ←   Beds24接続とユニット対応づけ（★予約が入る入口）
-      assignments.js runs.js
+      assignments.js  ←   割り当て一覧と手動変更
+      timeline.js     ←   ユニット×日付の俯瞰（下段に出勤枠）
+      runs.js settings.js
   db/                 ← D1 アクセス（1テーブル群につき1ファイル）
     settings.js staff.js units.js bookings.js
     availability.js assignments.js runs.js notifications.js
@@ -91,7 +93,7 @@ npm run dev       # ローカルで Worker を起動
 - [x] 認証とスタッフ画面（ログイン・予定確認・出勤入力・完了報告）
 - [x] Beds24 接続・ユニット対応づけ・手動実行・割り当て一覧（読み取り）・実行ログ
 - [x] Slack 通知・死活監視（/api/health は異常時に 503 を返す）
-- [ ] 管理画面の続き（担当の手動変更・タイムライン）
+- [x] 担当の手動変更・タイムライン
 
 ## ステータス
 

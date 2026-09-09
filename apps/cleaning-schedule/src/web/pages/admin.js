@@ -114,13 +114,13 @@ export async function showAdminHome(request, env, options = {}) {
 
         <p class="links">
           <a class="btn" href="/admin/assignments">割り当て一覧</a>
+          <a class="btn" href="/admin/timeline">タイムライン</a>
           <a class="btn" href="/admin/beds24">Beds24・ユニット対応づけ</a>
           <a class="btn" href="/admin/runs">実行ログと警告</a>
           <a class="btn" href="/admin/staff">スタッフのアカウント</a>
           <a class="btn" href="/admin/settings">設定・Slack通知</a>
         </p>
 
-        <p class="small muted">担当の手動変更とタイムラインは次の工程で作ります。</p>
       `
     })
   );

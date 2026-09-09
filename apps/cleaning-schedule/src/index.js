@@ -38,7 +38,14 @@ import {
   toggleStaffUser
 } from './web/pages/admin.js';
 import { showBeds24, connectBeds24, discoverUnits, saveUnitMap } from './web/pages/beds24.js';
-import { showAssignments } from './web/pages/assignments.js';
+import {
+  showAssignments,
+  showAssignment,
+  updateAssignment,
+  releaseAssignment,
+  resetAssignment
+} from './web/pages/assignments.js';
+import { showTimeline } from './web/pages/timeline.js';
 import { runNow, showRuns, showRun, ackNotification } from './web/pages/runs.js';
 import { showSettings, saveSettings, testNotification } from './web/pages/settings.js';
 
@@ -81,6 +88,12 @@ router.post('/admin/beds24/discover', (request, env) => discoverUnits(request, e
 router.post('/admin/beds24/map', (request, env) => saveUnitMap(request, env));
 
 router.get('/admin/assignments', (request, env) => showAssignments(request, env));
+router.get('/admin/assignments/:bookingId', (request, env, params) => showAssignment(request, env, params));
+router.post('/admin/assignments/:bookingId', (request, env, params) => updateAssignment(request, env, params));
+router.post('/admin/assignments/:bookingId/auto', (request, env, params) => releaseAssignment(request, env, params));
+router.post('/admin/assignments/:bookingId/reset', (request, env, params) => resetAssignment(request, env, params));
+
+router.get('/admin/timeline', (request, env) => showTimeline(request, env));
 
 router.get('/admin/settings', (request, env) => showSettings(request, env));
 router.post('/admin/settings', (request, env) => saveSettings(request, env));
@@ -498,7 +511,7 @@ function renderKeys(env) {
 async function checkHealth(env) {
   const health = {
     ok: true,
-    stage: 'm6',
+    stage: 'm7',
     d1: { connected: false }
   };
 
