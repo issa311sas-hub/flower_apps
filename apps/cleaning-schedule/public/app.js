@@ -4,6 +4,35 @@
  * このファイルが読み込まれなくても、すべての機能は使えるようにしてある。
  */
 
+/* 出勤入力の「まとめて入力」
+ *
+ * 1日ずつタップさせると30回以上の操作になり、入力が続かない。
+ * よく使うパターンをボタン1つで埋められるようにする。
+ * （このJSが動かなくても、1日ずつのタップで入力できる）
+ */
+document.addEventListener('click', (event) => {
+  const button = event.target.closest('.bulk');
+  if (!button) return;
+
+  const value = button.dataset.value;
+  const target = button.dataset.days;
+
+  for (const row of document.querySelectorAll('.avail-row')) {
+    if (row.classList.contains('past')) continue;
+
+    const label = row.querySelector('.avail-date');
+    const isWeekend = label && (label.classList.contains('sat') || label.classList.contains('sun'));
+    if (target === 'weekday' && isWeekend) continue;
+
+    const radio = row.querySelector(`input[type="radio"][value="${value}"]`);
+    if (radio && !radio.disabled) {
+      radio.checked = true;
+      row.classList.remove('unset');
+    }
+  }
+});
+
+/* 値のコピー */
 document.addEventListener('click', async (event) => {
   const button = event.target.closest('.copy');
   if (!button) return;

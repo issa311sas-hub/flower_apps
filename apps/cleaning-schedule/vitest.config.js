@@ -1,6 +1,23 @@
 import { defineConfig } from 'vitest/config';
 
+/**
+ * `.sql` を文字列として読み込めるようにする。
+ *
+ * 本番（wrangler）は .sql を Text モジュールとして扱うが、Vitest は素の JavaScript として
+ * 解釈しようとして失敗する。同じ挙動をテスト側でも再現するための変換。
+ * これによりスキーマの定義を .sql に一本化したまま、Worker 全体をテストできる。
+ */
+const sqlAsText = {
+  name: 'sql-as-text',
+  enforce: 'pre',
+  transform(code, id) {
+    if (!id.endsWith('.sql')) return null;
+    return { code: `export default ${JSON.stringify(code)};`, map: null };
+  }
+};
+
 export default defineConfig({
+  plugins: [sqlAsText],
   test: {
     include: ['test/**/*.test.js'],
     // 新旧一致テストはランダム2000シナリオを回すため数秒かかる。
