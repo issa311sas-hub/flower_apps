@@ -49,12 +49,18 @@ export async function showAdminHome(request, env, options = {}) {
   const soonOutsourced = soon.filter((a) => a.staffName === outsourceName).length;
   const soonUnassigned = soon.filter((a) => a.staffName === DEFAULT_PARAMS.unassignedLabel).length;
 
+  // 直れば自動で消えるが、消えないもの（外注の連絡待ちなど）は手で片付けられるようにする。
+  // 「確認しました」を探しに実行ログまで行かせない
   const banners = notices
     .map(
       (n) =>
         `<div class="banner ${n.level === 'error' ? 'error' : ''}">
            <strong>${escapeHtml(n.subject)}</strong>
            <p class="small">${escapeHtml(n.body).replace(/\n/g, '<br>')}</p>
+           <form method="post" action="/admin/notifications/${n.id}/ack" class="inline">
+             <input type="hidden" name="back" value="/admin">
+             <button type="submit" class="link small">確認しました</button>
+           </form>
          </div>`
     )
     .join('');

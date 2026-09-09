@@ -18,7 +18,7 @@ import { getCapacityMap } from '../db/availability.js';
 import { loadExisting, saveAssignments } from '../db/assignments.js';
 import { getSettings } from '../db/settings.js';
 import { startRun, finishRun } from '../db/runs.js';
-import { recordNotification } from '../db/notifications.js';
+import { recordNotification, acknowledgeKind } from '../db/notifications.js';
 
 /**
  * @param {object} env Worker の環境（DB, TOKEN_ENC_KEY）
@@ -112,6 +112,20 @@ export async function runDaily(env, options = {}) {
       message,
       at
     });
+
+    // 取得も割り当ても通った時点で、失敗・滞留を伝えていた警告は用済み。
+    // 消さないと、直ったあとも管理画面に古い警告が残り続ける。
+    //
+    // ⚠ ここは**日次処理が成功したとき**だけ。見張り役（keepAlive）は常に
+    //   ok で終わるので、finishRun 側に置くと、記録した直後の警告を
+    //   自分で消してしまう。
+    //
+    // ⚠ 'unassigned' は消さない。あれは「いまの状態」を伝えるもので、
+    //   実行が成功しても未割当は残りうる。消すとスロットル（12時間）のせいで
+    //   次の実行でも積み直されず、未割当があるのに何も出なくなる。
+    for (const kind of ['run_error', 'zero_bookings', 'stale_run']) {
+      await acknowledgeKind(db, kind, at);
+    }
 
     // 6. 気づいてほしいことを通知に積む
     //

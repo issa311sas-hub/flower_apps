@@ -11,6 +11,7 @@
 
 import { nowIso } from '../core/dates.js';
 import { encryptSecret, decryptSecret } from '../integrations/crypto.js';
+import { acknowledgeKind } from './notifications.js';
 
 export const STATE = {
   DISCONNECTED: '未接続',
@@ -90,6 +91,12 @@ export async function saveTokens(db, encKey, { refreshToken, accessToken, expire
   values.push(at, STATE.CONNECTED, at);
 
   await db.prepare(`UPDATE beds24_auth SET ${fields.join(', ')} WHERE id = 1`).bind(...values).run();
+
+  // つながった時点で、再接続を促していた警告は用済み。
+  // 消さないと「接続済みなのに『再接続が必要です』」が管理画面に残り続ける。
+  for (const kind of ['auth_expired', 'auth_error', 'token_stale']) {
+    await acknowledgeKind(db, kind, at);
+  }
 }
 
 /**

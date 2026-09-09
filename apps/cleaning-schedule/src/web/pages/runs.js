@@ -169,7 +169,11 @@ export async function ackNotification(request, env, params, options = {}) {
   if (!checkOrigin(request)) return new Response('送信元を確認できませんでした。', { status: 403 });
 
   await acknowledge(env.DB, Number(params.id));
-  return redirect('/admin/runs');
+
+  // 押した画面に戻す（管理トップからも押せるようにしたため）
+  const form = await readForm(request);
+  const back = String(form.back ?? '');
+  return redirect(back === '/admin' ? '/admin' : '/admin/runs');
 }
 
 function resultLabel(run) {
