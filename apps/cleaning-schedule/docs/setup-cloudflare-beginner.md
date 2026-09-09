@@ -143,7 +143,33 @@ Cloudflare は既定ブランチを本番用として自動で選ぶため、切
 
 ### 失敗したときの見方
 
-**Builds** タブに履歴が出ます。赤い ● が付いていたら失敗です。
+#### ログの開き方
+
+1. **Workers & Pages** → `cleaning-schedule` → **Deployments** タブ
+2. **Build history**（このworkerのビルド一覧）が出ます。赤い ● が付いていたら失敗です
+3. その行の右にある **View build** をクリック
+4. ビルドログが開きます
+
+> **⚠ Observability タブではありません。** 紛らわしいのでご注意ください。
+>
+> | 場所 | 何のログか |
+> |---|---|
+> | **Deployments → View build** | **ビルド時**のログ（`npm test` や `wrangler deploy` の出力）← 今見たいのはこちら |
+> | Observability | **稼働後**のログ（デプロイ済みのアプリへのアクセス記録）。まだデプロイが成功していない段階では何も出ません |
+
+#### ログの読み方
+
+上から順に「リポジトリの取得 → 依存関係のインストール → `npm test` → `npx wrangler deploy`」と流れます。
+**赤い文字や `Error` / `failed` が最初に出てくるところ**が原因です。
+
+| ログに出るもの | 意味 |
+|---|---|
+| `Tests 105 passed` | テスト通過。ここまで来ていればコードは正常です |
+| `Cloning repository...` の直後で失敗 | ブランチやリポジトリ設定の問題 |
+| `npm ci` で失敗 | Root directory の指定ミス（`package.json` が見つかっていない） |
+| `npx wrangler deploy` で失敗 | 設定（`wrangler.jsonc`）や D1 まわりの問題 |
+
+原因が分からないときは、**最初のエラーが出ている行から下20行くらい**をコピーして開発者に渡してください。
 
 #### まず Source 列を見る（ログを読む前に）
 
