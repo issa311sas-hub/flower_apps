@@ -320,6 +320,68 @@ describe('初回セットアップでの管理者作成', () => {
   });
 });
 
+describe('SESSION_PEPPER が無いとき', () => {
+  it('管理者アカウントを作らず、鍵の登録を促す', async () => {
+    // 鍵が無いまま作ると、鍵を登録した瞬間にそのパスワードでは入れなくなる
+    const noPepper = { DB: createTestDb({ applyMigrations: false }) };
+
+    const res = await worker.fetch(get('/setup'), noPepper);
+    const body = await res.text();
+
+    expect(body).toContain('先に秘密の鍵（SESSION_PEPPER）を登録してください');
+    expect(body).not.toContain('管理者アカウントを作成しました');
+
+    const count = await noPepper.DB.prepare('SELECT COUNT(*) AS n FROM users').first('n');
+    expect(Number(count)).toBe(0);
+  });
+
+  it('鍵を登録してから開き直せば、そのとき管理者が作られる', async () => {
+    const db = createTestDb({ applyMigrations: false });
+
+    await worker.fetch(get('/setup'), { DB: db });
+    const after = await worker.fetch(get('/setup'), { DB: db, SESSION_PEPPER: PEPPER });
+
+    expect(await after.text()).toContain('管理者アカウントを作成しました');
+    expect(Number(await db.prepare('SELECT COUNT(*) AS n FROM users').first('n'))).toBe(1);
+  });
+});
+
+describe('SESSION_PEPPER が入れ替わったとき', () => {
+  it('ログイン画面で理由を伝える（原因不明のまま悩ませない）', async () => {
+    const db = createTestDb({ applyMigrations: false });
+    await worker.fetch(get('/setup'), { DB: db, SESSION_PEPPER: PEPPER });
+
+    const changed = { DB: db, SESSION_PEPPER: 'another-pepper' };
+    const res = await worker.fetch(get('/login'), changed);
+
+    expect(await res.text()).toContain('SESSION_PEPPER が、パスワードを登録したときと違う値になっています');
+  });
+
+  it('鍵が同じなら警告は出さない', async () => {
+    const db = createTestDb({ applyMigrations: false });
+    await worker.fetch(get('/setup'), { DB: db, SESSION_PEPPER: PEPPER });
+
+    const res = await worker.fetch(get('/login'), { DB: db, SESSION_PEPPER: PEPPER });
+    expect(await res.text()).not.toContain('違う値になっています');
+  });
+
+  it('記録がまだ無ければ警告は出さない', async () => {
+    const res = await worker.fetch(get('/login'), env);
+    expect(await res.text()).not.toContain('違う値になっています');
+  });
+
+  it('/api/health で鍵の食い違いが分かる', async () => {
+    const db = createTestDb({ applyMigrations: false });
+    await worker.fetch(get('/setup'), { DB: db, SESSION_PEPPER: PEPPER });
+
+    const ok = await (await worker.fetch(get('/api/health'), { DB: db, SESSION_PEPPER: PEPPER })).json();
+    expect(ok.secrets.pepperMatchesPasswords).toBe(true);
+
+    const ng = await (await worker.fetch(get('/api/health'), { DB: db, SESSION_PEPPER: 'x' })).json();
+    expect(ng.secrets.pepperMatchesPasswords).toBe(false);
+  });
+});
+
 describe('秘密の鍵の画面', () => {
   it('登録済みなら鍵を作り直さない', async () => {
     const res = await worker.fetch(get('/setup/keys'), env);

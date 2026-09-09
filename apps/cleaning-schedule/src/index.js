@@ -15,7 +15,7 @@ import { getRunHealth } from './db/runs.js';
 import { applyMigrations, getSchemaState } from './db/migrate.js';
 import { getAuthStatus } from './db/beds24Auth.js';
 import { countUsers, createUser, listUsers } from './db/users.js';
-import { getSetting } from './db/settings.js';
+import { getSetting, recordPepperFingerprint, checkPepperFingerprint } from './db/settings.js';
 
 import { runDaily } from './jobs/dailyRun.js';
 import { runKeepAlive } from './jobs/keepAlive.js';
@@ -56,7 +56,7 @@ router.get('/', async (request, env) => {
   return redirect(user.role === 'admin' ? '/admin' : '/me');
 });
 
-router.get('/login', (request) => showLogin(request));
+router.get('/login', (request, env) => showLogin(request, env));
 router.post('/login', (request, env) => doLogin(request, env));
 router.post('/logout', (request, env) => doLogout(request, env));
 
@@ -179,16 +179,26 @@ async function renderSetup(request, env) {
       { name: '0002_seed_master.sql', sql: seedSql }
     ]);
 
-    // 管理者が1人もいなければ作る（ここでしか平文パスワードは表示されない）
+    // 管理者が1人もいなければ作る（ここでしか平文パスワードは表示されない）。
+    //
+    // ただし SESSION_PEPPER が無いうちは**作らない**。
+    // 鍵が無いまま作ると、あとから鍵を登録した瞬間に、そのパスワードでは
+    // 入れなくなる（照合の計算式が変わるため）。しかも画面には
+    // 「パスワードが違います」としか出ず、原因にたどり着けない。
+    const hasPepper = !!env.SESSION_PEPPER;
+
     let admin = null;
-    if ((await countUsers(env.DB)) === 0) {
+    if ((await countUsers(env.DB)) === 0 && hasPepper) {
       const iterations = await getSetting(env.DB, 'password_iterations', undefined);
       const created = await createUser(
         env.DB,
         { loginId: 'admin', displayName: '管理者', role: 'admin' },
-        { pepper: env.SESSION_PEPPER ?? '', ...(iterations ? { iterations: Number(iterations) } : {}) }
+        { pepper: env.SESSION_PEPPER, ...(iterations ? { iterations: Number(iterations) } : {}) }
       );
       admin = { loginId: 'admin', password: created.password };
+
+      // どの鍵で作ったパスワードなのかを残す（鍵が変わったらログイン画面で警告する）
+      await recordPepperFingerprint(env.DB, env.SESSION_PEPPER);
     }
 
     const [beds24, unitMap, users] = await Promise.all([
@@ -201,8 +211,10 @@ async function renderSetup(request, env) {
     const steps = [
       {
         label: '秘密の鍵を Cloudflare に登録する',
-        done: !!env.SESSION_PEPPER && !!env.TOKEN_ENC_KEY,
-        detail: 'SESSION_PEPPER と TOKEN_ENC_KEY の2つ',
+        done: hasPepper && !!env.TOKEN_ENC_KEY,
+        detail: `SESSION_PEPPER: ${hasPepper ? '登録済み' : '未登録'} / TOKEN_ENC_KEY: ${
+          env.TOKEN_ENC_KEY ? '登録済み' : '未登録'
+        }`,
         href: '/setup/keys',
         action: '鍵を作る'
       },
@@ -269,7 +281,19 @@ async function renderSetup(request, env) {
            </div>
            <p><a class="btn primary" href="/login">ログインする</a></p>
          </div>`
-      : '';
+      : !hasPepper && users.length === 0
+        ? `<div class="banner error">
+             <strong>先に秘密の鍵（SESSION_PEPPER）を登録してください。</strong>
+             <p class="small">鍵が登録されていないため、管理者アカウントはまだ作っていません。
+             鍵が無いまま作ると、あとから鍵を登録したときに
+             <strong>そのパスワードでは入れなくなります</strong>。</p>
+             <p class="small">Cloudflare の画面で登録したのにここが「未登録」のままの場合は、
+             <strong>ビルド用の変数</strong>に登録されている可能性があります。
+             Worker の <strong>Settings → Variables and Secrets</strong>（ビルド設定の中ではない方）
+             に登録し直してください。</p>
+             <p><a class="btn primary" href="/setup/keys">鍵を作る</a></p>
+           </div>`
+        : '';
 
     if (!result.applied) {
       return htmlResponse(
@@ -487,9 +511,13 @@ async function checkHealth(env) {
     };
 
     // 秘密の設定は「あるかどうか」だけ返す（値は絶対に返さない）
+    const fingerprint = await checkPepperFingerprint(env.DB, env.SESSION_PEPPER ?? '');
     health.secrets = {
       SESSION_PEPPER: !!env.SESSION_PEPPER,
-      TOKEN_ENC_KEY: !!env.TOKEN_ENC_KEY
+      TOKEN_ENC_KEY: !!env.TOKEN_ENC_KEY,
+      // 保存済みのパスワードが、いまの SESSION_PEPPER で照合できるか。
+      // false なら誰もログインできない（鍵が入れ替わっている）
+      pepperMatchesPasswords: fingerprint.known ? fingerprint.matches : null
     };
 
     if (units.length === 0 || staff.length === 0) {

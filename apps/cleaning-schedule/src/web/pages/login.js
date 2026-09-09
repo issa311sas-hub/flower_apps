@@ -5,14 +5,16 @@
 import { html, page, htmlResponse, redirect, raw } from '../html.js';
 import { checkOrigin, readForm, sessionCookie, clearCookie, parseCookies, COOKIE_NAME } from '../auth.js';
 import { verifyLogin, createSession, deleteSession, LOCK_MINUTES } from '../../db/users.js';
+import { checkPepperFingerprint } from '../../db/settings.js';
 
-function loginPage({ error = null, loginId = '', next = '' } = {}) {
+function loginPage({ error = null, loginId = '', next = '', warning = null } = {}) {
   return page({
     title: 'ログイン',
     nav: false,
     body: html`
       <h2>ログイン</h2>
       ${raw(error ? `<div class="banner error">${error}</div>` : '')}
+      ${raw(warning ? `<div class="banner error">${warning}</div>` : '')}
       <form method="post" action="/login">
         <input type="hidden" name="next" value="${next}">
         <label for="login_id">ID</label>
@@ -29,9 +31,34 @@ function loginPage({ error = null, loginId = '', next = '' } = {}) {
   });
 }
 
-export function showLogin(request) {
+export async function showLogin(request, env) {
   const next = new URL(request.url).searchParams.get('next') ?? '';
-  return htmlResponse(loginPage({ next }));
+  return htmlResponse(loginPage({ next, warning: await pepperWarning(env) }));
+}
+
+/**
+ * SESSION_PEPPER が、パスワードを作ったときと違う値になっていないかを確かめる。
+ *
+ * 違っていると誰も入れなくなるが、画面には「パスワードが違います」としか出ないため、
+ * 何時間でも悩むことになる。原因が分かる形で先に伝える。
+ */
+async function pepperWarning(env) {
+  if (!env?.DB) return null;
+
+  try {
+    const { known, matches } = await checkPepperFingerprint(env.DB, env.SESSION_PEPPER ?? '');
+    if (!known || matches) return null;
+
+    return (
+      '<strong>SESSION_PEPPER が、パスワードを登録したときと違う値になっています。</strong>' +
+      '<p class="small">この状態では、正しいパスワードでもログインできません。' +
+      'Cloudflare の Secret を元の値に戻すか、管理者アカウントを作り直してください' +
+      '（手順書の「パスワードを控え損ねたとき」と同じ手順です）。</p>'
+    );
+  } catch {
+    // まだテーブルが無い等。ログイン画面そのものは必ず表示する
+    return null;
+  }
 }
 
 export async function doLogin(request, env) {
@@ -52,7 +79,9 @@ export async function doLogin(request, env) {
       result.reason === 'locked'
         ? `ログインの失敗が続いたため、${LOCK_MINUTES}分間ロックされています。時間をおいてお試しください。`
         : 'IDまたはパスワードが違います。';
-    return htmlResponse(loginPage({ error: message, loginId, next }), { status: 401 });
+    return htmlResponse(loginPage({ error: message, loginId, next, warning: await pepperWarning(env) }), {
+      status: 401
+    });
   }
 
   const { token } = await createSession(env.DB, result.user.id, {
