@@ -102,3 +102,48 @@ export async function getRunHealth(db, nowMs = Date.now()) {
     neverRun: false
   };
 }
+
+/**
+ * Cloudflare の cron から呼ばれているかを返す。
+ *
+ * 「日次処理が成功したか」（getRunHealth）とは**別の問い**。
+ * 呼ばれていないのか、呼ばれたが失敗したのかで、見に行く先も直し方も違う。
+ * 以前これを分けていなかったため、朝6時が動かなかったときに
+ * 「アプリの問題」か「Cloudflare の問題」かを切り分けられなかった。
+ *
+ * cron は1日2回動くので、2日空けば確実におかしい。
+ */
+export const CRON_SILENT_DAYS = 2;
+
+export async function getCronHealth(db, nowMs = Date.now()) {
+  const lastEventAt = (await getSetting(db, 'last_cron_event_at', '')) || null;
+
+  if (!lastEventAt) {
+    return { lastEventAt: null, silentDays: null, isSilent: false, neverCalled: true };
+  }
+
+  const silentDays = diffDays(jstToday(Date.parse(lastEventAt)), jstToday(nowMs));
+  return {
+    lastEventAt,
+    silentDays,
+    isSilent: silentDays >= CRON_SILENT_DAYS,
+    neverCalled: false
+  };
+}
+
+/**
+ * cron から呼ばれたことを記録する。
+ *
+ * **本処理より先に、いちばん最初に呼ぶこと。** そのあとで何が落ちても
+ * 「Cloudflare は呼んだ」という事実だけは残る。
+ * 記録に失敗しても本処理は止めない（記録のために業務を止めない）。
+ */
+export async function recordCronEvent(db, cron, at = nowIso()) {
+  try {
+    await setSetting(db, 'last_cron_event_at', at, at);
+    await setSetting(db, 'last_cron_expression', String(cron ?? ''), at);
+    return true;
+  } catch {
+    return false;
+  }
+}

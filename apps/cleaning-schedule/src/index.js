@@ -11,7 +11,7 @@ import { getCurrentUser, requireUser } from './web/auth.js';
 
 import { listUnitNames, listUnitMap } from './db/units.js';
 import { listStaff } from './db/staff.js';
-import { getRunHealth } from './db/runs.js';
+import { getRunHealth, getCronHealth, recordCronEvent } from './db/runs.js';
 import { applyMigrations, getSchemaState, listPendingMigrations } from './db/migrate.js';
 import { getAuthStatus, STATE } from './db/beds24Auth.js';
 import { countUsers, createUser, listUsers } from './db/users.js';
@@ -170,6 +170,15 @@ export default {
     const isKeepAlive = event.cron === KEEPALIVE_CRON;
     const job = isKeepAlive ? runKeepAlive : runDaily;
     const label = isKeepAlive ? '見張り' : '日次処理';
+
+    // ★何よりも先に「呼ばれた」ことを記録する。
+    //
+    // 実行の行（runs）は処理が始まってから作られるので、その手前で落ちると
+    // 何も残らない。すると「Cloudflare から呼ばれなかった」のか
+    // 「呼ばれたがアプリが落ちた」のかを区別できない。実際にその状態になり、
+    // 朝6時が動かなかったときに切り分けられなかった。
+    // ここに置いておけば、以後どこで落ちても呼ばれた事実だけは必ず残る。
+    await recordCronEvent(env.DB, event.cron);
 
     // 誰も管理画面を開かなくても、いずれ当たるようにしておく。
     // 適用は1マイグレーションごとに db.batch（＝1トランザクション）なので、
@@ -540,7 +549,7 @@ function renderKeys(env) {
 async function checkHealth(env) {
   const health = {
     ok: true,
-    stage: 'm13',
+    stage: 'm14',
     d1: { connected: false }
   };
 
@@ -554,6 +563,7 @@ async function checkHealth(env) {
     const units = await listUnitNames(env.DB);
     const staff = await listStaff(env.DB);
     const run = await getRunHealth(env.DB);
+    const cron = await getCronHealth(env.DB);
     const schema = await getSchemaState(env.DB);
     const auth = await getAuthStatus(env.DB);
     const fingerprint = await checkPepperFingerprint(env.DB, env.SESSION_PEPPER ?? '');
@@ -573,7 +583,11 @@ async function checkHealth(env) {
       // 未適用があると、アプリが古いスキーマのまま動くことになる
       pendingMigrations: pending,
       lastSuccessRunAt: run.lastSuccessAt,
-      staleDays: run.staleDays
+      staleDays: run.staleDays,
+      // Cloudflare の cron から最後に呼ばれた時刻。
+      // 「呼ばれていない」と「呼ばれたが失敗した」を切り分けるための値
+      lastCronEventAt: cron.lastEventAt,
+      lastCronExpression: (await getSetting(env.DB, 'last_cron_expression', '')) || null
     };
 
     health.beds24 = {
@@ -604,6 +618,14 @@ async function checkHealth(env) {
     if (auth.state === STATE.NEEDS_RECONNECT) {
       problems.push('Beds24 の再接続が必要です。招待コードを発行し直してください。');
     }
+    // cron から呼ばれていないことは、日次処理の失敗とは別の問題。
+    // 見に行く先も直し方も違うので、別々に伝える
+    if (cron.isSilent) {
+      problems.push(
+        `Cloudflare の自動実行から ${cron.silentDays}日間 呼ばれていません。Cron Triggers の設定を確認してください。`
+      );
+    }
+
     if (run.neverRun) {
       // 「まだ一度も」を黙って通すと、cron が登録されていないことに誰も気づけない。
       // 初期データが入っている＝セットアップは済んでいるので、猶予を置く理由がない

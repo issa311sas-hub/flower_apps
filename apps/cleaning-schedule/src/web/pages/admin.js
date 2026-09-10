@@ -11,7 +11,7 @@ import { html, page, htmlResponse, redirect, raw, escapeHtml } from '../html.js'
 import { requireUser, checkOrigin, readForm } from '../auth.js';
 import { listUsers, createUser, setPassword, setUserActive, getUserById, generatePassword } from '../../db/users.js';
 import { listStaff } from '../../db/staff.js';
-import { getRunHealth, listRuns } from '../../db/runs.js';
+import { getRunHealth, getCronHealth, listRuns } from '../../db/runs.js';
 import { listUnacknowledged } from '../../db/notifications.js';
 import { getAuthStatus } from '../../db/beds24Auth.js';
 import { listUnitMap } from '../../db/units.js';
@@ -31,8 +31,9 @@ export async function showAdminHome(request, env, options = {}) {
   const nowMs = options.now ?? Date.now();
   const today = jstToday(nowMs);
 
-  const [health, beds24, notices, runs, missing, unitMap, slackOn, soon, allStaff, pending] = await Promise.all([
+  const [health, cron, beds24, notices, runs, missing, unitMap, slackOn, soon, allStaff, pending] = await Promise.all([
     getRunHealth(env.DB, nowMs),
+    getCronHealth(env.DB, nowMs),
     getAuthStatus(env.DB, nowMs),
     listUnacknowledged(env.DB, 5),
     listRuns(env.DB, 5),
@@ -100,6 +101,9 @@ export async function showAdminHome(request, env, options = {}) {
         ${raw(banners)}
 
         <table>
+          <tr><th>Cloudflareからの呼び出し</th><td>${
+            cron.neverCalled ? '⚠ まだ一度もありません' : `${cron.lastEventAt}（${cron.silentDays}日前）`
+          }</td></tr>
           <tr><th>自動実行</th><td>${
             health.neverRun
               ? '⚠ まだ一度も成功していません'
@@ -126,7 +130,7 @@ export async function showAdminHome(request, env, options = {}) {
                </div>`
         )}
 
-        ${raw(runWarning(health))}
+        ${raw(runWarning(health, cron))}
         ${raw(setupWarning(beds24, unitMap.length))}
 
         <h2>スタッフの入力状況（今後30日）</h2>
@@ -180,17 +184,38 @@ export async function showAdminHome(request, env, options = {}) {
 /**
  * 自動実行が動いていないことを伝える。
  *
- * 「まだ一度も」と「途中で止まった」は原因がまったく違うので分ける。
- * 前者は cron が登録されていない疑いが濃く、後者は処理の失敗が疑わしい。
+ * 3つに分ける。**原因が違えば、見に行く先も直し方も違う**ため。
+ *
+ *   1. Cloudflare から呼ばれていない … Cloudflare の設定の問題。アプリを見ても無駄
+ *   2. 呼ばれているが一度も成功していない … アプリの問題。実行ログを見る
+ *   3. 動いていたのに止まった … アプリの問題。実行ログを見る
+ *
+ * 以前は1と2を区別できず、朝6時が動かなかったときに
+ * どちらを調べればいいのか分からなかった。
  */
-function runWarning(health) {
+function runWarning(health, cron) {
+  // まず「そもそも呼ばれているか」。呼ばれていないなら、アプリ側を調べても意味がない
+  if (cron.neverCalled || cron.isSilent) {
+    return `<div class="banner error">
+        <strong>${
+          cron.neverCalled
+            ? 'Cloudflare の自動実行から、まだ一度も呼ばれていません。'
+            : `Cloudflare の自動実行から ${cron.silentDays}日間 呼ばれていません。`
+        }</strong>
+        <p class="small">アプリ側ではなく、<strong>Cloudflare の設定</strong>の問題です。
+        <strong>Settings → Triggers → Cron Triggers</strong> に
+        <code>0 21 * * *</code>（翌朝6時）と <code>0 9 * * *</code>（18時）の
+        2件があるか確認してください。無ければその場で追加できます。</p>
+        <p class="small">直るまでは「いま実行する」で手動更新してください。</p>
+      </div>`;
+  }
+
   if (health.neverRun) {
     return `<div class="banner error">
         <strong>自動実行がまだ一度も成功していません。</strong>
-        <p class="small">毎朝6時の取り込みが動いていない可能性があります。
-        Cloudflare の <strong>Settings → Triggers → Cron Triggers</strong> に
-        <code>0 21 * * *</code> と <code>0 9 * * *</code> の2件があるか確認してください。</p>
-        <p class="small">当面は「いま実行する」で手動でも更新できます。</p>
+        <p class="small">Cloudflare からは呼ばれているので、処理の途中で失敗しています。
+        実行ログでエラーの内容を確認してください。</p>
+        <p><a class="btn" href="/admin/runs">実行ログを見る</a></p>
       </div>`;
   }
 
