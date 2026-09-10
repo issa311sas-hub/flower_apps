@@ -160,11 +160,14 @@ describe('認証', () => {
       ['/authentication/token', () => jsonResponse({ token: 'access-2', expiresIn: 86400 })]
     ]);
 
+    // 接続は setup のあとリフレッシュを1回試すので、この時点で access-2 が入る
     await connectWithInviteCode(db, ENC_KEY, 'code', { fetch: fetchImpl });
+    const afterConnect = fetchImpl.calls.length;
+
     const token = await getAccessToken(db, ENC_KEY, {}, { fetch: fetchImpl });
 
-    expect(token).toBe('access-1');
-    expect(fetchImpl.calls).toHaveLength(1); // setup の1回だけ
+    expect(token).toBe('access-2');
+    expect(fetchImpl.calls).toHaveLength(afterConnect); // 増えていない＝キャッシュを使った
   });
 
   it('force を指定すると必ず取り直す（30日失効を防ぐキープアライブ用）', async () => {

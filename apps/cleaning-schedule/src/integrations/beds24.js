@@ -94,7 +94,28 @@ export async function connectWithInviteCode(db, encKey, inviteCode, overrides = 
     at
   );
 
-  return { connected: true };
+  // ★ここで**リフレッシュを1回試す**。
+  //
+  // setup が返すアクセストークンは24時間有効なので、接続直後は何をしても動く。
+  // 明日以降も動くかどうかを決めるのは**リフレッシュトークンが使えるか**で、
+  // それはキャッシュがある間は一度も試されない。
+  //
+  // 実際にそうなった: 9/9 に接続して6回の実行がすべて成功したのに、
+  // 翌日の見張りが初めてこの経路を通したところで失効が分かった。
+  // 「接続できました」と言った時点では、何も確かめていなかった。
+  //
+  // 失敗してもトークンは消さない。消すと今日の分まで動かなくなる。
+  // 状態は getAccessToken の中の recordAuthFailure が正しく記録する。
+  let refreshVerified = true;
+  let refreshError = null;
+  try {
+    await getAccessToken(db, encKey, { force: true }, overrides);
+  } catch (error) {
+    refreshVerified = false;
+    refreshError = error?.message ?? String(error);
+  }
+
+  return { connected: true, refreshVerified, refreshError };
 }
 
 /**

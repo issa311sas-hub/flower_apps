@@ -30,6 +30,11 @@ export async function runKeepAlive(env, options = {}) {
 
   const notes = [];
 
+  // 見張り役が「自分の仕事をできなかった」ものだけを入れる。
+  // 滞留やトークンの期限接近を**見つけた**ことは、見張りの失敗ではない
+  // （それを見つけるのが仕事なので、成功として扱う）。
+  const failures = [];
+
   // 1. トークンを能動的に更新する（使わないと30日で失効するため）
   const auth = await getAuthStatus(db, nowMs);
   if (auth.hasToken) {
@@ -41,6 +46,7 @@ export async function runKeepAlive(env, options = {}) {
       notes.push('トークン更新OK');
     } catch (error) {
       notes.push(`トークン更新に失敗: ${error.message}`);
+      failures.push(`トークン更新に失敗: ${error.message}`);
       await recordNotification(
         db,
         {
@@ -99,9 +105,16 @@ export async function runKeepAlive(env, options = {}) {
   if (sweptCount > 0) notes.push(`期限切れセッション ${sweptCount}件を削除`);
 
   const message = notes.join(' / ');
-  await finishRun(db, runId, { ok: true, message, at });
+  const ok = failures.length === 0;
 
-  return { ok: true, runId, message, tokenWarned: auth.needsWarning, stale: health.isStale, sweptCount };
+  // ⚠ 以前はここを無条件に ok:true にしていた。見張り役が滞留の判定時計を
+  //   リセットしてしまうのを避けるためだったが、その判定は
+  //   `getRunHealth`（kind IN 'cron','manual'）に移り、keepalive は数えなくなった。
+  //   古い制約だけが残り、**トークン更新に失敗しても緑の「正常」**と
+  //   表示されていた。実行ログを一目見て異常に気づけないなら意味がない。
+  await finishRun(db, runId, { ok, message, error: failures.join('\n') || null, at });
+
+  return { ok, runId, message, tokenWarned: auth.needsWarning, stale: health.isStale, sweptCount };
 }
 
 export { TOKEN_WARN_DAYS };

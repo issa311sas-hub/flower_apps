@@ -246,11 +246,29 @@ export async function connectBeds24(request, env, options = {}) {
     );
   }
 
+  let result;
   try {
-    await connectWithInviteCode(env.DB, env.TOKEN_ENC_KEY, code, overridesFrom(options));
+    result = await connectWithInviteCode(env.DB, env.TOKEN_ENC_KEY, code, overridesFrom(options));
   } catch (error) {
     return htmlResponse(
       await beds24Page(env, auth.user, { error: String(error?.message ?? error), now: options.now }),
+      { status: 400 }
+    );
+  }
+
+  // 招待コードの交換が通っても、**リフレッシュが通らなければ明日には止まる**。
+  // 今日は動いてしまうので、ここで言わないと利用者は丸一日それに気づけない。
+  // 成功扱いにはしない（トークンは保存されているので、今日の分は動く）。
+  if (!result.refreshVerified) {
+    return htmlResponse(
+      await beds24Page(env, auth.user, {
+        error:
+          '接続はできましたが、トークンの更新に失敗しました。\n' +
+          'このままでは明日以降、予約の自動取得が止まります。\n' +
+          '招待コードを発行し直して、もう一度お試しください。\n\n' +
+          String(result.refreshError ?? ''),
+        now: options.now
+      }),
       { status: 400 }
     );
   }

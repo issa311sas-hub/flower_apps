@@ -77,6 +77,73 @@ describe('見張り役', () => {
     expect((await getAuthStatus(db)).state).toBe(STATE.NEEDS_RECONNECT);
   });
 
+  // ------------------------------------------------------------------
+  // 実行ログの「結果」欄が本当のことを言っているか
+  //
+  // 以前はここが無条件に ok:true で、トークン更新に失敗しても
+  // 一覧には緑の「正常」と出ていた。内容欄と結果欄が矛盾していて、
+  // 一目見て異常に気づけない状態だった。
+  // ------------------------------------------------------------------
+
+  it('★トークン更新に失敗したら、実行の行は「失敗」になる', async () => {
+    const fetchImpl = stub([
+      ['/authentication/setup', () => jsonResponse({ refreshToken: 'r', token: 't', expiresIn: 86400 })],
+      ['/authentication/token', () => jsonResponse({ error: 'unauthorized' }, 401)]
+    ]);
+    await connectWithInviteCode(db, ENC_KEY, 'code', { fetch: fetchImpl, now: () => NOW });
+
+    const result = await runKeepAlive({ DB: db, TOKEN_ENC_KEY: ENC_KEY }, { now: NOW, fetchImpl });
+
+    expect(result.ok).toBe(false);
+    expect((await listRuns(db))[0].ok).toBe(0);
+  });
+
+  it('失敗の内容は error 列にも入る（詳細画面の赤い枠に出すため）', async () => {
+    const fetchImpl = stub([
+      ['/authentication/setup', () => jsonResponse({ refreshToken: 'r', token: 't', expiresIn: 86400 })],
+      ['/authentication/token', () => jsonResponse({ error: 'unauthorized' }, 401)]
+    ]);
+    await connectWithInviteCode(db, ENC_KEY, 'code', { fetch: fetchImpl, now: () => NOW });
+
+    await runKeepAlive({ DB: db, TOKEN_ENC_KEY: ENC_KEY }, { now: NOW, fetchImpl });
+
+    const row = (await listRuns(db))[0];
+    expect(row.error).toContain('トークン更新に失敗');
+    expect(row.error).toContain('401'); // 切り分けに要るので HTTP の数字まで残す
+  });
+
+  it('未接続は「失敗」にしない（まだ繋いでいないだけ）', async () => {
+    const result = await runKeepAlive({ DB: db, TOKEN_ENC_KEY: ENC_KEY }, { now: NOW });
+
+    expect(result.ok).toBe(true);
+    expect((await listRuns(db))[0].ok).toBe(1);
+  });
+
+  it('★滞留を見つけただけでは「失敗」にしない（見つけるのが仕事なので）', async () => {
+    const runId = await startRun(db, 'cron', { at: '2026-09-01T21:00:00Z' });
+    await finishRun(db, runId, { ok: true, at: '2026-09-01T21:00:00Z' });
+
+    const result = await runKeepAlive({ DB: db, TOKEN_ENC_KEY: ENC_KEY }, { now: NOW });
+
+    expect(result.stale).toBe(true);
+    expect(result.ok).toBe(true);
+    expect((await listRuns(db))[0].ok).toBe(1);
+  });
+
+  it('トークン更新が通れば「正常」', async () => {
+    const fetchImpl = stub([
+      ['/authentication/setup', () => jsonResponse({ refreshToken: 'r', token: 't', expiresIn: 86400 })],
+      ['/authentication/token', () => jsonResponse({ token: 't2', expiresIn: 86400 })]
+    ]);
+    await connectWithInviteCode(db, ENC_KEY, 'code', { fetch: fetchImpl, now: () => NOW });
+
+    const result = await runKeepAlive({ DB: db, TOKEN_ENC_KEY: ENC_KEY }, { now: NOW, fetchImpl });
+
+    expect(result.ok).toBe(true);
+    expect((await listRuns(db))[0].ok).toBe(1);
+    expect((await listRuns(db))[0].error).toBe(null);
+  });
+
   it('日次処理が3日以上成功していなければ通知に残す', async () => {
     const runId = await startRun(db, 'cron', { at: '2026-09-01T21:00:00Z' });
     await finishRun(db, runId, { ok: true, at: '2026-09-01T21:00:00Z' });

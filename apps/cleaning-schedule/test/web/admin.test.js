@@ -82,13 +82,15 @@ const jsonResponse = (body, status = 200) => ({
   text: async () => JSON.stringify(body)
 });
 
-/** 招待コードでの接続に成功する fetch */
+/** 招待コードでの接続に成功する fetch。
+ *  接続は setup のあとリフレッシュも1回試すので、両方が通る必要がある。 */
 function connectOk() {
   return stubFetch([
     [
       '/authentication/setup',
       () => jsonResponse({ refreshToken: 'refresh-1', token: 'access-1', expiresIn: 86400 })
-    ]
+    ],
+    ['/authentication/token', () => jsonResponse({ token: 'access-2', expiresIn: 86400 })]
   ]);
 }
 
@@ -102,6 +104,55 @@ async function connect(fetchImpl = connectOk()) {
 // ------------------------------------------------------------------
 
 describe('Beds24 の接続', () => {
+  // ------------------------------------------------------------------
+  // 接続直後に、リフレッシュが通ることまで確かめる
+  //
+  // setup が返すアクセストークンは24時間有効なので、接続直後は何をしても動く。
+  // 明日以降も動くかを決めるのはリフレッシュトークンで、それはキャッシュが
+  // ある間は一度も試されない。実際に、接続して6回の実行がすべて成功した
+  // 翌日に、初めてその経路を通った見張りが失効を見つけた。
+  // ------------------------------------------------------------------
+
+  it('★リフレッシュが通らなければ「接続できました」と言わない', async () => {
+    const fetchImpl = stubFetch([
+      [
+        '/authentication/setup',
+        () => jsonResponse({ refreshToken: 'refresh-1', token: 'access-1', expiresIn: 86400 })
+      ],
+      ['/authentication/token', () => jsonResponse({ error: 'unauthorized' }, 401)]
+    ]);
+
+    const res = await connect(fetchImpl);
+
+    expect(res.status).not.toBe(303);
+    const body = await res.text();
+    expect(body).toContain('トークンの更新に失敗');
+    expect(body).toContain('明日以降');
+  });
+
+  it('リフレッシュに失敗しても、トークンは保存したままにする（今日の分は動く）', async () => {
+    const fetchImpl = stubFetch([
+      [
+        '/authentication/setup',
+        () => jsonResponse({ refreshToken: 'refresh-1', token: 'access-1', expiresIn: 86400 })
+      ],
+      ['/authentication/token', () => jsonResponse({ error: 'unauthorized' }, 401)]
+    ]);
+
+    await connect(fetchImpl);
+
+    // 消してしまうと、24時間有効なアクセストークンまで捨てることになる
+    expect(await getRefreshToken(env.DB, ENC_KEY)).toBe('refresh-1');
+  });
+
+  it('接続では setup のあとリフレッシュも1回試す', async () => {
+    const fetchImpl = connectOk();
+    await connect(fetchImpl);
+
+    expect(fetchImpl.calls.some((c) => c.url.includes('/authentication/setup'))).toBe(true);
+    expect(fetchImpl.calls.some((c) => c.url.includes('/authentication/token'))).toBe(true);
+  });
+
   it('招待コードで接続でき、トークンは暗号化して保存される', async () => {
     const fetchImpl = connectOk();
     const res = await connect(fetchImpl);
