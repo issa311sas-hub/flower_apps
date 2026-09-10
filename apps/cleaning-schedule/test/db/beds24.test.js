@@ -184,6 +184,71 @@ describe('認証', () => {
     expect(await getRefreshToken(db, ENC_KEY)).toBe('r2');
   });
 
+  // ------------------------------------------------------------------
+  // ヘッダ名
+  //
+  // Beds24 は用途ごとにヘッダ名が違う。取り違えても URL は同じなので、
+  // URL だけを見るテストは通ってしまう。実際にそれで
+  // 「リフレッシュトークンを token ヘッダで送る」誤りが旧 GAS 版から
+  // そのまま移植され、本番で 401 になるまで誰も気づけなかった。
+  //
+  //   /authentication/setup … code            （招待コード）
+  //   /authentication/token … refreshToken    （リフレッシュトークン）
+  //   それ以外              … token           （アクセストークン）
+  // ------------------------------------------------------------------
+
+  const tokenCall = (fetchImpl) => fetchImpl.calls.find((c) => c.url.includes('/authentication/token'));
+
+  it('★更新は refreshToken ヘッダで送る（token ではない）', async () => {
+    const fetchImpl = stubFetch([
+      ['/authentication/setup', () => jsonResponse({ refreshToken: 'refresh-1', token: 'a', expiresIn: 86400 })],
+      ['/authentication/token', () => jsonResponse({ token: 'access-2', expiresIn: 86400 })]
+    ]);
+
+    await connectWithInviteCode(db, ENC_KEY, 'code', { fetch: fetchImpl });
+
+    expect(tokenCall(fetchImpl).headers.refreshToken).toBe('refresh-1');
+  });
+
+  it('★更新のとき token ヘッダは送らない（アクセストークンと解釈され 401 になる）', async () => {
+    const fetchImpl = stubFetch([
+      ['/authentication/setup', () => jsonResponse({ refreshToken: 'refresh-1', token: 'a', expiresIn: 86400 })],
+      ['/authentication/token', () => jsonResponse({ token: 'access-2', expiresIn: 86400 })]
+    ]);
+
+    await connectWithInviteCode(db, ENC_KEY, 'code', { fetch: fetchImpl });
+
+    expect(tokenCall(fetchImpl).headers.token).toBeUndefined();
+  });
+
+  it('予約の取得はアクセストークンを token ヘッダで送る（こちらは token が正しい）', async () => {
+    const fetchImpl = stubFetch([
+      ['/authentication/setup', () => jsonResponse({ refreshToken: 'r', token: 'access-1', expiresIn: 86400 })],
+      ['/authentication/token', () => jsonResponse({ token: 'access-2', expiresIn: 86400 })],
+      ['/bookings', () => jsonResponse([])]
+    ]);
+
+    await connectWithInviteCode(db, ENC_KEY, 'code', { fetch: fetchImpl });
+    await fetchBookings(db, ENC_KEY, { today: '2026-09-10', fetchDays: 30 }, { fetch: fetchImpl });
+
+    const bookingCall = fetchImpl.calls.find((c) => c.url.includes('/bookings'));
+    expect(bookingCall.headers.token).toBe('access-2');
+    expect(bookingCall.headers.refreshToken).toBeUndefined();
+  });
+
+  it('招待コードの交換は code ヘッダで送る', async () => {
+    const fetchImpl = stubFetch([
+      ['/authentication/setup', () => jsonResponse({ refreshToken: 'r', token: 'a', expiresIn: 86400 })],
+      ['/authentication/token', () => jsonResponse({ token: 'a2', expiresIn: 86400 })]
+    ]);
+
+    await connectWithInviteCode(db, ENC_KEY, 'invite-code', { fetch: fetchImpl });
+
+    const setupCall = fetchImpl.calls.find((c) => c.url.includes('/authentication/setup'));
+    expect(setupCall.headers.code).toBe('invite-code');
+    expect(setupCall.headers.refreshToken).toBeUndefined();
+  });
+
   it('401 は失効として扱い、再接続が必要な状態にする', async () => {
     const fetchImpl = stubFetch([
       ['/authentication/setup', () => jsonResponse({ refreshToken: 'r', token: 't', expiresIn: 0 })],

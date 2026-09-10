@@ -142,7 +142,16 @@ export async function getAccessToken(db, encKey, options = {}, overrides = {}) {
 
   const res = await d.fetch(`${BEDS24_API_BASE}/authentication/token`, {
     method: 'GET',
-    headers: { token: refreshToken }
+    // ★ここは refreshToken。token ではない。
+    //
+    // Beds24 は token ヘッダを「アクセストークン」として解釈する。
+    // リフレッシュトークンを token で送ると、無効なアクセストークンとみなされ
+    // **必ず 401** になる。旧 GAS 版が間違っていて（Code.gs:1720）、
+    // 忠実に移植したためバグごと移ってきた。
+    //
+    // 24時間のキャッシュがあるので、この経路を通るまで誤りは表に出ない。
+    // token は併送しない（どちらを見られるか分からず、同じ失敗を繰り返す）。
+    headers: { refreshToken }
   });
 
   const at = nowIso(d.now());
