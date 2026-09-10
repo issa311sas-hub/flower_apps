@@ -431,6 +431,23 @@ Beds24 のトークンは出ません）。そのままの内容を貼って構�
 > ⚠ **cron の時刻は UTC（世界標準時）で書きます。** 日本時間より9時間遅れです。
 > `0 21` は「21時」ではなく「翌朝6時」。ここは半年後に見て混乱しやすいので覚えておいてください。
 
+#### Deploy command が正しいか
+
+Worker → **Settings** → **Build** の **Build configuration** も一緒に見ておきます。
+
+| 欄 | 正しい値 | 違っていると |
+|---|---|---|
+| Build command | `npm test` | テストを通さずにデプロイされる |
+| **Deploy command** | **`npx wrangler deploy`** | `npx wrangler versions upload` だと**コードは上がるが cron が登録されない** |
+| Root directory | `apps/cleaning-schedule` | ビルドがそもそも失敗する |
+
+`versions upload` は「新しい版を置くだけ」で、cron やバインディングの設定は反映しません。
+**画面上はデプロイが成功して見えるのに、朝6時だけ動かない**という形になるので、
+自動実行が動かないときは真っ先にここを見てください。
+
+（Version command の欄が `npx wrangler versions upload` になっているのは正常です。
+これは `main` 以外のブランチを push したときに使われるもので、本番には反映されません。）
+
 #### ここが空だったら
 
 デプロイしても cron が登録されないことがあります。**その場で追加できます。**

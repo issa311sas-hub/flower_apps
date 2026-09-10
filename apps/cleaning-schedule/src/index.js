@@ -129,33 +129,46 @@ router.get('/api/health', async (request, env) => {
   return jsonResponse(health, { status: health.ok ? 200 : 503 });
 });
 
+/** ルートを引いて実行する。本文の扱い（HEAD）は呼び出し側で整える。 */
+async function handle(request, env) {
+  const url = new URL(request.url);
+  const route = router.match(request.method, url.pathname);
+
+  if (!route) {
+    return htmlResponse(
+      page({ title: '見つかりません', nav: false, body: '<h2>ページが見つかりません</h2><p><a href="/">最初に戻る</a></p>' }),
+      { status: 404 }
+    );
+  }
+
+  try {
+    return await route.handler(request, env, route.params);
+  } catch (error) {
+    console.error(`[cleaning-schedule] ${url.pathname} でエラー: ${error?.stack ?? error}`);
+    return htmlResponse(
+      page({
+        title: 'エラー',
+        nav: false,
+        body: html`<h2>エラーが発生しました</h2>
+          <p class="small">${String(error?.message ?? error)}</p>
+          <p class="small muted">この内容を管理者に伝えてください。</p>`
+      }),
+      { status: 500 }
+    );
+  }
+}
+
 export default {
   async fetch(request, env) {
-    const url = new URL(request.url);
-    const route = router.match(request.method, url.pathname);
+    const response = await handle(request, env);
 
-    if (!route) {
-      return htmlResponse(
-        page({ title: '見つかりません', nav: false, body: '<h2>ページが見つかりません</h2><p><a href="/">最初に戻る</a></p>' }),
-        { status: 404 }
-      );
+    // HEAD は状態とヘッダだけを返し、本文は返さない決まり。
+    // Cloudflare の実行環境も落としてくれるが、明示しておかないとテストで
+    // 確かめられない。死活監視が通る経路なので、実環境まかせにしない。
+    if (request.method === 'HEAD') {
+      return new Response(null, { status: response.status, headers: response.headers });
     }
-
-    try {
-      return await route.handler(request, env, route.params);
-    } catch (error) {
-      console.error(`[cleaning-schedule] ${url.pathname} でエラー: ${error?.stack ?? error}`);
-      return htmlResponse(
-        page({
-          title: 'エラー',
-          nav: false,
-          body: html`<h2>エラーが発生しました</h2>
-            <p class="small">${String(error?.message ?? error)}</p>
-            <p class="small muted">この内容を管理者に伝えてください。</p>`
-        }),
-        { status: 500 }
-      );
-    }
+    return response;
   },
 
   /**
