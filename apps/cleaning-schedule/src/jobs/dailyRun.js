@@ -16,7 +16,7 @@ import { listStaff, toAssignStaff } from '../db/staff.js';
 import { applyFetchedBookings, listActiveBookings } from '../db/bookings.js';
 import { getCapacityMap } from '../db/availability.js';
 import { loadExisting, saveAssignments } from '../db/assignments.js';
-import { getSettings } from '../db/settings.js';
+import { getSettings, setSetting } from '../db/settings.js';
 import { startRun, finishRun } from '../db/runs.js';
 import { recordNotification, acknowledgeKind } from '../db/notifications.js';
 
@@ -126,6 +126,9 @@ export async function runDaily(env, options = {}) {
     for (const kind of ['run_error', 'zero_bookings', 'stale_run']) {
       await acknowledgeKind(db, kind, at);
     }
+
+    // 表示用。滞留の判定そのものは runs の実績から求めるので、これには依存しない
+    await setSetting(db, 'last_success_run_at', at, at);
 
     // 6. 気づいてほしいことを通知に積む
     //

@@ -346,19 +346,54 @@ describe('実行ログと稼働監視', () => {
     expect(runs[0].outsourced).toBe(3);
   });
 
-  it('成功すると最終成功時刻が更新される', async () => {
+  it('成功すると最終成功時刻が進む', async () => {
     const runId = await startRun(db, 'cron', { at: '2026-09-08T21:00:00Z' });
     await finishRun(db, runId, { ok: true, at: '2026-09-08T21:00:10Z' });
-    expect(await getSetting(db, 'last_success_run_at')).toBe('2026-09-08T21:00:10Z');
+
+    expect((await getRunHealth(db)).lastSuccessAt).toBe('2026-09-08T21:00:10Z');
   });
 
-  it('失敗しても最終成功時刻は更新されない', async () => {
+  it('失敗した実行は成功として数えない', async () => {
     const first = await startRun(db, 'cron');
     await finishRun(db, first, { ok: true, at: '2026-09-08T21:00:10Z' });
     const second = await startRun(db, 'cron');
     await finishRun(db, second, { ok: false, error: 'boom', at: '2026-09-09T21:00:10Z' });
 
-    expect(await getSetting(db, 'last_success_run_at')).toBe('2026-09-08T21:00:10Z');
+    expect((await getRunHealth(db)).lastSuccessAt).toBe('2026-09-08T21:00:10Z');
+  });
+
+  it('手動実行の成功も数える（管理者が手で回せば予定は最新）', async () => {
+    const runId = await startRun(db, 'manual');
+    await finishRun(db, runId, { ok: true, at: '2026-09-08T21:00:10Z' });
+
+    expect((await getRunHealth(db)).lastSuccessAt).toBe('2026-09-08T21:00:10Z');
+  });
+
+  it('★見張り役の成功は数えない（滞留の判定時計をリセットさせない）', async () => {
+    // 見張り役は監視するだけで予約を取り直さず、しかも必ず正常終了する。
+    // これを数えると「毎日成功している」ことになり、滞留の警告が永久に出なくなる。
+    const daily = await startRun(db, 'cron');
+    await finishRun(db, daily, { ok: true, at: '2026-09-01T21:00:00Z' });
+
+    // そのあと見張り役だけが4日間動き続ける
+    for (const day of ['02', '03', '04', '05']) {
+      const id = await startRun(db, 'keepalive');
+      await finishRun(db, id, { ok: true, at: `2026-09-${day}T09:00:00Z` });
+    }
+
+    const health = await getRunHealth(db, Date.parse('2026-09-05T21:00:00Z'));
+
+    expect(health.lastSuccessAt).toBe('2026-09-01T21:00:00Z');
+    expect(health.staleDays).toBe(4);
+    expect(health.isStale).toBe(true);
+  });
+
+  it('一度も動いていない状態は「止まった」と区別する', async () => {
+    const health = await getRunHealth(db);
+
+    expect(health.neverRun).toBe(true);
+    expect(health.isStale).toBe(false);
+    expect(health.lastSuccessAt).toBeNull();
   });
 
   it('滞留を検知できる（旧版が静かに止まった件の再発防止）', async () => {

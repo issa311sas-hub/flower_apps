@@ -39,7 +39,11 @@ export async function finishRun(db, runId, { ok, stats = {}, message = null, err
     )
     .run();
 
-  if (ok) await setSetting(db, 'last_success_run_at', at, at);
+  // ⚠ ここで last_success_run_at を書いてはいけない。
+  //    見張り役（keepAlive）は最後に必ず ok:true で終わるので、
+  //    ここに置くと見張り役が毎日、滞留の判定時計をリセットしてしまう。
+  //    実際にそうなっていて、「◯日間 成功していません」が永久に出なかった。
+  //    表示用の書き込みは runDaily の成功時だけに置いている。
 }
 
 export async function listRuns(db, limit = 30) {
@@ -56,11 +60,37 @@ export async function getRun(db, id) {
  * 旧版では runAllAuto がエラーを握りつぶし、Apps Script からは正常終了に見えたため
  * 停止に誰も気づけなかった。その再発防止のための判定。
  */
+/**
+ * 滞留の判定に数える実行の種類。
+ *
+ * 見張り役（keepalive）は**入れない**。あれは監視するだけで予約を取り直さないし、
+ * 必ず正常終了するので、入れると「毎日成功している」ことになってしまう。
+ */
+const DAILY_KINDS = ['cron', 'manual'];
+
+/**
+ * 予約取得〜割り当てが滞っていないかを返す。
+ *
+ * 判定は **runs テーブルの実績から直接**求める。
+ * 以前は設定値 last_success_run_at を見ていたが、
+ * 見張り役が finishRun 経由でそれを毎日上書きしてしまい、
+ * 滞留の警告が永久に出ない状態になっていた（実際に発生した）。
+ * 派生した設定値ではなく、実行の記録そのものを見れば取り違えようがない。
+ */
 export async function getRunHealth(db, nowMs = Date.now()) {
-  const lastSuccessAt = await getSetting(db, 'last_success_run_at', '');
+  const placeholders = DAILY_KINDS.map(() => '?').join(', ');
+  const lastSuccessAt = await db
+    .prepare(
+      `SELECT MAX(finished_at) AS last FROM runs
+        WHERE ok = 1 AND kind IN (${placeholders})`
+    )
+    .bind(...DAILY_KINDS)
+    .first('last');
+
   const staleAfter = (await getSetting(db, 'stale_run_alert_days', 3)) || 3;
 
   if (!lastSuccessAt) {
+    // まだ一度も成功していない。「止まった」とは区別して扱う
     return { lastSuccessAt: null, staleDays: null, isStale: false, neverRun: true };
   }
 

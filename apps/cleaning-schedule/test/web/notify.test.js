@@ -201,7 +201,16 @@ describe('テスト送信', () => {
 });
 
 describe('死活監視（/api/health）', () => {
+  /** 日次処理が今日成功している状態を作る */
+  async function dailyRanToday() {
+    const { startRun, finishRun } = await import('../../src/db/runs.js');
+    const id = await startRun(env.DB, 'cron');
+    await finishRun(env.DB, id, { ok: true });
+  }
+
   it('正常なら 200 を返す', async () => {
+    await dailyRanToday();
+
     const res = await worker.fetch(get('/api/health'), env);
     const body = await res.json();
 
@@ -211,7 +220,9 @@ describe('死活監視（/api/health）', () => {
   });
 
   it('自動実行が滞っていたら 503 を返す（外部の監視で気づける）', async () => {
-    await setSetting(env.DB, 'last_success_run_at', '2020-01-01T00:00:00.000Z');
+    const { startRun, finishRun } = await import('../../src/db/runs.js');
+    const id = await startRun(env.DB, 'cron');
+    await finishRun(env.DB, id, { ok: true, at: '2020-01-01T00:00:00.000Z' });
 
     const res = await worker.fetch(get('/api/health'), env);
     const body = await res.json();
@@ -222,6 +233,7 @@ describe('死活監視（/api/health）', () => {
   });
 
   it('Beds24 の再接続が必要なら 503 を返す', async () => {
+    await dailyRanToday();
     await env.DB.prepare("UPDATE beds24_auth SET state = '要再接続' WHERE id = 1").run();
 
     const res = await worker.fetch(get('/api/health'), env);
@@ -229,9 +241,14 @@ describe('死活監視（/api/health）', () => {
     expect((await res.json()).problems.join()).toContain('Beds24');
   });
 
-  it('まだ一度も実行していない状態は異常にしない（セットアップ中）', async () => {
+  it('まだ一度も動いていない状態も 503 にする', async () => {
+    // 黙って通すと、cron が登録されていないことに誰も気づけない。
+    // 実際に「朝6時に動いていないようだ」と利用者から指摘されるまで分からなかった
     const res = await worker.fetch(get('/api/health'), env);
-    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(res.status).toBe(503);
+    expect(body.problems.join()).toContain('まだ一度も成功していません');
   });
 });
 

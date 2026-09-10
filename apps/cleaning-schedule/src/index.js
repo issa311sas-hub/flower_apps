@@ -540,7 +540,7 @@ function renderKeys(env) {
 async function checkHealth(env) {
   const health = {
     ok: true,
-    stage: 'm12',
+    stage: 'm13',
     d1: { connected: false }
   };
 
@@ -604,7 +604,11 @@ async function checkHealth(env) {
     if (auth.state === STATE.NEEDS_RECONNECT) {
       problems.push('Beds24 の再接続が必要です。招待コードを発行し直してください。');
     }
-    if (run.isStale) {
+    if (run.neverRun) {
+      // 「まだ一度も」を黙って通すと、cron が登録されていないことに誰も気づけない。
+      // 初期データが入っている＝セットアップは済んでいるので、猶予を置く理由がない
+      problems.push('自動実行がまだ一度も成功していません。cron の設定を確認してください。');
+    } else if (run.isStale) {
       problems.push(`自動実行が ${run.staleDays}日間 成功していません。`);
     }
     if (fingerprint.known && !fingerprint.matches) {

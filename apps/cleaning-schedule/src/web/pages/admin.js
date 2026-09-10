@@ -102,7 +102,7 @@ export async function showAdminHome(request, env, options = {}) {
         <table>
           <tr><th>自動実行</th><td>${
             health.neverRun
-              ? 'まだ一度も成功していません'
+              ? '⚠ まだ一度も成功していません'
               : `${health.lastSuccessAt}（${health.staleDays}日前）${health.isStale ? ' ⚠ 滞留しています' : ''}`
           }</td></tr>
           <tr><th>Beds24</th><td>${escapeHtml(beds24.state)}${
@@ -126,6 +126,7 @@ export async function showAdminHome(request, env, options = {}) {
                </div>`
         )}
 
+        ${raw(runWarning(health))}
         ${raw(setupWarning(beds24, unitMap.length))}
 
         <h2>スタッフの入力状況（今後30日）</h2>
@@ -174,6 +175,35 @@ export async function showAdminHome(request, env, options = {}) {
       `
     })
   );
+}
+
+/**
+ * 自動実行が動いていないことを伝える。
+ *
+ * 「まだ一度も」と「途中で止まった」は原因がまったく違うので分ける。
+ * 前者は cron が登録されていない疑いが濃く、後者は処理の失敗が疑わしい。
+ */
+function runWarning(health) {
+  if (health.neverRun) {
+    return `<div class="banner error">
+        <strong>自動実行がまだ一度も成功していません。</strong>
+        <p class="small">毎朝6時の取り込みが動いていない可能性があります。
+        Cloudflare の <strong>Settings → Triggers → Cron Triggers</strong> に
+        <code>0 21 * * *</code> と <code>0 9 * * *</code> の2件があるか確認してください。</p>
+        <p class="small">当面は「いま実行する」で手動でも更新できます。</p>
+      </div>`;
+  }
+
+  if (health.isStale) {
+    return `<div class="banner error">
+        <strong>自動実行が ${health.staleDays}日間 成功していません。</strong>
+        <p class="small">この間、清掃予定は更新されていません。
+        実行ログでエラーの内容を確認してください。</p>
+        <p><a class="btn" href="/admin/runs">実行ログを見る</a></p>
+      </div>`;
+  }
+
+  return '';
 }
 
 /**

@@ -123,3 +123,23 @@ describe('見張り役', () => {
     expect(remaining.results.map((r) => r.id)).toEqual(['valid']);
   });
 });
+
+describe('見張り役は滞留の判定を壊さない', () => {
+  it('★何日動かしても、日次処理の滞留は進み続ける', async () => {
+    // 見張り役は必ず正常終了する。これを「成功した実行」に数えると、
+    // 朝6時が一度も動かなくても毎日リセットされ、警告が永久に出なくなる。
+    // 実際にそうなっていて、利用者に指摘されるまで気づけなかった。
+    const { startRun, finishRun, getRunHealth } = await import('../../src/db/runs.js');
+
+    const daily = await startRun(db, 'cron');
+    await finishRun(db, daily, { ok: true, at: '2026-09-01T21:00:00Z' });
+
+    for (const day of ['02', '03', '04', '05']) {
+      await runKeepAlive({ DB: db }, { now: Date.parse(`2026-09-${day}T09:00:00Z`) });
+    }
+
+    const health = await getRunHealth(db, Date.parse('2026-09-05T21:00:00Z'));
+    expect(health.lastSuccessAt).toBe('2026-09-01T21:00:00Z');
+    expect(health.isStale).toBe(true);
+  });
+});

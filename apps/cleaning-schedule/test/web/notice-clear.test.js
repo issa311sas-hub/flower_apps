@@ -165,7 +165,10 @@ describe('見張り役', () => {
   it('自分が出した滞留の警告を、自分で消さない', async () => {
     // keepAlive は常に正常終了するので、実行の成功で消す作りにすると
     // 出した直後に自分で消してしまう
-    await env.DB.prepare("UPDATE settings SET value = '2020-01-01T00:00:00Z' WHERE key = 'last_success_run_at'").run();
+    // 日次処理が最後に成功したのはずっと前、という状態を作る
+    const { startRun, finishRun } = await import('../../src/db/runs.js');
+    const id = await startRun(env.DB, 'cron');
+    await finishRun(env.DB, id, { ok: true, at: '2020-01-01T00:00:00Z' });
 
     await runKeepAlive(env, { now: NOW });
 
