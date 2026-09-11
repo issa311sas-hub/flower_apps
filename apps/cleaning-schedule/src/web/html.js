@@ -54,7 +54,10 @@ function tabsFor(user) {
         ]
       : [
           ['/me', '予定'],
-          ['/me/availability', '出勤入力']
+          // 外注（Rクリーン）は出勤入力を使わない。割り当てエンジンは外注の
+          // 入力を読まない（assign.js は workers にも外注を入れない）ので、
+          // 出しても入れた本人には何も起きず、混乱するだけになる。
+          ...(user.usesAvailability === false ? [] : [['/me/availability', '出勤入力']])
         ];
 
   return links.map(([href, label]) => `<a href="${href}">${label}</a>`).join('\n           ');

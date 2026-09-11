@@ -34,6 +34,11 @@ function toUser(row) {
     displayName: row.display_name,
     role: row.role,
     staffId: row.staff_id,
+    // 出勤入力を使う担当者か。外注（Rクリーン）は入れても割り当てに影響しないので
+    // 画面ごと出さない。紐づく担当者がいない場合（管理者など）は null。
+    usesAvailability: row.uses_availability === undefined || row.uses_availability === null
+      ? null
+      : row.uses_availability === 1,
     mustChange: row.must_change === 1,
     isActive: row.is_active === 1,
     lastLoginAt: row.last_login_at
@@ -196,8 +201,10 @@ export async function getSessionUser(db, token, { pepper = '', at = nowIso() } =
 
   const row = await db
     .prepare(
-      `SELECT s.id AS sid, s.expires_at, s.last_seen_at, u.*
-         FROM sessions s JOIN users u ON u.id = s.user_id
+      `SELECT s.id AS sid, s.expires_at, s.last_seen_at, u.*, st.uses_availability AS uses_availability
+         FROM sessions s
+         JOIN users u ON u.id = s.user_id
+         LEFT JOIN staff st ON st.id = u.staff_id
         WHERE s.id = ?`
     )
     .bind(id)

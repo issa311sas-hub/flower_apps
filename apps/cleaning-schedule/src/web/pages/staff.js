@@ -21,6 +21,36 @@ import { getSetting } from '../../db/settings.js';
 
 const SCHEDULE_DAYS = 14;
 
+/**
+ * 出勤入力を使わない担当者（外注＝Rクリーン）を弾く。
+ *
+ * 割り当てエンジンは外注の出勤入力を読まない（`core/assign.js` は
+ * `workers` に外注を入れず、外注に回すときも枠を見ない）。
+ * つまり入れても何も起きない。入れられる状態にしておくと、
+ * 「入力したのに反映されない」と受け取られるだけで、良いことがない。
+ *
+ * @returns {Response|null} 弾く場合は Response、通してよければ null
+ */
+function availabilityUnavailable(auth) {
+  if (auth.staff?.usesAvailability !== false) return null;
+
+  return htmlResponse(
+    page({
+      title: '出勤入力',
+      user: auth.user,
+      body: html`<div class="banner">
+        <strong>このアカウントでは出勤入力を使いません</strong>
+        <p class="small">
+          ${escapeHtml(auth.staff.name)}さんは外注としての登録のため、出勤できる件数の入力は不要です。
+          清掃の予定は「予定」からご確認ください。
+        </p>
+        <p><a class="btn" href="/me">予定を見る</a></p>
+      </div>`
+    }),
+    { status: 404 }
+  );
+}
+
 /** ログイン中のユーザーに紐づく担当者を取り出す */
 async function requireStaff(request, env, options = {}) {
   const auth = await requireUser(request, env, options);
@@ -245,6 +275,9 @@ export async function showAvailability(request, env, options = {}) {
   const auth = await requireStaff(request, env, options);
   if (auth.response) return auth.response;
 
+  const blocked = availabilityUnavailable(auth);
+  if (blocked) return blocked;
+
   const url = new URL(request.url);
   const today = jstToday(options.now);
   const month = url.searchParams.get('month') ?? today.slice(0, 7);
@@ -303,6 +336,11 @@ export async function saveAvailability(request, env, options = {}) {
   const auth = await requireStaff(request, env, options);
   if (auth.response) return auth.response;
   if (!checkOrigin(request)) return new Response('送信元を確認できませんでした。', { status: 403 });
+
+  // タブを隠すだけでは足りない。URL を直に叩かれれば書けてしまうし、
+  // 書けた値は割り当てに使われないまま残る（あとで意味を取り違える元になる）
+  const blocked = availabilityUnavailable(auth);
+  if (blocked) return blocked;
 
   const form = await readForm(request);
   const today = jstToday(options.now);
