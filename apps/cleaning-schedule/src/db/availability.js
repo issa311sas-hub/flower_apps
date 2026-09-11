@@ -107,3 +107,26 @@ export async function countMissingDays(db, { from, to }) {
   }
   return out;
 }
+
+/**
+ * その月の最終更新（誰がいつ入れたか）。
+ *
+ * 管理者の代理入力を足したので、画面の数字が**本人の入力なのか
+ * 管理者が代わりに入れたものなのか**が見分けられなくなった。
+ * 見分けられないまま上書きできる状態は危ないので、ここで引けるようにする。
+ */
+export async function lastUpdatedFor(db, staffId, { from, to }) {
+  const row = await db
+    .prepare(
+      `SELECT a.updated_at AS at, u.display_name AS byName, u.role AS byRole
+         FROM availability a
+         LEFT JOIN users u ON u.id = a.updated_by
+        WHERE a.staff_id = ? AND a.date BETWEEN ? AND ?
+        ORDER BY a.updated_at DESC
+        LIMIT 1`
+    )
+    .bind(staffId, from, to)
+    .first();
+
+  return row ? { at: row.at, byName: row.byName ?? null, byRole: row.byRole ?? null } : null;
+}

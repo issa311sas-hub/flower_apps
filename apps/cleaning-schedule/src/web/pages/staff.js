@@ -16,6 +16,7 @@ import { sumSettlementsFor } from '../../db/reports.js';
 import { listForStaff, setCapacityBulk, clearCapacity } from '../../db/availability.js';
 import { getStaffById } from '../../db/staff.js';
 import { setPassword } from '../../db/users.js';
+import { availabilityForm, parseCapacityForm } from '../availabilityForm.js';
 import { getSetting } from '../../db/settings.js';
 
 const SCHEDULE_DAYS = 14;
@@ -276,20 +277,7 @@ export async function showAvailability(request, env, options = {}) {
           )}</p>
         </div>
 
-        <form method="post" action="/me/availability">
-          <input type="hidden" name="month" value="${month}">
-          <input type="hidden" name="view" value="${view}">
-
-          <div class="presets small">
-            まとめて入力:
-            <button type="button" class="bulk" data-days="weekday" data-value="3">平日すべて3件</button>
-            <button type="button" class="bulk" data-days="all" data-value="0">すべて0件</button>
-          </div>
-
-          ${raw(view === 'calendar' ? calendarView(ctx) : listView(ctx))}
-
-          <p class="sticky-save"><button type="submit" class="primary">この月をまとめて保存</button></p>
-        </form>
+        ${raw(availabilityForm({ ...ctx, view, action: '/me/availability' }))}
 
         <p class="small">
           <a href="/me/availability?month=${shiftMonth(month, -1)}${view === 'list' ? '&view=list' : ''}">← ${monthLabel(shiftMonth(month, -1))}</a>
@@ -301,146 +289,20 @@ export async function showAvailability(request, env, options = {}) {
   );
 }
 
-/**
- * 1日分のラジオボタン。
- *
- * カレンダーでも一覧でも**まったく同じ入力欄**を使う。
- * 送信されるのは `cap_YYYY-MM-DD` だけなので、保存処理は1つで済む。
- */
-function radiosFor(date, value, isPast, { hidden = false } = {}) {
-  const choices = hidden ? [...CAPACITY_CHOICES, CLEAR_VALUE] : CAPACITY_CHOICES;
-
-  return choices
-    .map((n) => {
-      const id = `d${date}-${n}`;
-      const label = n === CLEAR_VALUE ? '消す' : String(n);
-      return `<input type="radio" id="${id}" name="cap_${date}" value="${n}"${
-        value === n ? ' checked' : ''
-      }${isPast ? ' disabled' : ''}>${hidden ? '' : `<label for="${id}">${label}</label>`}`;
-    })
-    .join('');
-}
-
-function dayClass(date, value, today) {
-  const dow = dowOf(date);
-  return {
-    dowClass: dow === 0 ? 'sun' : dow === 6 ? 'sat' : '',
-    isPast: date < today,
-    isUnset: value === undefined && date >= today
-  };
-}
-
-/**
- * カレンダー入力（既定）。
- *
- * マスを押すと、下のピッカーで件数を選ぶ。ピッカーはマスの中の
- * ラジオボタンを選ぶだけなので、保存の仕組みは一覧入力と同一。
- * ピッカーの操作には JavaScript が要るため、動かない端末向けに
- * 一覧入力への案内を出す（一覧入力は JS なしで完全に動く）。
- */
-function calendarView({ days, current, today }) {
-  const heads = DOW_HEADS.map(
-    (name, i) => `<div class="cal-head ${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${name}</div>`
-  ).join('');
-
-  // 月初の曜日まで空セルで埋める（1日が水曜なら先頭に3つ）
-  const blanks = '<div class="cal-blank"></div>'.repeat(dowOf(days[0]));
-
-  const cells = days
-    .map((date) => {
-      const value = current[date];
-      const { dowClass, isPast, isUnset } = dayClass(date, value, today);
-      const classes = ['cal-cell', dowClass, isPast ? 'past' : '', isUnset ? 'unset' : '', date === today ? 'today' : '']
-        .filter(Boolean)
-        .join(' ');
-
-      return `<div class="${classes}" data-day="${date}"${isPast ? ' data-past="1"' : ''}${
-        dowClass ? ' data-weekend="1"' : ''
-      }>
-          <span class="cal-day">${Number(date.slice(8, 10))}</span>
-          <span class="cal-value">${value === undefined ? '' : value}</span>
-          <span class="cal-radios">${radiosFor(date, value, isPast, { hidden: true })}</span>
-        </div>`;
-    })
-    .join('');
-
-  return `<noscript>
-      <div class="banner error">
-        <strong>この端末ではカレンダーから入力できません。</strong>
-        <p class="small">「一覧入力」に切り替えてください。同じ内容を入力できます。</p>
-      </div>
-    </noscript>
-
-    <div class="calendar">${heads}${blanks}${cells}</div>
-
-    <div class="cal-picker" id="cal-picker" hidden>
-      <p class="cal-picker-date small"></p>
-      <div class="pills">
-        ${[...CAPACITY_CHOICES, CLEAR_VALUE]
-          .map(
-            (n) =>
-              `<button type="button" class="pick" data-value="${n}">${n === CLEAR_VALUE ? '消す' : n}</button>`
-          )
-          .join('')}
-      </div>
-    </div>
-
-    <p class="small muted">マスを押すと件数を選べます。「消す」で未入力に戻せます。</p>`;
-}
-
-/** 一覧入力（1日1行）。JavaScript が無くても動く */
-function listView({ days, current, today }) {
-  const rows = days
-    .map((date) => {
-      const value = current[date];
-      const { dowClass, isPast, isUnset } = dayClass(date, value, today);
-
-      return `<div class="avail-row${isPast ? ' past' : ''}${isUnset ? ' unset' : ''}"
-                   data-day="${date}"${isPast ? ' data-past="1"' : ''}${dowClass ? ' data-weekend="1"' : ''}>
-                <div class="avail-date ${dowClass}">${Number(date.slice(8, 10))}<span class="small">(${dayNameOf(date)})</span></div>
-                <div class="pills">${radiosFor(date, value, isPast)}</div>
-              </div>`;
-    })
-    .join('');
-
-  return `<div class="avail-list">${rows}</div>`;
-}
-
 export async function saveAvailability(request, env, options = {}) {
   const auth = await requireStaff(request, env, options);
   if (auth.response) return auth.response;
   if (!checkOrigin(request)) return new Response('送信元を確認できませんでした。', { status: 403 });
 
   const form = await readForm(request);
-  const month = String(form.month ?? '').slice(0, 7);
   const today = jstToday(options.now);
-
-  const entries = [];
-  const clears = [];
-
-  for (const [key, value] of Object.entries(form)) {
-    if (!key.startsWith('cap_')) continue;
-    const date = key.slice(4);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
-    // 過去の日付は変更させない（画面上も無効にしてあるが、送信されても無視する）
-    if (date < today) continue;
-
-    const capacity = Number(Array.isArray(value) ? value[0] : value);
-
-    // 「消す」＝未入力に戻す。0件（出勤できない）とは意味が違うので別扱いにする
-    if (capacity === CLEAR_VALUE) {
-      clears.push(date);
-      continue;
-    }
-    if (!Number.isInteger(capacity) || capacity < 0 || capacity > 9) continue;
-    entries.push({ date, capacity });
-  }
+  const { month, view, entries, clears } = parseCapacityForm(form, today);
 
   await setCapacityBulk(env.DB, auth.staff.id, entries, { updatedBy: auth.user.id });
   for (const date of clears) await clearCapacity(env.DB, auth.staff.id, date);
 
-  const view = String(form.view ?? '') === 'list' ? '&view=list' : '';
-  return redirect(`/me/availability?month=${month}&saved=1${view}`);
+  const viewQuery = view === 'list' ? '&view=list' : '';
+  return redirect(`/me/availability?month=${month}&saved=1${viewQuery}`);
 }
 
 // ------------------------------------------------------------------

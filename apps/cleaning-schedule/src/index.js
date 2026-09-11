@@ -46,7 +46,11 @@ import {
   resetAssignment
 } from './web/pages/assignments.js';
 import { showTimeline } from './web/pages/timeline.js';
-import { showAvailabilityOverview } from './web/pages/availability.js';
+import {
+  showAvailabilityOverview,
+  showStaffAvailability,
+  saveStaffAvailability
+} from './web/pages/availability.js';
 import { showReportForm, saveReportForm, undoReport } from './web/pages/report.js';
 import { showReports, showReportDetail } from './web/pages/reports.js';
 import { runMigrations } from './web/pages/migrate.js';
@@ -99,6 +103,8 @@ router.post('/admin/assignments/:bookingId/reset', (request, env, params) => res
 
 router.get('/admin/timeline', (request, env) => showTimeline(request, env));
 router.get('/admin/availability', (request, env) => showAvailabilityOverview(request, env));
+router.get('/admin/availability/:staffId', (request, env, params) => showStaffAvailability(request, env, params));
+router.post('/admin/availability/:staffId', (request, env, params) => saveStaffAvailability(request, env, params));
 
 router.get('/admin/reports', (request, env) => showReports(request, env));
 router.get('/admin/reports/:bookingId', (request, env, params) => showReportDetail(request, env, params));
