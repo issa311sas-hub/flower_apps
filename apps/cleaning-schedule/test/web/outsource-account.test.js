@@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import worker from '../../src/index.js';
 import { createTestDb } from '../support/d1-sqlite.js';
 import { createUser } from '../../src/db/users.js';
-import { getStaffByName } from '../../src/db/staff.js';
+import { getStaffByName, updateStaff } from '../../src/db/staff.js';
 import { applyFetchedBookings } from '../../src/db/bookings.js';
 import { saveAssignments } from '../../src/db/assignments.js';
 import { jstToday, addDays } from '../../src/core/dates.js';
@@ -135,5 +135,101 @@ describe('外注（Rクリーン）のアカウント', () => {
       .bind(staff.id, DATE)
       .first('capacity');
     expect(saved).toBe(3);
+  });
+});
+
+// ------------------------------------------------------------------
+// アカウントの作成
+//
+// 外注に画面を用意しても、アカウントが作れなければ意味がない。
+// 担当者のプルダウンが kind === 'staff' で絞られていて、外注が出なかった。
+// ------------------------------------------------------------------
+
+describe('外注アカウントの作成', () => {
+  let cookie;
+
+  beforeEach(async () => {
+    const created = await createUser(
+      env.DB,
+      { loginId: 'owner', displayName: '経営者', role: 'admin', mustChange: false },
+      FAST
+    );
+    const res = await worker.fetch(post('/login', { login_id: 'owner', password: created.password }), env);
+    cookie = (res.headers.get('set-cookie') ?? '').match(/sid=[^;]+/)?.[0];
+  });
+
+  const staffPage = async () => (await worker.fetch(get('/admin/staff', cookie), env)).text();
+
+  it('★外注が担当者のプルダウンに出る', async () => {
+    const outsource = await getStaffByName(env.DB, 'Rクリーン');
+    expect(await staffPage()).toContain(`<option value="${outsource.id}">`);
+  });
+
+  it('外注だと分かる表示になっている', async () => {
+    expect(await staffPage()).toContain('外注・出勤入力なし');
+  });
+
+  it('通常のスタッフも従来どおり出る', async () => {
+    const hosoda = await getStaffByName(env.DB, '細田さん');
+    expect(await staffPage()).toContain(`<option value="${hosoda.id}">細田さん</option>`);
+  });
+
+  it('停止中の担当者は出ない', async () => {
+    const hosoda = await getStaffByName(env.DB, '細田さん');
+    await updateStaff(env.DB, hosoda.id, { isActive: false });
+
+    expect(await staffPage()).not.toContain(`<option value="${hosoda.id}">`);
+  });
+
+  it('★外注を選んでアカウントを作れる', async () => {
+    const outsource = await getStaffByName(env.DB, 'Rクリーン');
+
+    const res = await worker.fetch(
+      post('/admin/staff', { login_id: 'rclean', display_name: 'Rクリーン', staff_id: String(outsource.id) }, cookie),
+      env
+    );
+    expect(res.status).toBe(200);
+
+    const row = await env.DB.prepare('SELECT staff_id, role FROM users WHERE login_id = ?').bind('rclean').first();
+    expect(row.staff_id).toBe(outsource.id);
+    expect(row.role).toBe('staff');
+  });
+
+  it('★作った外注アカウントで、実際にログインして出勤入力が使えないこと', async () => {
+    const outsource = await getStaffByName(env.DB, 'Rクリーン');
+
+    const res = await worker.fetch(
+      post('/admin/staff', { login_id: 'rclean', display_name: 'Rクリーン', staff_id: String(outsource.id) }, cookie),
+      env
+    );
+
+    // 発行されたパスワードは、この画面に1度だけ表示される
+    const password = (await res.text()).match(/id="issued" type="text" value="([^"]+)"/)?.[1];
+    expect(password).toBeTruthy();
+
+    const login = await worker.fetch(post('/login', { login_id: 'rclean', password }), env);
+    const rcCookie = (login.headers.get('set-cookie') ?? '').match(/sid=[^;]+/)?.[0];
+    expect(rcCookie).toBeTruthy();
+
+    // 初回はパスワード変更を求められるので、先に済ませてから確認する
+    await worker.fetch(
+      post('/me/password', { current: password, next1: 'NewPass123!', next2: 'NewPass123!' }, rcCookie),
+      env
+    );
+
+    const avail = await worker.fetch(get('/me/availability', rcCookie), env);
+    expect(avail.status).toBe(404);
+    expect(await avail.text()).toContain('出勤入力を使いません');
+  });
+
+  it('すでにアカウントがある担当者には印が付く', async () => {
+    const hosoda = await getStaffByName(env.DB, '細田さん');
+    await createUser(
+      env.DB,
+      { loginId: 'hosoda', displayName: '細田さん', role: 'staff', staffId: hosoda.id, mustChange: false },
+      FAST
+    );
+
+    expect(await staffPage()).toContain('アカウント作成済み');
   });
 });

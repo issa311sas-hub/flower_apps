@@ -294,9 +294,22 @@ async function staffPage(env, currentUser, issued = null, error = null) {
     )
     .join('');
 
+  // すでにアカウントがある担当者。二重に作ると、どちらでログインしたかで
+  // 見え方が変わる厄介な状態になるので印を付ける（選べなくはしない）
+  const hasAccount = new Set(users.map((u) => u.staffName).filter(Boolean));
+
+  // 外注（Rクリーン）も選べる。予定の確認と完了報告だけのアカウントになる。
+  // 名前だけ並べると「なぜこの人だけ出勤入力が無いのか」が後から分からないので、
+  // 選ぶ時点で分かるようにしておく
   const staffOptions = staff
-    .filter((s) => s.kind === 'staff')
-    .map((s) => `<option value="${s.id}">${escapeHtml(s.name)}</option>`)
+    .map((s) => {
+      const marks = [
+        s.kind === 'outsource' ? '外注・出勤入力なし' : '',
+        hasAccount.has(s.name) ? 'アカウント作成済み' : ''
+      ].filter(Boolean);
+      const label = marks.length > 0 ? `${s.name}（${marks.join('／')}）` : s.name;
+      return `<option value="${s.id}">${escapeHtml(label)}</option>`;
+    })
     .join('');
 
   const issuedBlock = issued
@@ -339,7 +352,8 @@ async function staffPage(env, currentUser, issued = null, error = null) {
           <option value="">（管理者：清掃は担当しない）</option>
           ${raw(staffOptions)}
         </select>
-        <p class="small muted">清掃を担当する人は、ここで担当者を選んでください。</p>
+        <p class="small muted">清掃を担当する人は、ここで担当者を選んでください。<br>
+        外注（Rクリーン）を選ぶと、予定の確認と完了報告だけができるアカウントになります。出勤入力は使いません。</p>
 
         <p style="margin-top:20px"><button type="submit" class="primary">追加してパスワードを発行</button></p>
       </form>
