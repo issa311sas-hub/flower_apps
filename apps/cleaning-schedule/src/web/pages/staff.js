@@ -34,7 +34,17 @@ async function requireStaff(request, env, options = {}) {
           user: auth.user,
           body: html`<div class="banner">
             <strong>担当者の割り当てがありません</strong>
-            <p class="small">このアカウントは清掃の担当者に紐づいていません。管理者に連絡してください。</p>
+            <p class="small">このアカウントは清掃の担当者に紐づいていません。
+            ${raw(
+              auth.user.role === 'admin'
+                ? 'この画面は担当者本人の分を出すためのものです。管理者は下のボタンから、担当者ごとの出勤入力を開いてください。'
+                : '管理者に連絡してください。'
+            )}</p>
+            ${raw(
+              auth.user.role === 'admin'
+                ? '<p><a class="btn" href="/admin/availability">出勤入力（担当者ごと）</a> <a class="btn" href="/admin/assignments">割り当て一覧</a></p>'
+                : ''
+            )}
           </div>`
         })
       )

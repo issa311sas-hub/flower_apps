@@ -34,21 +34,42 @@ export function raw(value) {
 }
 
 /**
+ * ナビの行き先は**役割で変える**。
+ *
+ * `/me` と `/me/availability` はログイン中の本人の担当分を出す画面なので、
+ * 担当者に紐づいていない管理者が開いても「担当者の割り当てがありません」に
+ * なるだけで、何もできない。以前は役割にかかわらずここへ送っていたため、
+ * 管理者はナビから出勤入力にたどり着けなかった。
+ *
+ * 管理者が担当者も兼ねている場合（`staffId` がある）だけ、本人用の入口も出す。
+ */
+function tabsFor(user) {
+  const links =
+    user.role === 'admin'
+      ? [
+          ['/admin', '管理'],
+          ['/admin/assignments', '予定'],
+          ['/admin/availability', '出勤入力'],
+          ...(user.staffId ? [['/me', '自分の予定']] : [])
+        ]
+      : [
+          ['/me', '予定'],
+          ['/me/availability', '出勤入力']
+        ];
+
+  return links.map(([href, label]) => `<a href="${href}">${label}</a>`).join('\n           ');
+}
+
+/**
  * 共通のHTML枠
  * @param {{title: string, user?: object, body: string, nav?: boolean}} options
  */
 export function page({ title, user = null, body, nav = true }) {
-  const navBar =
-    nav && user
-      ? `<nav class="tabs">
-           ${user.role === 'admin' ? '<a href="/admin">管理</a>' : ''}
-           <a href="/me">予定</a>
-           <a href="/me/availability">出勤入力</a>
+  const navBar = nav && user ? `<nav class="tabs">${tabsFor(user)}
            <form method="post" action="/logout" class="inline">
              <button type="submit" class="link">ログアウト</button>
            </form>
-         </nav>`
-      : '';
+         </nav>` : '';
 
   return `<!DOCTYPE html>
 <html lang="ja">

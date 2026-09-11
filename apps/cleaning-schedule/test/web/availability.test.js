@@ -379,3 +379,68 @@ describe('出勤の代理入力', () => {
     expect(body).toContain(`/admin/availability/${target}?month=${MONTH}`);
   });
 });
+
+// ------------------------------------------------------------------
+// ナビの行き先
+//
+// /me と /me/availability は「ログイン中の本人の担当分」を出す画面。
+// 担当者に紐づいていない管理者が開いても何もできない。
+// 以前は役割にかかわらずそこへ送っていたため、管理者はナビの「出勤入力」から
+// 出勤の画面にたどり着けなかった（URL を手で打つしかなかった）。
+// ------------------------------------------------------------------
+
+describe('ナビの行き先', () => {
+  it('★管理者の「出勤入力」は /admin/availability を指す', async () => {
+    const body = await (await worker.fetch(get('/admin'), env)).text();
+
+    expect(body).toContain('<a href="/admin/availability">出勤入力</a>');
+    expect(body).not.toContain('<a href="/me/availability">出勤入力</a>');
+  });
+
+  it('★管理者の「予定」は本人用ではなく割り当て一覧を指す', async () => {
+    const body = await (await worker.fetch(get('/admin'), env)).text();
+
+    expect(body).toContain('<a href="/admin/assignments">予定</a>');
+    expect(body).not.toContain('<a href="/me">予定</a>');
+  });
+
+  it('スタッフのナビは従来どおり本人用を指す', async () => {
+    const staff = await getStaffByName(env.DB, '福田さん');
+    const created = await createUser(
+      env.DB,
+      { loginId: 'fukuda', displayName: '福田さん', role: 'staff', staffId: staff.id, mustChange: false },
+      FAST
+    );
+    const res = await worker.fetch(post('/login', { login_id: 'fukuda', password: created.password }), env);
+    const staffCookie = (res.headers.get('set-cookie') ?? '').match(/sid=[^;]+/)?.[0];
+
+    const body = await (await worker.fetch(get('/me', staffCookie), env)).text();
+
+    expect(body).toContain('<a href="/me/availability">出勤入力</a>');
+    expect(body).toContain('<a href="/me">予定</a>');
+    expect(body).not.toContain('href="/admin"');
+  });
+
+  it('担当者を兼ねる管理者には、自分の予定への入口も出る', async () => {
+    const staff = await getStaffByName(env.DB, '細田さん');
+    const created = await createUser(
+      env.DB,
+      { loginId: 'boss2', displayName: '兼任', role: 'admin', staffId: staff.id, mustChange: false },
+      FAST
+    );
+    const res = await worker.fetch(post('/login', { login_id: 'boss2', password: created.password }), env);
+    const bothCookie = (res.headers.get('set-cookie') ?? '').match(/sid=[^;]+/)?.[0];
+
+    const body = await (await worker.fetch(get('/admin', bothCookie), env)).text();
+
+    expect(body).toContain('<a href="/admin/availability">出勤入力</a>');
+    expect(body).toContain('<a href="/me">自分の予定</a>');
+  });
+
+  it('担当者に紐づかない管理者が /me を開いても、行き止まりにしない', async () => {
+    const body = await (await worker.fetch(get('/me'), env)).text();
+
+    expect(body).toContain('担当者の割り当てがありません');
+    expect(body).toContain('/admin/availability');
+  });
+});
