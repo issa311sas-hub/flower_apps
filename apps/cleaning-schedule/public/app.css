@@ -595,3 +595,41 @@ td.yen, th.yen { text-align: right; font-variant-numeric: tabular-nums; }
 }
 
 .cal-job.done { color: var(--ok); }
+
+/* --- 割り当てのカレンダー（管理者） ---
+ *
+ * 1日に複数の清掃が入るので、色はマスではなく**1件ずつ**に付ける。
+ * 色の意味はタイムライン・一覧とそろえてある（同じ色が同じ意味）。
+ */
+.calendar.assignments .cal-cell {
+  min-height: 84px;
+  align-items: stretch;
+}
+
+.calendar.assignments .cal-job {
+  display: block;
+  font-size: 12px;
+  text-decoration: none;
+  color: var(--text);
+  padding: 2px 3px;
+  border: 1px solid transparent;
+}
+.calendar.assignments .cal-job:hover { border-color: var(--accent); }
+.calendar.assignments .cal-job .who { font-weight: 400; opacity: 0.85; }
+
+.calendar.assignments .job-staff-1 { background: var(--staff-1); }
+.calendar.assignments .job-staff-2 { background: var(--staff-2); }
+.calendar.assignments .job-staff-3 { background: var(--staff-3); }
+.calendar.assignments .job-outsource { background: var(--outsource); }
+
+/* 未割当はそのまま外注費か穴になる。ここだけは見落とさせない */
+.calendar.assignments .job-unassigned {
+  background: var(--unassigned);
+  font-weight: 700;
+}
+
+.calendar.assignments .done-mark { color: var(--ok); font-size: 11px; }
+.calendar.assignments .manual-mark { font-size: 10px; color: var(--text-muted); }
+
+/* 予定が入っている日だけを塗る指定は、担当者ごとの色と喧嘩するので打ち消す */
+.calendar.assignments .cal-cell.has-jobs { background: var(--bg); }
