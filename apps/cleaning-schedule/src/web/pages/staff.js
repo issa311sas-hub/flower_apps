@@ -10,13 +10,14 @@
 
 import { html, page, htmlResponse, redirect, raw, escapeHtml } from '../html.js';
 import { requireUser, checkOrigin, readForm } from '../auth.js';
-import { jstToday, addDays, dayNameOf, dowOf, toDisplayDate, monthDays, shiftMonth, monthLabel } from '../../core/dates.js';
+import { jstToday, addDays, dayNameOf, toDisplayDate, monthDays, shiftMonth, monthLabel, monthOr } from '../../core/dates.js';
 import { listAssignments, getAssignment } from '../../db/assignments.js';
 import { sumSettlementsFor } from '../../db/reports.js';
 import { listForStaff, setCapacityBulk, clearCapacity } from '../../db/availability.js';
 import { getStaffById } from '../../db/staff.js';
 import { setPassword } from '../../db/users.js';
 import { availabilityForm, parseCapacityForm } from '../availabilityForm.js';
+import { calendarGrid, cellClasses, weekendClass } from '../calendar.js';
 import { getSetting } from '../../db/settings.js';
 
 const SCHEDULE_DAYS = 14;
@@ -100,7 +101,7 @@ export async function showMySchedule(request, env, options = {}) {
   // 押せる画面を最初に出す。カレンダーは月全体を見渡すためのもの（表示だけ）
   const view = url.searchParams.get('view') === 'calendar' ? 'calendar' : 'list';
   const requested = url.searchParams.get('month') ?? '';
-  const month = /^\d{4}-\d{2}$/.test(requested) ? requested : today.slice(0, 7);
+  const month = monthOr(requested, today);
 
   const days = monthDays(month);
   const range =
@@ -165,8 +166,7 @@ function scheduleList({ today, byDate }) {
         : date === addDays(today, 1)
           ? '<span class="badge">明日</span>'
           : '';
-    const dow = dowOf(date);
-    const dowClass = dow === 0 ? 'sun' : dow === 6 ? 'sat' : '';
+    const dowClass = weekendClass(date);
 
     const cards = items
       .map(
@@ -206,25 +206,10 @@ function scheduleList({ today, byDate }) {
  * どの日に何棟あるかを月単位で把握するためのもの。
  */
 function scheduleCalendar({ today, month, days, byDate }) {
-  const heads = DOW_HEADS.map(
-    (name, i) => `<div class="cal-head ${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${name}</div>`
-  ).join('');
-
-  const blanks = '<div class="cal-blank"></div>'.repeat(dowOf(days[0]));
-
-  const cells = days
-    .map((date) => {
+  const grid = calendarGrid(
+    days,
+    (date) => {
       const items = byDate.get(date) ?? [];
-      const dow = dowOf(date);
-      const classes = [
-        'cal-cell',
-        dow === 0 ? 'sun' : dow === 6 ? 'sat' : '',
-        date < today ? 'past' : '',
-        date === today ? 'today' : '',
-        items.length > 0 ? 'has-jobs' : ''
-      ]
-        .filter(Boolean)
-        .join(' ');
 
       const jobs = items
         .map(
@@ -235,19 +220,20 @@ function scheduleCalendar({ today, month, days, byDate }) {
         )
         .join('');
 
-      return `<div class="${classes}">
+      return `<div class="${cellClasses(date, today, [items.length > 0 ? 'has-jobs' : ''])}">
           <span class="cal-day">${Number(date.slice(8, 10))}</span>
           <span class="cal-jobs">${jobs}</span>
         </div>`;
-    })
-    .join('');
+    },
+    { extraClass: 'readonly' }
+  );
 
   const total = [...byDate.values()].reduce((sum, items) => sum + items.length, 0);
   const doneCount = [...byDate.values()].flat().filter((a) => a.completedAt).length;
 
   return `<p class="small muted">${monthLabel(month)}は ${total}件（完了 ${doneCount}件）です。</p>
 
-    <div class="calendar readonly">${heads}${blanks}${cells}</div>
+    ${grid}
 
     <p class="small muted">✓ は完了報告が済んだものです。清掃おわりましたのボタンは
       <a href="/me">これからの予定</a> にあります。</p>
@@ -268,8 +254,6 @@ const CAPACITY_CHOICES = [0, 1, 2, 3, 4, 5];
 
 /** 「未入力に戻す」を表す値。0件（出勤できない）とは意味が違う */
 const CLEAR_VALUE = -1;
-
-const DOW_HEADS = ['日', '月', '火', '水', '木', '金', '土'];
 
 export async function showAvailability(request, env, options = {}) {
   const auth = await requireStaff(request, env, options);

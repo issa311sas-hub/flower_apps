@@ -17,7 +17,8 @@ import { listAssignments } from '../../db/assignments.js';
 import { listUnits } from '../../db/units.js';
 import { listStaff } from '../../db/staff.js';
 import { getCapacityMap } from '../../db/availability.js';
-import { jstToday, addDays, dayNameOf, dowOf, rangeDays } from '../../core/dates.js';
+import { jstToday, addDays, dayNameOf, rangeDays } from '../../core/dates.js';
+import { weekendClass } from '../calendar.js';
 import { DEFAULT_PARAMS } from '../../core/assign.js';
 
 const DAY_CHOICES = [7, 14, 30];
@@ -140,11 +141,6 @@ export async function showTimeline(request, env, options = {}) {
       `
     })
   );
-}
-
-function weekendClass(date) {
-  const dow = dowOf(date);
-  return dow === 0 ? 'sun' : dow === 6 ? 'sat' : '';
 }
 
 /** 空の値を混ぜても余計な空白が入らないようにする */

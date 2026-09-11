@@ -10,14 +10,13 @@
  * 決まりを持っているので、その決まりを壊さないよう分けてある。
  */
 
-import { dayNameOf, dowOf } from '../core/dates.js';
+import { dayNameOf } from '../core/dates.js';
+import { calendarGrid, cellClasses, weekendClass } from './calendar.js';
 
 export const CAPACITY_CHOICES = [0, 1, 2, 3, 4, 5];
 
 /** 「消す」＝未入力に戻す。0件（出勤できない）とは意味が違う */
 export const CLEAR_VALUE = -1;
-
-const DOW_HEADS = ['日', '月', '火', '水', '木', '金', '土'];
 
 /**
  * 1日分のラジオボタン。
@@ -40,9 +39,8 @@ export function radiosFor(date, value, isPast, { hidden = false } = {}) {
 }
 
 function dayClass(date, value, today) {
-  const dow = dowOf(date);
   return {
-    dowClass: dow === 0 ? 'sun' : dow === 6 ? 'sat' : '',
+    dowClass: weekendClass(date),
     isPast: date < today,
     isUnset: value === undefined && date >= today
   };
@@ -57,30 +55,18 @@ function dayClass(date, value, today) {
  * 一覧入力への案内を出す（一覧入力は JS なしで完全に動く）。
  */
 function calendarView({ days, current, today }) {
-  const heads = DOW_HEADS.map(
-    (name, i) => `<div class="cal-head ${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${name}</div>`
-  ).join('');
+  const grid = calendarGrid(days, (date) => {
+    const value = current[date];
+    const { dowClass, isPast, isUnset } = dayClass(date, value, today);
 
-  // 月初の曜日まで空セルで埋める（1日が水曜なら先頭に3つ）
-  const blanks = '<div class="cal-blank"></div>'.repeat(dowOf(days[0]));
-
-  const cells = days
-    .map((date) => {
-      const value = current[date];
-      const { dowClass, isPast, isUnset } = dayClass(date, value, today);
-      const classes = ['cal-cell', dowClass, isPast ? 'past' : '', isUnset ? 'unset' : '', date === today ? 'today' : '']
-        .filter(Boolean)
-        .join(' ');
-
-      return `<div class="${classes}" data-day="${date}"${isPast ? ' data-past="1"' : ''}${
-        dowClass ? ' data-weekend="1"' : ''
-      }>
-          <span class="cal-day">${Number(date.slice(8, 10))}</span>
-          <span class="cal-value">${value === undefined ? '' : value}</span>
-          <span class="cal-radios">${radiosFor(date, value, isPast, { hidden: true })}</span>
-        </div>`;
-    })
-    .join('');
+    return `<div class="${cellClasses(date, today, [isUnset ? 'unset' : ''])}" data-day="${date}"${
+      isPast ? ' data-past="1"' : ''
+    }${dowClass ? ' data-weekend="1"' : ''}>
+        <span class="cal-day">${Number(date.slice(8, 10))}</span>
+        <span class="cal-value">${value === undefined ? '' : value}</span>
+        <span class="cal-radios">${radiosFor(date, value, isPast, { hidden: true })}</span>
+      </div>`;
+  });
 
   return `<noscript>
       <div class="banner error">
@@ -89,7 +75,7 @@ function calendarView({ days, current, today }) {
       </div>
     </noscript>
 
-    <div class="calendar">${heads}${blanks}${cells}</div>
+    ${grid}
 
     <div class="cal-picker" id="cal-picker" hidden>
       <p class="cal-picker-date small"></p>

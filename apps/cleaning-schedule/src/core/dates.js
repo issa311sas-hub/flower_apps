@@ -116,3 +116,16 @@ export function shiftMonth(month, delta) {
 export function monthLabel(month) {
   return `${Number(month.slice(0, 4))}年${Number(month.slice(5, 7))}月`;
 }
+
+/**
+ * URL の ?month=YYYY-MM を受け取る。形が違えば今月にする。
+ *
+ * 月表示の画面が5つあり、同じ判定をそれぞれが書いていた。
+ * 1か所に寄せておかないと、受け付ける形を直したいときに取りこぼす。
+ *
+ * @param {string|null|undefined} value 受け取った値（未指定なら null）
+ * @param {string} today 'YYYY-MM-DD'
+ */
+export function monthOr(value, today) {
+  return /^\d{4}-\d{2}$/.test(String(value ?? '')) ? String(value) : today.slice(0, 7);
+}

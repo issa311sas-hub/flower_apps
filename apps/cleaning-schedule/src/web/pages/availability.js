@@ -29,7 +29,8 @@ import {
 import { listAvailabilityStaff, getStaffById } from '../../db/staff.js';
 import { availabilityForm, parseCapacityForm } from '../availabilityForm.js';
 import { listAssignments } from '../../db/assignments.js';
-import { jstToday, dayNameOf, dowOf, monthDays, shiftMonth, monthLabel } from '../../core/dates.js';
+import { jstToday, dayNameOf, monthDays, shiftMonth, monthLabel, monthOr } from '../../core/dates.js';
+import { weekendClass } from '../calendar.js';
 
 export async function showAvailabilityOverview(request, env, options = {}) {
   const auth = await requireUser(request, env, { role: 'admin', at: options.at });
@@ -37,7 +38,7 @@ export async function showAvailabilityOverview(request, env, options = {}) {
 
   const today = jstToday(options.now);
   const requested = new URL(request.url).searchParams.get('month') ?? '';
-  const month = /^\d{4}-\d{2}$/.test(requested) ? requested : today.slice(0, 7);
+  const month = monthOr(requested, today);
 
   const days = monthDays(month);
   const from = days[0];
@@ -57,8 +58,7 @@ export async function showAvailabilityOverview(request, env, options = {}) {
 
   const rows = days
     .map((date) => {
-      const dow = dowOf(date);
-      const dowClass = dow === 0 ? 'sun' : dow === 6 ? 'sat' : '';
+      const dowClass = weekendClass(date);
       const isPast = date < today;
 
       const cells = staff
@@ -201,7 +201,7 @@ export async function showStaffAvailability(request, env, params, options = {}) 
   const url = new URL(request.url);
   const today = jstToday(options.now);
   const requested = url.searchParams.get('month') ?? '';
-  const month = /^\d{4}-\d{2}$/.test(requested) ? requested : today.slice(0, 7);
+  const month = monthOr(requested, today);
   const saved = url.searchParams.get('saved') === '1';
   const view = url.searchParams.get('view') === 'list' ? 'list' : 'calendar';
 

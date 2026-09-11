@@ -11,7 +11,7 @@
 import { html, page, htmlResponse, raw, escapeHtml } from '../html.js';
 import { requireUser } from '../auth.js';
 import { listReports, sumSettlements, getReport, CONDITIONS, SERVICE_VALUES } from '../../db/reports.js';
-import { jstToday, toDisplayDate, monthDays, shiftMonth, monthLabel } from '../../core/dates.js';
+import { jstToday, toDisplayDate, monthDays, shiftMonth, monthLabel, monthOr } from '../../core/dates.js';
 
 const CONDITION_LABEL = Object.fromEntries(CONDITIONS.map((c) => [c.value, c.label]));
 const SERVICE_LABEL = Object.fromEntries(SERVICE_VALUES.map((v) => [v.value, v.label]));
@@ -22,7 +22,7 @@ export async function showReports(request, env, options = {}) {
 
   const today = jstToday(options.now);
   const requested = new URL(request.url).searchParams.get('month') ?? '';
-  const month = /^\d{4}-\d{2}$/.test(requested) ? requested : today.slice(0, 7);
+  const month = monthOr(requested, today);
 
   const days = monthDays(month);
   const range = { from: days[0], to: days[days.length - 1] };
