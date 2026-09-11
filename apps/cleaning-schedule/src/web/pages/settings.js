@@ -14,6 +14,10 @@ import { requireUser, checkOrigin, readForm } from '../auth.js';
 import { getSettings, setSettings, setSetting } from '../../db/settings.js';
 import { recordNotification, markSent } from '../../db/notifications.js';
 import { hasWebhook, saveWebhookUrl, getWebhookUrl, sendToSlack, looksLikeWebhookUrl } from '../../integrations/slack.js';
+import { listActiveBookings } from '../../db/bookings.js';
+import { parseItemList } from '../../db/reports.js';
+import { isExcludedTitle } from '../../core/exclude.js';
+import { toDisplayDate } from '../../core/dates.js';
 
 /** 画面から変えられる数値の設定（範囲外は保存しない） */
 const NUMBERS = [
@@ -34,7 +38,37 @@ export async function showSettings(request, env, options = {}) {
 }
 
 async function settingsPage(env, user, view = {}) {
-  const [settings, webhookSet] = await Promise.all([getSettings(env.DB), hasWebhook(env.DB)]);
+  const [settings, webhookSet, bookings] = await Promise.all([
+    getSettings(env.DB),
+    hasWebhook(env.DB),
+    listActiveBookings(env.DB)
+  ]);
+
+  // ★いま登録されている語句で、実際に何が対象外になるかを見せる。
+  //
+  // 語句を広く取りすぎると**本物の清掃が消える**。数字だけでなく中身まで出して、
+  // 保存した直後に気づけるようにする。これが今回いちばん大事な安全装置。
+  const excludeWords = parseItemList(settings.exclude_title_words ?? '');
+  const matched = excludeWords.length === 0
+    ? []
+    : bookings.filter((b) => isExcludedTitle(b.title, excludeWords));
+
+  const excludePreview =
+    excludeWords.length === 0
+      ? '<p class="small muted">語句が登録されていないので、すべての予約に清掃を割り当てます。</p>'
+      : matched.length === 0
+        ? '<p class="small muted">いまの予約で一致するものはありません。</p>'
+        : `<div class="banner">
+             <strong>いまの予約のうち ${matched.length}件 が対象外になります。</strong>
+             <p class="small">本物の予約が混ざっていないか確かめてください。</p>
+             <ul class="small">${matched
+               .slice(0, 20)
+               .map(
+                 (b) =>
+                   `<li>${escapeHtml(b.unit)} ${escapeHtml(toDisplayDate(b.checkoutDate))}「${escapeHtml(b.title)}」</li>`
+               )
+               .join('')}${matched.length > 20 ? `<li>ほか ${matched.length - 20}件</li>` : ''}</ul>
+           </div>`;
 
   const numberFields = NUMBERS.map(
     (n) => `
@@ -100,6 +134,22 @@ async function settingsPage(env, user, view = {}) {
         <h2>割り当ての設定</h2>
         ${raw(numberFields)}
 
+        <h2>清掃しない予約</h2>
+        <p class="small muted">
+          レビュー用のダミー予約など、清掃を割り当てたくない予約の目印です。
+          <strong>予約のタイトルにこの語句が含まれていれば</strong>、担当を付けません
+          （画面には「対象外」として薄く出ます）。<strong>1行に1語</strong>、大文字小文字は区別しません。
+        </p>
+        <p class="small muted">
+          管理者が手で担当を決めた予約は、語句に一致しても対象外にしません。
+        </p>
+
+        <label for="exclude_title_words">除外する語句</label>
+        <textarea id="exclude_title_words" name="exclude_title_words" rows="4"
+                  placeholder="テスト">${escapeHtml(settings.exclude_title_words ?? '')}</textarea>
+
+        ${raw(excludePreview)}
+
         <p style="margin-top:20px"><button type="submit" class="primary">保存する</button></p>
       </form>
 
@@ -132,7 +182,7 @@ export async function saveSettings(request, env, options = {}) {
   values.notify_daily_summary = form.notify_daily_summary ? '1' : '0';
 
   // 完了報告の項目（1行1項目）。改行コードを揃え、空行は落とす
-  for (const key of ['report_equipment', 'report_services']) {
+  for (const key of ['report_equipment', 'report_services', 'exclude_title_words']) {
     if (form[key] === undefined) continue;
     values[key] = String(form[key])
       .replace(/\r\n?/g, '\n')

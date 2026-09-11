@@ -23,6 +23,7 @@ import { listStaff } from '../../db/staff.js';
 import { jstToday, addDays, toDisplayDate, isYmd, monthDays, shiftMonth, monthLabel, monthOr } from '../../core/dates.js';
 import { calendarGrid, cellClasses } from '../calendar.js';
 import { DEFAULT_PARAMS } from '../../core/assign.js';
+import { EXCLUDED_LABEL } from '../../core/exclude.js';
 
 const DEFAULT_RANGE_DAYS = 30;
 
@@ -54,7 +55,8 @@ export async function showAssignments(request, env, options = {}) {
     total: rows.length,
     unassigned: rows.filter((r) => r.staffName === DEFAULT_PARAMS.unassignedLabel).length,
     outsourced: rows.filter((r) => classOf(r.staffName) === 'outsource').length,
-    completed: rows.filter((r) => r.completedAt).length
+    completed: rows.filter((r) => r.completedAt).length,
+    excluded: rows.filter((r) => r.staffName === EXCLUDED_LABEL).length
   };
 
   const staffOptions = ['', ...staff.map((s) => s.name), DEFAULT_PARAMS.unassignedLabel]
@@ -119,7 +121,7 @@ export async function showAssignments(request, env, options = {}) {
           ${counts.total}件（うち
           <strong>未割当 ${counts.unassigned}件</strong> /
           外注 ${counts.outsourced}件 /
-          完了 ${counts.completed}件）
+          完了 ${counts.completed}件${counts.excluded > 0 ? ` / 対象外 ${counts.excluded}件` : ''}）
         </p>
         ${raw(
           counts.unassigned > 0
@@ -226,6 +228,7 @@ function assignmentsCalendar({ rows, staff, today, month, days, staffName }) {
 /** カレンダーの1件ごとの色。タイムラインの cellClass と同じ規則 */
 function jobClass(assignment, byName) {
   if (assignment.staffName === DEFAULT_PARAMS.unassignedLabel) return 'job-unassigned';
+  if (assignment.staffName === EXCLUDED_LABEL) return 'job-excluded';
 
   const staff = byName.get(assignment.staffName);
   if (!staff) return '';
@@ -239,6 +242,8 @@ function rowClassifier(staff) {
 
   return (name) => {
     if (name === DEFAULT_PARAMS.unassignedLabel) return 'unassigned';
+    // ダミー予約。担当は付かないが、消さずに薄く出す
+    if (name === EXCLUDED_LABEL) return 'excluded';
     const found = byName.get(name);
     if (!found) return '';
     if (found.kind === 'outsource') return 'outsource';

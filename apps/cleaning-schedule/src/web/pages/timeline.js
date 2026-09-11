@@ -20,6 +20,7 @@ import { getCapacityMap } from '../../db/availability.js';
 import { jstToday, addDays, dayNameOf, rangeDays } from '../../core/dates.js';
 import { weekendClass } from '../calendar.js';
 import { DEFAULT_PARAMS } from '../../core/assign.js';
+import { EXCLUDED_LABEL } from '../../core/exclude.js';
 
 const DAY_CHOICES = [7, 14, 30];
 const DEFAULT_DAYS = 14;
@@ -152,6 +153,7 @@ function cls(...parts) {
 function cellClass(assignment, byName) {
   const base = weekendClass(assignment.cleaningDate);
   if (assignment.staffName === DEFAULT_PARAMS.unassignedLabel) return cls(base, 'cell-unassigned');
+  if (assignment.staffName === EXCLUDED_LABEL) return cls(base, 'cell-excluded');
 
   const staff = byName.get(assignment.staffName);
   if (!staff) return base;

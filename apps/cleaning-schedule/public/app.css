@@ -633,3 +633,16 @@ td.yen, th.yen { text-align: right; font-variant-numeric: tabular-nums; }
 
 /* 予定が入っている日だけを塗る指定は、担当者ごとの色と喧嘩するので打ち消す */
 .calendar.assignments .cal-cell.has-jobs { background: var(--bg); }
+
+/* --- 対象外（レビュー用のダミー予約） ---
+ *
+ * 消さずに薄く出す。消えると「なぜこの日は清掃が無いのか」が分からなくなる。
+ * 未割当（赤系）と取り違えないよう、灰色で「手を打つ必要はない」と分かる見た目にする。
+ */
+tr.excluded td { background: var(--surface); color: var(--text-muted); }
+.timeline td.cell-excluded { background: var(--surface); color: var(--text-muted); }
+.calendar.assignments .job-excluded {
+  background: var(--surface);
+  color: var(--text-muted);
+  text-decoration: line-through;
+}

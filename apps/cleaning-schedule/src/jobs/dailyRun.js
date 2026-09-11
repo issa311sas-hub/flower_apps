@@ -10,6 +10,7 @@
 
 import { jstToday, nowIso, addDays } from '../core/dates.js';
 import { assign } from '../core/assign.js';
+import { splitExcluded, toExcludedAssignment } from '../core/exclude.js';
 import { computeNextGuests } from '../core/nextGuests.js';
 import { fetchBookings } from '../integrations/beds24.js';
 import { listStaff, toAssignStaff } from '../db/staff.js';
@@ -17,6 +18,7 @@ import { applyFetchedBookings, listActiveBookings } from '../db/bookings.js';
 import { getCapacityMap } from '../db/availability.js';
 import { loadExisting, saveAssignments } from '../db/assignments.js';
 import { getSettings, setSetting } from '../db/settings.js';
+import { parseItemList } from '../db/reports.js';
 import { startRun, finishRun } from '../db/runs.js';
 import { recordNotification, acknowledgeKind } from '../db/notifications.js';
 
@@ -84,9 +86,18 @@ export async function runDaily(env, options = {}) {
       to: addDays(today, fetchDays + 3)
     });
 
+    // レビュー用のダミー予約を、割り当てエンジンに渡す前に外す。
+    // エンジン（core/assign.js）は旧版との一致テストで縛ってあるので、
+    // 除外の判断をあちらに入れない。ここで振り分ければエンジンは何も知らずに済む。
+    const { assignable, excluded } = splitExcluded(
+      bookings,
+      parseItemList(settings.exclude_title_words ?? ''),
+      { existing }
+    );
+
     const result = assign({
       today,
-      bookings,
+      bookings: assignable,
       existing,
       staff: toAssignStaff(staff),
       capacity,
@@ -97,14 +108,22 @@ export async function runDaily(env, options = {}) {
     });
 
     // 4. 次ゲスト数を求めて保存
-    const nextGuests = computeNextGuests(bookings, result.assignments);
-    const savedAssignments = await saveAssignments(db, result.assignments, { nextGuests, runId, at });
+    //
+    // 対象外の予約は数えない。実在しない客なので、その前の清掃の
+    // 「次 N人」に足すと嘘になる。
+    const nextGuests = computeNextGuests(assignable, result.assignments);
+
+    // 対象外も割り当ての行として保存する。担当は付かないが、画面には出したい
+    // （消えると「なぜこの日は清掃が無いのか」が分からなくなる）。
+    const allAssignments = [...result.assignments, ...excluded.map(toExcludedAssignment)];
+    const savedAssignments = await saveAssignments(db, allAssignments, { nextGuests, runId, at });
 
     // 5. 実行ログ
     const message =
       `取得 ${fetched.bookings.length}件 / 割り当て ${result.stats.total}件` +
       `（確定 ${result.stats.confirmed} / 延期 ${result.stats.deferred} / ` +
-      `外注 ${result.stats.outsourced} / 未割当 ${result.stats.unassigned}）`;
+      `外注 ${result.stats.outsourced} / 未割当 ${result.stats.unassigned}）` +
+      (excluded.length > 0 ? ` / 対象外 ${excluded.length}件` : '');
 
     await finishRun(db, runId, {
       ok: true,
@@ -178,6 +197,7 @@ export async function runDaily(env, options = {}) {
       saved,
       savedAssignments,
       stats: result.stats,
+      excluded,
       message
     };
   } catch (error) {
