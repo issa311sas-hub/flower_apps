@@ -218,3 +218,90 @@ describe('設定画面の安全装置', () => {
     expect(saved).toBe('テスト\nダミー');
   });
 });
+
+// ------------------------------------------------------------------
+// あとからタイトルが変わった場合
+//
+// Beds24 側でタイトルにダミーの語句を足すと、次の実行で対象外になる。
+// そのとき**空いた枠が割り振り直される**ことまでを通しで確かめる。
+// ここが通らないと、ダミーを外しても外注費は減らない。
+// ------------------------------------------------------------------
+
+describe('あとからダミーが付いた場合', () => {
+  const assignmentsAt = async () =>
+    new Map((await listAssignments(env.DB, { from: CHECKOUT, to: CHECKOUT })).map((r) => [r.bookingId, r]));
+
+  it('★対象外になり、外注に回っていた清掃がスタッフに引き戻される', async () => {
+    await setSetting(env.DB, 'exclude_title_words', 'ダミー');
+    await openCapacity(1); // 枠は1件だけ
+
+    // 1回目: どちらも普通のタイトル。1件がスタッフ、もう1件は外注になる
+    await run(['予約A', '予約B']);
+    const before = await assignmentsAt();
+    expect(before.get('1').staffName).toBe('細田さん');
+    expect(before.get('2').staffName).toBe('Rクリーン');
+
+    // 2回目: 1件目のタイトルにダミーが足された
+    await run(['予約A（ダミー）', '予約B']);
+    const after = await assignmentsAt();
+
+    expect(after.get('1').staffName).toBe('対象外');
+    // ★空いた枠に、外注だった清掃が引き戻される
+    expect(after.get('2').staffName).toBe('細田さん');
+  });
+
+  it('★外注が0件になる（費用が消えたことを数字で押さえる）', async () => {
+    await setSetting(env.DB, 'exclude_title_words', 'ダミー');
+    await openCapacity(1);
+
+    await run(['予約A', '予約B']);
+    const result = await run(['予約A（ダミー）', '予約B']);
+
+    expect(result.stats.outsourced).toBe(0);
+  });
+
+  it('ダミーの語句を消せば、また割り当てに戻る', async () => {
+    await setSetting(env.DB, 'exclude_title_words', 'ダミー');
+    await openCapacity(2);
+
+    await run(['予約A（ダミー）', '予約B']);
+    expect((await assignmentsAt()).get('1').staffName).toBe('対象外');
+
+    await setSetting(env.DB, 'exclude_title_words', '');
+    await run(['予約A（ダミー）', '予約B']);
+
+    expect((await assignmentsAt()).get('1').staffName).toBe('細田さん');
+  });
+
+  it('担当が変わったことは変更履歴に残る', async () => {
+    await setSetting(env.DB, 'exclude_title_words', 'ダミー');
+    await openCapacity(1);
+
+    await run(['予約A', '予約B']);
+    await run(['予約A（ダミー）', '予約B']);
+
+    const history = await env.DB.prepare('SELECT * FROM assignment_history WHERE booking_id = ?')
+      .bind('1')
+      .all();
+    expect(history.results.length).toBeGreaterThan(0);
+  });
+
+  it('★完了報告が済んだ清掃は、あとからダミーを付けても担当が消えない', async () => {
+    await openCapacity(2);
+    await run(['予約A', '予約B']);
+    expect((await assignmentsAt()).get('1').staffName).toBe('細田さん');
+
+    // 細田さんが実施して完了報告を出した
+    await env.DB.prepare('UPDATE assignments SET completed_at = ? WHERE booking_id = ?')
+      .bind('2026-09-12T02:00:00Z', '1')
+      .run();
+
+    // そのあとでタイトルにダミーが付いた
+    await setSetting(env.DB, 'exclude_title_words', 'ダミー');
+    await run(['予約A（ダミー）', '予約B']);
+
+    const after = await assignmentsAt();
+    expect(after.get('1').staffName).toBe('細田さん');
+    expect(after.get('1').completedAt).toBeTruthy();
+  });
+});

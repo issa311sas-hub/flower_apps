@@ -6,7 +6,13 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { isExcludedTitle, splitExcluded, toExcludedAssignment, EXCLUDED_LABEL } from '../../src/core/exclude.js';
+import {
+  isExcludedTitle,
+  splitExcluded,
+  forgetExcluded,
+  toExcludedAssignment,
+  EXCLUDED_LABEL
+} from '../../src/core/exclude.js';
 
 const booking = (bookingId, title, extra = {}) => ({
   bookingId,
@@ -77,6 +83,53 @@ describe('予約の振り分け', () => {
     expect(assignable.map((b) => b.bookingId)).toEqual(['1']);
   });
 
+  it('★完了報告が済んだ清掃は、語句に一致しても対象外にしない', () => {
+    // 実際にやった清掃の担当者が画面から消えると、誰がやったか分からなくなる。
+    // 割り当てエンジンが Phase 1.4 で守っているのと同じ決まり（assign.js:309）
+    const { assignable, excluded } = splitExcluded([booking('1', 'テスト')], ['テスト'], {
+      existing: [{ bookingId: '1', completedAt: '2026-09-12T02:00:00Z' }]
+    });
+
+    expect(excluded).toHaveLength(0);
+    expect(assignable.map((b) => b.bookingId)).toEqual(['1']);
+  });
+
+  it('★過去の清掃日は書き換えない', () => {
+    const { assignable, excluded } = splitExcluded([booking('1', 'テスト')], ['テスト'], {
+      existing: [{ bookingId: '1', cleaningDate: '2026-09-01' }],
+      today: '2026-09-12'
+    });
+
+    expect(excluded).toHaveLength(0);
+    expect(assignable.map((b) => b.bookingId)).toEqual(['1']);
+  });
+
+  it('今日以降の清掃日なら、これまでどおり対象外になる', () => {
+    const { excluded } = splitExcluded([booking('1', 'テスト')], ['テスト'], {
+      existing: [{ bookingId: '1', cleaningDate: '2026-09-20' }],
+      today: '2026-09-12'
+    });
+
+    expect(excluded).toHaveLength(1);
+  });
+
+  it('today を渡さなければ、日付では守らない（呼び出し側の指定に任せる）', () => {
+    const { excluded } = splitExcluded([booking('1', 'テスト')], ['テスト'], {
+      existing: [{ bookingId: '1', cleaningDate: '2026-09-01' }]
+    });
+
+    expect(excluded).toHaveLength(1);
+  });
+
+  it('割り当てがまだ無い新しい予約は、そのまま対象外にできる', () => {
+    const { excluded } = splitExcluded([booking('1', 'テスト')], ['テスト'], {
+      existing: [],
+      today: '2026-09-12'
+    });
+
+    expect(excluded).toHaveLength(1);
+  });
+
   it('自動で決まっていた予約は、あとから語句を足せば除外される', () => {
     const { excluded } = splitExcluded([booking('1', 'テスト')], ['テスト'], {
       existing: [{ bookingId: '1', isManual: false }]
@@ -104,5 +157,45 @@ describe('対象外の割り当て行', () => {
   it('清掃日はチェックアウト日のまま（そもそも清掃しないので延期しない）', () => {
     const row = toExcludedAssignment(booking('1', 'テスト', { checkoutDate: '2026-09-20' }));
     expect(row.cleaningDate).toBe('2026-09-20');
+  });
+});
+
+describe('対象外を忘れさせる', () => {
+  // これが無いと、語句を消しても割り当てが戻らない。
+  // エンジンは Phase 0 で前回の担当をそのまま引き継ぐので、'対象外' のまま固まる。
+
+  it('★対象外でなくなった予約の「対象外」は消える（決め直させるため）', () => {
+    const existing = [
+      { bookingId: '1', staffName: EXCLUDED_LABEL },
+      { bookingId: '2', staffName: '細田さん' }
+    ];
+
+    const kept = forgetExcluded(existing, new Set());
+
+    expect(kept.map((e) => e.bookingId)).toEqual(['2']);
+  });
+
+  it('今回も対象外の予約は、そのまま残す（毎回作り直さない）', () => {
+    const existing = [{ bookingId: '1', staffName: EXCLUDED_LABEL }];
+
+    const kept = forgetExcluded(existing, new Set(['1']));
+
+    expect(kept.map((e) => e.bookingId)).toEqual(['1']);
+  });
+
+  it('対象外でない割り当ては一切触らない', () => {
+    const existing = [
+      { bookingId: '1', staffName: '細田さん' },
+      { bookingId: '2', staffName: 'Rクリーン' },
+      { bookingId: '3', staffName: '未割当' }
+    ];
+
+    expect(forgetExcluded(existing, new Set())).toHaveLength(3);
+  });
+
+  it('元の配列を書き換えない', () => {
+    const existing = [{ bookingId: '1', staffName: EXCLUDED_LABEL }];
+    forgetExcluded(existing, new Set());
+    expect(existing).toHaveLength(1);
   });
 });

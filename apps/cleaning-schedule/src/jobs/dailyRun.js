@@ -10,7 +10,7 @@
 
 import { jstToday, nowIso, addDays } from '../core/dates.js';
 import { assign } from '../core/assign.js';
-import { splitExcluded, toExcludedAssignment } from '../core/exclude.js';
+import { splitExcluded, forgetExcluded, toExcludedAssignment } from '../core/exclude.js';
 import { computeNextGuests } from '../core/nextGuests.js';
 import { fetchBookings } from '../integrations/beds24.js';
 import { listStaff, toAssignStaff } from '../db/staff.js';
@@ -92,13 +92,18 @@ export async function runDaily(env, options = {}) {
     const { assignable, excluded } = splitExcluded(
       bookings,
       parseItemList(settings.exclude_title_words ?? ''),
-      { existing }
+      { existing, today }
     );
+
+    // 対象外でなくなった予約は、前回の「対象外」を忘れさせてから渡す。
+    // そうしないとエンジンが Phase 0 でその担当名を引き継いでしまい、
+    // **語句を消しても割り当てが戻らない**（どのフェーズも '対象外' を拾わないため）。
+    const excludedIds = new Set(excluded.map((b) => b.bookingId));
 
     const result = assign({
       today,
       bookings: assignable,
-      existing,
+      existing: forgetExcluded(existing, excludedIds),
       staff: toAssignStaff(staff),
       capacity,
       params: {

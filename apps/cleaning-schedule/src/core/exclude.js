@@ -38,28 +38,45 @@ export function isExcludedTitle(title, words) {
 /**
  * 予約を「割り当てるもの」と「対象外」に分ける。
  *
+ * 判定は毎回やり直す。タイトルは取得のたびに上書きされる（db/bookings.js）ので、
+ * **あとから Beds24 側で語句を足せば、次の実行で対象外になる**。
+ * その分スタッフの枠が空き、外注に回っていた清掃が引き戻される
+ * （割り当てエンジンの Phase 1.4 → 1.5）。
+ *
  * @param {Array<object>} bookings 取り込み済みの予約
  * @param {string[]} words 除外する語句（空なら何も除外しない）
- * @param {{existing?: Array<{bookingId: string, isManual?: boolean}>}} options
- *   すでにある割り当て。**手動で決めたものは対象外にしない**
+ * @param {{existing?: Array<object>, today?: string}} options
+ *   `existing` すでにある割り当て / `today` 今日（JST, 'YYYY-MM-DD'）
  * @returns {{assignable: Array<object>, excluded: Array<object>}}
  */
-export function splitExcluded(bookings, words, { existing = [] } = {}) {
+export function splitExcluded(bookings, words, { existing = [], today = null } = {}) {
   const list = (words ?? []).map((w) => String(w ?? '').trim()).filter(Boolean);
 
   // 語句が1つも無ければ何もしない。既定の挙動を変えないための入口
   if (list.length === 0) return { assignable: [...(bookings ?? [])], excluded: [] };
 
-  // 管理者が手で担当を決めたものは動かさない。
-  // あとから語句を足したせいで、決めたはずの担当が取り上げられるのは筋が悪い。
-  // 割り当てエンジンが全フェーズで手動行を避けているのと同じ考え方。
-  const manual = new Set((existing ?? []).filter((e) => e.isManual).map((e) => e.bookingId));
+  // ここに入るものは、語句に一致しても対象外にしない。
+  // 3つとも割り当てエンジンが全フェーズで守っている決まりと同じもの。
+  const protectedIds = new Set(
+    (existing ?? [])
+      .filter(
+        (e) =>
+          // 管理者が手で決めた担当を、あとから足した語句で取り上げない
+          e.isManual ||
+          // ★終わった清掃は動かさない（core/assign.js:309 と同じ）。
+          //   実際にやった清掃の担当者が画面から消えると、誰がやったか分からなくなる
+          e.completedAt ||
+          // ★過去は書き換えない。済んだ日の割り当てをあとから塗り替えると履歴が信用できない
+          (today && e.cleaningDate && e.cleaningDate < today)
+      )
+      .map((e) => e.bookingId)
+  );
 
   const assignable = [];
   const excluded = [];
 
   for (const booking of bookings ?? []) {
-    if (!manual.has(booking.bookingId) && isExcludedTitle(booking.title, list)) {
+    if (!protectedIds.has(booking.bookingId) && isExcludedTitle(booking.title, list)) {
       excluded.push(booking);
     } else {
       assignable.push(booking);
@@ -67,6 +84,29 @@ export function splitExcluded(bookings, words, { existing = [] } = {}) {
   }
 
   return { assignable, excluded };
+}
+
+/**
+ * いま対象外でない予約に残っている「対象外」の割り当てを、無かったことにする。
+ *
+ * ★これが無いと、**語句を消しても割り当てが戻らない。**
+ *
+ * 割り当てエンジンは Phase 0 で前回の担当をそのまま引き継ぐ。
+ * 担当が `対象外` のまま渡すと、エンジンはその名前を知らないので
+ * どのフェーズも拾わず、永久に `対象外` のまま残る。
+ * （一度 外注 に落ちた清掃をどのフェーズも拾わなかったのと同じ形。Phase 1.4 の経緯を参照）
+ *
+ * 前回の割り当てを消して渡せば、エンジンは新しい予約として決め直す。
+ *
+ * @param {Array<object>} existing すでにある割り当て
+ * @param {Set<string>} excludedIds 今回も対象外になる予約のID
+ */
+export function forgetExcluded(existing, excludedIds) {
+  const stillExcluded = excludedIds ?? new Set();
+
+  return (existing ?? []).filter(
+    (e) => !(e.staffName === EXCLUDED_LABEL && !stillExcluded.has(e.bookingId))
+  );
 }
 
 /**
