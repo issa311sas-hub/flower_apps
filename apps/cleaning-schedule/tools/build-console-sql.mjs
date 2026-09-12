@@ -49,6 +49,12 @@ const FILES = [
     out: '03-seed.sql',
     title: '初期データの投入',
     match: (s) => /^INSERT/i.test(s)
+  },
+  {
+    // あとから足した列。01 のテーブル定義には入っていないので、別に流す必要がある
+    out: '04-alters.sql',
+    title: 'あとから足した列',
+    match: (s) => /^ALTER\s+TABLE/i.test(s)
   }
 ];
 

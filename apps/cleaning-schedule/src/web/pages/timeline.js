@@ -16,7 +16,7 @@ import { requireUser } from '../auth.js';
 import { listAssignments } from '../../db/assignments.js';
 import { listUnits } from '../../db/units.js';
 import { listStaff } from '../../db/staff.js';
-import { getCapacityMap } from '../../db/availability.js';
+import { getAvailabilityMaps } from '../../db/availability.js';
 import { jstToday, addDays, dayNameOf, rangeDays } from '../../core/dates.js';
 import { weekendClass } from '../calendar.js';
 import { DEFAULT_PARAMS } from '../../core/assign.js';
@@ -37,12 +37,13 @@ export async function showTimeline(request, env, options = {}) {
   const to = addDays(from, days - 1);
   const dates = rangeDays(from, days);
 
-  const [units, assignments, staff, capacity] = await Promise.all([
+  const [units, assignments, staff, maps] = await Promise.all([
     listUnits(env.DB),
     listAssignments(env.DB, { from, to }),
     listStaff(env.DB),
-    getCapacityMap(env.DB, { from, to })
+    getAvailabilityMaps(env.DB, { from, to })
   ]);
+  const { capacity, checkinLimits } = maps;
 
   const byName = new Map(staff.map((s) => [s.name, s]));
 
@@ -85,7 +86,10 @@ export async function showTimeline(request, env, options = {}) {
         .map((date) => {
           const value = capacity[s.name]?.[date];
           const isUnset = value === undefined;
-          return `<td class="${cls(weekendClass(date), isUnset ? 'unset' : '')}">${isUnset ? '-' : value}</td>`;
+          const isPm = checkinLimits[s.name]?.[date] !== undefined;
+          return `<td class="${cls(weekendClass(date), isUnset ? 'unset' : '', isPm ? 'pm-slot' : '')}">${
+            isUnset ? '-' : isPm ? '13:30' : value
+          }</td>`;
         })
         .join('');
       return `<tr><th class="unit-col">${escapeHtml(s.shortName || s.name)}</th>${tds}</tr>`;

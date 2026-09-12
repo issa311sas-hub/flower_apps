@@ -19,18 +19,47 @@ export const CAPACITY_CHOICES = [0, 1, 2, 3, 4, 5];
 export const CLEAR_VALUE = -1;
 
 /**
+ * 「13:30」の枠。13:30〜18:00 しか出られない日。
+ *
+ * 合計2件こなせるが、**当日チェックインのある部屋は1件まで**
+ * （16:00 の入室に間に合わせられるのが1件だけのため）。
+ * 入室の無い部屋は 18:00 完了でよいので、2件とも入室無しなら2件こなせる。
+ *
+ * 数字と混ざらないよう、送信される値は文字列にしてある。
+ */
+export const PM_VALUE = 'pm1330';
+export const PM_LABEL = '13:30';
+const PM_CAPACITY = 2;
+const PM_CHECKIN_LIMIT = 1;
+
+/** 保存されている値（{capacity, checkinLimit}）を、画面で選ばれている値に変える */
+export function selectionFor(entry) {
+  if (entry === undefined || entry === null) return undefined;
+  if (entry.checkinLimit !== null && entry.checkinLimit !== undefined) return PM_VALUE;
+  return entry.capacity;
+}
+
+/** マスに出す文字 */
+function displayValue(value) {
+  if (value === undefined) return '';
+  return value === PM_VALUE ? PM_LABEL : String(value);
+}
+
+/**
  * 1日分のラジオボタン。
  *
  * カレンダーでも一覧でも**まったく同じ入力欄**を使う。
  * 送信されるのは `cap_YYYY-MM-DD` だけなので、保存処理は1つで済む。
  */
 export function radiosFor(date, value, isPast, { hidden = false } = {}) {
-  const choices = hidden ? [...CAPACITY_CHOICES, CLEAR_VALUE] : CAPACITY_CHOICES;
+  const choices = hidden
+    ? [...CAPACITY_CHOICES, PM_VALUE, CLEAR_VALUE]
+    : [...CAPACITY_CHOICES, PM_VALUE];
 
   return choices
     .map((n) => {
       const id = `d${date}-${n}`;
-      const label = n === CLEAR_VALUE ? '消す' : String(n);
+      const label = n === CLEAR_VALUE ? '消す' : n === PM_VALUE ? PM_LABEL : String(n);
       return `<input type="radio" id="${id}" name="cap_${date}" value="${n}"${
         value === n ? ' checked' : ''
       }${isPast ? ' disabled' : ''}>${hidden ? '' : `<label for="${id}">${label}</label>`}`;
@@ -56,14 +85,14 @@ function dayClass(date, value, today) {
  */
 function calendarView({ days, current, today }) {
   const grid = calendarGrid(days, (date) => {
-    const value = current[date];
+    const value = selectionFor(current[date]);
     const { dowClass, isPast, isUnset } = dayClass(date, value, today);
 
     return `<div class="${cellClasses(date, today, [isUnset ? 'unset' : ''])}" data-day="${date}"${
       isPast ? ' data-past="1"' : ''
     }${dowClass ? ' data-weekend="1"' : ''}>
         <span class="cal-day">${Number(date.slice(8, 10))}</span>
-        <span class="cal-value">${value === undefined ? '' : value}</span>
+        <span class="cal-value${value === PM_VALUE ? ' pm' : ''}">${displayValue(value)}</span>
         <span class="cal-radios">${radiosFor(date, value, isPast, { hidden: true })}</span>
       </div>`;
   });
@@ -80,10 +109,12 @@ function calendarView({ days, current, today }) {
     <div class="cal-picker" id="cal-picker" hidden>
       <p class="cal-picker-date small"></p>
       <div class="pills">
-        ${[...CAPACITY_CHOICES, CLEAR_VALUE]
+        ${[...CAPACITY_CHOICES, PM_VALUE, CLEAR_VALUE]
           .map(
             (n) =>
-              `<button type="button" class="pick" data-value="${n}">${n === CLEAR_VALUE ? '消す' : n}</button>`
+              `<button type="button" class="pick${n === PM_VALUE ? ' pm' : ''}" data-value="${n}">${
+                n === CLEAR_VALUE ? '消す' : n === PM_VALUE ? PM_LABEL : n
+              }</button>`
           )
           .join('')}
       </div>
@@ -96,7 +127,7 @@ function calendarView({ days, current, today }) {
 function listView({ days, current, today }) {
   const rows = days
     .map((date) => {
-      const value = current[date];
+      const value = selectionFor(current[date]);
       const { dowClass, isPast, isUnset } = dayClass(date, value, today);
 
       return `<div class="avail-row${isPast ? ' past' : ''}${isUnset ? ' unset' : ''}"
@@ -150,7 +181,15 @@ export function parseCapacityForm(form, today) {
     // 過去の日付は変更させない（画面上も無効にしてあるが、送信されても無視する）
     if (date < today) continue;
 
-    const capacity = Number(Array.isArray(value) ? value[0] : value);
+    const raw = String(Array.isArray(value) ? value[0] : value);
+
+    // 「13:30」は合計2件・当日チェックインありは1件まで
+    if (raw === PM_VALUE) {
+      entries.push({ date, capacity: PM_CAPACITY, checkinLimit: PM_CHECKIN_LIMIT });
+      continue;
+    }
+
+    const capacity = Number(raw);
 
     // 「消す」＝未入力に戻す。0件（出勤できない）とは意味が違うので別扱いにする
     if (capacity === CLEAR_VALUE) {
@@ -158,7 +197,8 @@ export function parseCapacityForm(form, today) {
       continue;
     }
     if (!Number.isInteger(capacity) || capacity < 0 || capacity > 9) continue;
-    entries.push({ date, capacity });
+    // 数字の入力は上限なし。前に 13:30 だった日を数字に変えたら、上限も消える
+    entries.push({ date, capacity, checkinLimit: null });
   }
 
   return {

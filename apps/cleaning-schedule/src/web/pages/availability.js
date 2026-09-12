@@ -20,7 +20,7 @@
 import { html, page, htmlResponse, redirect, raw, escapeHtml } from '../html.js';
 import { requireUser, checkOrigin, readForm } from '../auth.js';
 import {
-  getCapacityMap,
+  getAvailabilityMaps,
   listForStaff,
   setCapacityBulk,
   clearCapacity,
@@ -44,11 +44,12 @@ export async function showAvailabilityOverview(request, env, options = {}) {
   const from = days[0];
   const to = days[days.length - 1];
 
-  const [staff, capacity, assignments] = await Promise.all([
+  const [staff, maps, assignments] = await Promise.all([
     listAvailabilityStaff(env.DB),
-    getCapacityMap(env.DB, { from, to }),
+    getAvailabilityMaps(env.DB, { from, to }),
     listAssignments(env.DB, { from, to })
   ]);
+  const { capacity, checkinLimits } = maps;
 
   // その日に予定されている清掃の件数
   const cleaningsPerDay = {};
@@ -65,9 +66,10 @@ export async function showAvailabilityOverview(request, env, options = {}) {
         .map((s) => {
           const value = capacity[s.name]?.[date];
           // 未入力（-）と「0件」の入力は意味が違う。必ず見た目で分ける
-          return value === undefined
-            ? '<td class="unset">-</td>'
-            : `<td>${value}</td>`;
+          if (value === undefined) return '<td class="unset">-</td>';
+          // 13:30 の日は数字だけだと「なぜ2件入らないのか」が分からない
+          if (checkinLimits[s.name]?.[date] !== undefined) return '<td class="pm-slot">13:30</td>';
+          return `<td>${value}</td>`;
         })
         .join('');
 

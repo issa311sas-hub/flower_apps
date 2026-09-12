@@ -75,9 +75,9 @@ describe('出勤入力', () => {
     expect(res.headers.get('location')).toContain('saved=1');
 
     expect(await listForStaff(env.DB, staff.id, { from: '2099-01-01', to: '2099-01-31' })).toEqual({
-      '2099-01-10': 3,
-      '2099-01-11': 0,
-      '2099-01-12': 2
+      '2099-01-10': { capacity: 3, checkinLimit: null },
+      '2099-01-11': { capacity: 0, checkinLimit: null },
+      '2099-01-12': { capacity: 2, checkinLimit: null }
     });
   });
 
@@ -128,7 +128,7 @@ describe('出勤入力', () => {
 
     expect(await listForStaff(env.DB, fukuhara.id, { from: '2099-01-01', to: '2099-01-31' })).toEqual({});
     expect(await listForStaff(env.DB, hosoda.staff.id, { from: '2099-01-01', to: '2099-01-31' })).toEqual({
-      '2099-01-10': 5
+      '2099-01-10': { capacity: 5, checkinLimit: null }
     });
   });
 

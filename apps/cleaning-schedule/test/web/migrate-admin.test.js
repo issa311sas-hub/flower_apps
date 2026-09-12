@@ -61,11 +61,31 @@ function post(path, body, { cookie: cookieValue, origin = ORIGIN } = {}) {
 }
 
 /** 本番で起きた状態を作る: 最後のマイグレーションだけ未適用 */
+/**
+ * マイグレーションを1つ取り消す方法。
+ *
+ * 「いちばん新しいものが未適用」という状況を作るために使う。
+ * **マイグレーションを足したらここにも足すこと。** 知らない名前が来たら
+ * 黙って通さず落とす（取り消せていないのに未適用のふりをすると、
+ * テストが何を確かめているのか分からなくなるため）。
+ */
+const UNDO = {
+  '0003_completion_reports.sql': async () => {
+    await env.DB.prepare('DROP TABLE IF EXISTS report_answers').run();
+    await env.DB.prepare('DROP TABLE IF EXISTS completion_reports').run();
+  },
+  '0004_checkin_limit.sql': async () => {
+    await env.DB.prepare('ALTER TABLE availability DROP COLUMN checkin_limit').run();
+  }
+};
+
 async function pretendOutdated() {
   const last = MIGRATIONS[MIGRATIONS.length - 1].name;
+  const undo = UNDO[last];
+  if (!undo) throw new Error(`${last} の取り消し方が UNDO にありません。足してください。`);
+
   await env.DB.prepare('DELETE FROM schema_migrations WHERE name = ?').bind(last).run();
-  await env.DB.prepare('DROP TABLE IF EXISTS report_answers').run();
-  await env.DB.prepare('DROP TABLE IF EXISTS completion_reports').run();
+  await undo();
   return last;
 }
 

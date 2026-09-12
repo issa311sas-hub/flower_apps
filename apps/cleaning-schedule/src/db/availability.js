@@ -15,9 +15,23 @@ import { nowIso } from '../core/dates.js';
  * 割り当てエンジンに渡す形 { スタッフ名: { 'YYYY-MM-DD': 件数 } } を返す
  */
 export async function getCapacityMap(db, { from, to }) {
+  return (await getAvailabilityMaps(db, { from, to })).capacity;
+}
+
+/**
+ * 割り当てエンジンに渡す2つの表を、1回の問い合わせで返す。
+ *
+ * - `capacity`      … { スタッフ名: { 'YYYY-MM-DD': 件数 } }
+ * - `checkinLimits` … { スタッフ名: { 'YYYY-MM-DD': 上限 } }
+ *
+ * `checkinLimits` に載るのは「13:30」のように**当日チェックインのある部屋の
+ * 件数に上限がある日だけ**。ふつうの 0〜5 の入力は載らない（＝上限なし）。
+ * 分けてあるのは、エンジンの総数の判定をいっさい変えずに済ませるため。
+ */
+export async function getAvailabilityMaps(db, { from, to }) {
   const { results } = await db
     .prepare(
-      `SELECT s.name AS name, a.date AS date, a.capacity AS capacity
+      `SELECT s.name AS name, a.date AS date, a.capacity AS capacity, a.checkin_limit AS checkin_limit
          FROM availability a
          JOIN staff s ON s.id = a.staff_id
         WHERE a.date BETWEEN ? AND ?`
@@ -25,42 +39,60 @@ export async function getCapacityMap(db, { from, to }) {
     .bind(from, to)
     .all();
 
-  const map = {};
+  const capacity = {};
+  const checkinLimits = {};
+
   for (const row of results) {
-    if (!map[row.name]) map[row.name] = {};
-    map[row.name][row.date] = row.capacity;
+    if (!capacity[row.name]) capacity[row.name] = {};
+    capacity[row.name][row.date] = row.capacity;
+
+    if (row.checkin_limit !== null && row.checkin_limit !== undefined) {
+      if (!checkinLimits[row.name]) checkinLimits[row.name] = {};
+      checkinLimits[row.name][row.date] = row.checkin_limit;
+    }
   }
-  return map;
+
+  return { capacity, checkinLimits };
 }
 
 /** 1人分の入力状況（画面表示用） */
 export async function listForStaff(db, staffId, { from, to }) {
   const { results } = await db
     .prepare(
-      `SELECT date, capacity FROM availability
+      `SELECT date, capacity, checkin_limit FROM availability
         WHERE staff_id = ? AND date BETWEEN ? AND ? ORDER BY date`
     )
     .bind(staffId, from, to)
     .all();
 
   const map = {};
-  for (const row of results) map[row.date] = row.capacity;
+  for (const row of results) {
+    map[row.date] = { capacity: row.capacity, checkinLimit: row.checkin_limit ?? null };
+  }
   return map;
 }
 
-export async function setCapacity(db, staffId, date, capacity, { updatedBy = null, at = nowIso() } = {}) {
+export async function setCapacity(
+  db,
+  staffId,
+  date,
+  capacity,
+  { checkinLimit = null, updatedBy = null, at = nowIso() } = {}
+) {
   await db
     .prepare(
-      `INSERT INTO availability (staff_id, date, capacity, updated_by, updated_at)
-       VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO availability (staff_id, date, capacity, checkin_limit, updated_by, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(staff_id, date) DO UPDATE SET
-         capacity   = excluded.capacity,
-         updated_by = excluded.updated_by,
-         updated_at = excluded.updated_at`
+         capacity      = excluded.capacity,
+         checkin_limit = excluded.checkin_limit,
+         updated_by    = excluded.updated_by,
+         updated_at    = excluded.updated_at`
     )
-    .bind(staffId, date, capacity, updatedBy, at)
+    .bind(staffId, date, capacity, checkinLimit, updatedBy, at)
     .run();
 }
+
 
 /** 1ヶ月分などをまとめて保存する（入力画面は月まとめて1回のPOST） */
 export async function setCapacityBulk(db, staffId, entries, { updatedBy = null, at = nowIso() } = {}) {
@@ -71,14 +103,15 @@ export async function setCapacityBulk(db, staffId, entries, { updatedBy = null, 
     valid.map((e) =>
       db
         .prepare(
-          `INSERT INTO availability (staff_id, date, capacity, updated_by, updated_at)
-           VALUES (?, ?, ?, ?, ?)
+          `INSERT INTO availability (staff_id, date, capacity, checkin_limit, updated_by, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)
            ON CONFLICT(staff_id, date) DO UPDATE SET
-             capacity   = excluded.capacity,
-             updated_by = excluded.updated_by,
-             updated_at = excluded.updated_at`
+             capacity      = excluded.capacity,
+             checkin_limit = excluded.checkin_limit,
+             updated_by    = excluded.updated_by,
+             updated_at    = excluded.updated_at`
         )
-        .bind(staffId, e.date, e.capacity, updatedBy, at)
+        .bind(staffId, e.date, e.capacity, e.checkinLimit ?? null, updatedBy, at)
     )
   );
   return valid.length;

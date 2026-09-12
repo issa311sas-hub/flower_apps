@@ -154,7 +154,10 @@ describe('カレンダーと一覧入力で結果が一致する', () => {
     await save({ month: MONTH, view: 'list', 'cap_2099-01-10': '3', 'cap_2099-01-11': '0' });
     const fromList = await listForStaff(env.DB, staffId, RANGE);
 
-    expect(fromCalendar).toEqual({ '2099-01-10': 3, '2099-01-11': 0 });
+    expect(fromCalendar).toEqual({
+      '2099-01-10': { capacity: 3, checkinLimit: null },
+      '2099-01-11': { capacity: 0, checkinLimit: null }
+    });
     expect(fromList).toEqual(fromCalendar);
   });
 
@@ -171,7 +174,7 @@ describe('カレンダーと一覧入力で結果が一致する', () => {
 describe('未入力に戻す', () => {
   it('「消す」を送るとその日が未入力に戻る', async () => {
     await save({ month: MONTH, 'cap_2099-01-10': '3' });
-    expect(await listForStaff(env.DB, staffId, RANGE)).toEqual({ '2099-01-10': 3 });
+    expect(await listForStaff(env.DB, staffId, RANGE)).toEqual({ '2099-01-10': { capacity: 3, checkinLimit: null } });
 
     await save({ month: MONTH, 'cap_2099-01-10': '-1' });
     expect(await listForStaff(env.DB, staffId, RANGE)).toEqual({});
@@ -182,7 +185,7 @@ describe('未入力に戻す', () => {
     await save({ month: MONTH, 'cap_2099-01-11': '-1' });
 
     // 0件は残り、消した日だけが未入力に戻る
-    expect(await listForStaff(env.DB, staffId, RANGE)).toEqual({ '2099-01-10': 0 });
+    expect(await listForStaff(env.DB, staffId, RANGE)).toEqual({ '2099-01-10': { capacity: 0, checkinLimit: null } });
   });
 
   it('カレンダーのマスに「消す」の選択肢がある', async () => {
@@ -203,7 +206,7 @@ describe('未入力に戻す', () => {
     await save({ month: '2020-01', 'cap_2020-01-10': '-1' });
 
     expect(await listForStaff(env.DB, staffId, { from: '2020-01-01', to: '2020-01-31' })).toEqual({
-      '2020-01-10': 2
+      '2020-01-10': { capacity: 2, checkinLimit: null }
     });
   });
 
@@ -220,6 +223,6 @@ describe('他人の分は触れない', () => {
     await save({ month: MONTH, staff_id: String(fukuhara.id), 'cap_2099-01-10': '5' });
 
     expect(await listForStaff(env.DB, fukuhara.id, RANGE)).toEqual({});
-    expect(await listForStaff(env.DB, staffId, RANGE)).toEqual({ '2099-01-10': 5 });
+    expect(await listForStaff(env.DB, staffId, RANGE)).toEqual({ '2099-01-10': { capacity: 5, checkinLimit: null } });
   });
 });

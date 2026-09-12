@@ -444,3 +444,100 @@ describe('ナビの行き先', () => {
     expect(body).toContain('/admin/availability');
   });
 });
+
+// ------------------------------------------------------------------
+// 「13:30」の枠
+//
+// 13:30〜18:00 しか出られない日。合計2件こなせるが、
+// 当日チェックインのある部屋は1件まで（16:00 の入室に間に合うのが1件だけ）。
+// ------------------------------------------------------------------
+
+describe('13:30 の出勤枠', () => {
+  const FUTURE = `${MONTH}-15`;
+
+  const rowFor = async (staffName = '細田さん') => {
+    const staff = await getStaffByName(env.DB, staffName);
+    return env.DB.prepare('SELECT capacity, checkin_limit FROM availability WHERE staff_id = ? AND date = ?')
+      .bind(staff.id, FUTURE)
+      .first();
+  };
+
+  it('入力画面に「13:30」のボタンが出る', async () => {
+    const staff = await getStaffByName(env.DB, '細田さん');
+    const body = await (await worker.fetch(get(`/admin/availability/${staff.id}?month=${MONTH}`), env)).text();
+
+    expect(body).toContain('pm1330');
+    expect(body).toContain('13:30');
+  });
+
+  it('★「13:30」を選ぶと 合計2件・チェックインありは1件 で保存される', async () => {
+    const staff = await getStaffByName(env.DB, '細田さん');
+    await worker.fetch(
+      post(`/admin/availability/${staff.id}`, { month: MONTH, [`cap_${FUTURE}`]: 'pm1330' }, { cookie }),
+      env
+    );
+
+    expect(await rowFor()).toEqual({ capacity: 2, checkin_limit: 1 });
+  });
+
+  it('数字を選んだ日には上限を付けない', async () => {
+    const staff = await getStaffByName(env.DB, '細田さん');
+    await worker.fetch(
+      post(`/admin/availability/${staff.id}`, { month: MONTH, [`cap_${FUTURE}`]: '3' }, { cookie }),
+      env
+    );
+
+    expect(await rowFor()).toEqual({ capacity: 3, checkin_limit: null });
+  });
+
+  it('★13:30 の日を数字に変えると、上限も消える', async () => {
+    const staff = await getStaffByName(env.DB, '細田さん');
+    await worker.fetch(
+      post(`/admin/availability/${staff.id}`, { month: MONTH, [`cap_${FUTURE}`]: 'pm1330' }, { cookie }),
+      env
+    );
+    await worker.fetch(
+      post(`/admin/availability/${staff.id}`, { month: MONTH, [`cap_${FUTURE}`]: '4' }, { cookie }),
+      env
+    );
+
+    expect(await rowFor()).toEqual({ capacity: 4, checkin_limit: null });
+  });
+
+  it('「消す」で未入力に戻せる', async () => {
+    const staff = await getStaffByName(env.DB, '細田さん');
+    await worker.fetch(
+      post(`/admin/availability/${staff.id}`, { month: MONTH, [`cap_${FUTURE}`]: 'pm1330' }, { cookie }),
+      env
+    );
+    await worker.fetch(
+      post(`/admin/availability/${staff.id}`, { month: MONTH, [`cap_${FUTURE}`]: '-1' }, { cookie }),
+      env
+    );
+
+    expect(await rowFor()).toBeFalsy();
+  });
+
+  it('保存したあと、画面で 13:30 が選ばれた状態になる', async () => {
+    const staff = await getStaffByName(env.DB, '細田さん');
+    await worker.fetch(
+      post(`/admin/availability/${staff.id}`, { month: MONTH, [`cap_${FUTURE}`]: 'pm1330' }, { cookie }),
+      env
+    );
+
+    const body = await (await worker.fetch(get(`/admin/availability/${staff.id}?month=${MONTH}`), env)).text();
+    expect(body).toContain(`id="d${FUTURE}-pm1330" name="cap_${FUTURE}" value="pm1330" checked`);
+  });
+
+  it('★出勤の一覧に「13:30」と出る（数字だけでは理由が分からないため）', async () => {
+    const staff = await getStaffByName(env.DB, '細田さん');
+    await worker.fetch(
+      post(`/admin/availability/${staff.id}`, { month: MONTH, [`cap_${FUTURE}`]: 'pm1330' }, { cookie }),
+      env
+    );
+
+    const body = await (await worker.fetch(get(`/admin/availability?month=${MONTH}`), env)).text();
+    expect(body).toContain('pm-slot');
+    expect(body).toContain('13:30');
+  });
+});

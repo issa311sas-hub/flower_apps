@@ -99,6 +99,18 @@ export function assign(input) {
   const params = { ...DEFAULT_PARAMS, ...(input.params || {}) };
   const { unassignedLabel } = params;
   const capacity = input.capacity || {};
+
+  // 「当日チェックインのある部屋」の件数に上限がある日（13:30 の出勤枠）。
+  // 渡されなければ上限なし＝これまでとまったく同じ動きになる。
+  // parity テストの生成器はこれを作らないので、2000シナリオは旧来の経路だけを通る。
+  const checkinLimits = input.checkinLimits || {};
+
+  /** 日付ごと・担当者ごとの使用件数。総数と、そのうち「チェックインあり」の数 */
+  /** @type {Record<string, Record<string, number>>} */
+  const usageByDate = {};
+  /** @type {Record<string, Record<string, number>>} */
+  const checkinUsage = {};
+
   const warnings = [];
 
   // チェックアウト日の昇順で処理する。旧版は読み込み時にこの順に並べており
@@ -122,6 +134,42 @@ export function assign(input) {
     warnings.push('外注（Rクリーン）が登録されていません。外注への割り当ては行いません。');
   }
 
+  // 部屋ごとの「入室のある日」。清掃日にその部屋へ入室があるかを引くために使う。
+  // 新しい入力は要らない（予約の startDate から作れる）。
+  const checkinDates = new Map();
+  for (const b of bookings) {
+    if (!b.startDate) continue;
+    if (!checkinDates.has(b.unit)) checkinDates.set(b.unit, new Set());
+    checkinDates.get(b.unit).add(b.startDate);
+  }
+
+  /** その清掃が「当日チェックインあり」か。**清掃する日**で判定する（延期したら延期先の日） */
+  const isCheckinJob = (unit, date) => checkinDates.get(unit)?.has(date) ?? false;
+
+  /** 上限に引っかからずにこの日のチェックインありを1件受けられるか */
+  const canTakeCheckin = (memberName, date) => {
+    const limit = checkinLimits[memberName]?.[date];
+    if (limit === undefined || limit === null) return true; // 上限なし＝これまでと同じ
+    return (checkinUsage[date]?.[memberName] ?? 0) < limit;
+  };
+
+  /** その仕事をこの人に渡せるか（総数の空き＋チェックインの上限） */
+  const canTake = (member, date, unit) =>
+    remainingFor(capacity, usageByDate, member, date) > 0 &&
+    (!isCheckinJob(unit, date) || canTakeCheckin(member.name, date));
+
+  /** 使った分を数える。チェックインありなら上限側も数える */
+  const use = (date, staffName, unit) => {
+    addUsage(usageByDate, date, staffName);
+    if (isCheckinJob(unit, date)) addUsage(checkinUsage, date, staffName);
+  };
+
+  /** 数え直しのために1件戻す（延期・入れ替えで日付が動くとき） */
+  const release = (date, staffName, unit) => {
+    if (usageByDate[date]?.[staffName]) usageByDate[date][staffName]--;
+    if (isCheckinJob(unit, date) && checkinUsage[date]?.[staffName]) checkinUsage[date][staffName]--;
+  };
+
   const existingMap = new Map();
   for (const e of input.existing || []) existingMap.set(e.bookingId, e);
 
@@ -134,8 +182,6 @@ export function assign(input) {
   // 外注に回す期限（実行日から outsourceWindowDays 日以内の未割当が対象）
   const outsourceDeadline = addDays(input.today, params.outsourceWindowDays);
 
-  /** @type {Record<string, Record<string, number>>} */
-  const usageByDate = {};
   /** @type {Array<ReturnType<typeof makeAssignment>>} */
   const all = [];
 
@@ -171,7 +217,7 @@ export function assign(input) {
         isManual: true
       };
       all.push(frozen);
-      addUsage(usageByDate, cleaningDate, frozen.staffName);
+      use(cleaningDate, frozen.staffName, frozen.unit);
       continue;
     }
 
@@ -211,7 +257,7 @@ export function assign(input) {
     }
 
     all.push(a);
-    addUsage(usageByDate, a.cleaningDate, a.staffName);
+    use(a.cleaningDate, a.staffName, a.unit);
   }
 
   // --------------------------------------------------------
@@ -238,7 +284,7 @@ export function assign(input) {
         guests: booking.guests || 0,
         isManual: true
       });
-      addUsage(usageByDate, cleaningDate, previous.staffName);
+      use(cleaningDate, previous.staffName, booking.unit);
       continue;
     }
     toAssign.push(booking);
@@ -266,22 +312,21 @@ export function assign(input) {
         return aDef - bDef;
       });
 
-      const total = items.length;
-      let allocated = 0;
-      let idx = 0;
+      // 優先順位の高い人から順に埋める。
+      //
+      // 以前は `min(残り件数, 枠)` でまとめて取っていたが、チェックインありの
+      // 上限（13:30 の枠）は**仕事ごとに**判定が変わるので1件ずつ見る。
+      // 上限が無い場合の結果はまとめ取りと同じになる（parity で担保）。
+      for (const item of items) {
+        const taker = workers.find((m) => canTake(m, date, item.unit));
 
-      for (const member of workers) {
-        const alloc = Math.min(total - allocated, remainingFor(capacity, usageByDate, member, date));
-        for (let i = 0; i < alloc; i++, idx++) {
-          all.push(makeAssignment(items[idx], member.name, ctx));
-          addUsage(usageByDate, date, member.name);
+        if (taker) {
+          all.push(makeAssignment(item, taker.name, ctx));
+          use(date, taker.name, item.unit);
+        } else {
+          all.push(makeAssignment(item, unassignedLabel, ctx));
+          use(date, unassignedLabel, item.unit);
         }
-        allocated += alloc;
-      }
-
-      for (let i = 0; i < total - allocated; i++, idx++) {
-        all.push(makeAssignment(items[idx], unassignedLabel, ctx));
-        addUsage(usageByDate, date, unassignedLabel);
       }
     }
   }
@@ -308,7 +353,7 @@ export function assign(input) {
       // 終わった清掃を別の人の担当にしない
       if (existingMap.get(a.bookingId)?.completedAt) continue;
 
-      const hasRoom = workers.some((m) => remainingFor(capacity, usageByDate, m, a.cleaningDate) > 0);
+      const hasRoom = workers.some((m) => canTake(m, a.cleaningDate, a.unit));
       if (!hasRoom) continue;
 
       a.staffName = unassignedLabel;
@@ -316,7 +361,7 @@ export function assign(input) {
 
       const used = usageByDate[a.cleaningDate];
       if (used && used[outsourceName]) used[outsourceName]--;
-      addUsage(usageByDate, a.cleaningDate, unassignedLabel);
+      use(a.cleaningDate, unassignedLabel, a.unit);
     }
   }
 
@@ -328,12 +373,12 @@ export function assign(input) {
     if (a.isManual) continue;
     if (a.staffName !== unassignedLabel) continue;
 
-    const target = workers.find((m) => remainingFor(capacity, usageByDate, m, a.cleaningDate) > 0);
+    const target = workers.find((m) => canTake(m, a.cleaningDate, a.unit));
     if (!target) continue;
 
     a.staffName = target.name;
     a.status = a.checkoutDate !== a.cleaningDate ? STATUS.DEFERRED : STATUS.CONFIRMED;
-    addUsage(usageByDate, a.cleaningDate, target.name);
+    use(a.cleaningDate, target.name, a.unit);
     const used = usageByDate[a.cleaningDate];
     if (used && used[unassignedLabel]) used[unassignedLabel]--;
   }
@@ -359,7 +404,7 @@ export function assign(input) {
       const tryDate = addDays(a.cleaningDate, offset);
       if (tryDate > dl.deadline) continue;
 
-      const target = workers.find((m) => remainingFor(capacity, usageByDate, m, tryDate) > 0);
+      const target = workers.find((m) => canTake(m, tryDate, a.unit));
       if (target) {
         deferTo = target.name;
         deferDate = tryDate;
@@ -375,10 +420,11 @@ export function assign(input) {
       a.staffName = deferTo;
       a.status = STATUS.DEFERRED;
 
-      addUsage(usageByDate, deferDate, deferTo);
-      if (usageByDate[origDate] && usageByDate[origDate][origStaff]) {
-        usageByDate[origDate][origStaff]--;
-      }
+      // 延期先で1件使い、元の日の分を戻す。
+      // チェックインありかどうかは**日付ごとに変わる**ので、release も use も
+      // それぞれの日で数え直す（ここを素通りさせると上限がすり抜ける）
+      use(deferDate, deferTo, a.unit);
+      release(origDate, origStaff, a.unit);
       deferCount++;
     }
   }
@@ -411,6 +457,15 @@ export function assign(input) {
         // 現状スタッフの既定上限はすべて 0 のため挙動は同じ。挙動を変えないためそのまま移植する。
         const moveMember = { name: cand.staffName, defaultCapacity: 0 };
         if (remainingFor(capacity, usageByDate, moveMember, moveDate) <= 0) continue;
+        // 移動先の日で、その部屋に入室があるなら上限も見る
+        if (isCheckinJob(cand.unit, moveDate) && !canTakeCheckin(moveMember.name, moveDate)) continue;
+        // 入れ替えで受け取る側も同じ（空けた枠に入れる仕事がチェックインありのことがある）
+        if (
+          isCheckinJob(target.unit, target.cleaningDate) &&
+          !canTakeCheckin(cand.staffName, target.cleaningDate)
+        ) {
+          continue;
+        }
 
         const freedStaff = cand.staffName;
         const origDay = cand.cleaningDate;
@@ -418,17 +473,13 @@ export function assign(input) {
         cand.cleaningDate = moveDate;
         cand.dayName = dayNameOf(moveDate);
         cand.status = STATUS.DEFERRED;
-        addUsage(usageByDate, moveDate, freedStaff);
-        if (usageByDate[origDay] && usageByDate[origDay][freedStaff]) {
-          usageByDate[origDay][freedStaff]--;
-        }
+        use(moveDate, freedStaff, cand.unit);
+        release(origDay, freedStaff, cand.unit);
 
         target.staffName = freedStaff;
         target.status = STATUS.CONFIRMED;
-        addUsage(usageByDate, target.cleaningDate, freedStaff);
-        if (usageByDate[target.cleaningDate] && usageByDate[target.cleaningDate][unassignedLabel]) {
-          usageByDate[target.cleaningDate][unassignedLabel]--;
-        }
+        use(target.cleaningDate, freedStaff, target.unit);
+        release(target.cleaningDate, unassignedLabel, target.unit);
 
         deferCount++;
         swapped = true;

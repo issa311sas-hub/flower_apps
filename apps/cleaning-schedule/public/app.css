@@ -646,3 +646,21 @@ tr.excluded td { background: var(--surface); color: var(--text-muted); }
   color: var(--text-muted);
   text-decoration: line-through;
 }
+
+/* --- 「13:30」の出勤枠 ---
+ *
+ * 13:30〜18:00 しか出られない日。合計2件だが、当日チェックインのある部屋は1件まで。
+ * 数字のボタンより文字が長いので、丸のまま横に広がるようにする。
+ */
+.pills label[for$="pm1330"],
+.cal-picker .pick.pm {
+  font-size: 15px;
+  padding: 0 14px;
+  white-space: nowrap;
+}
+
+/* マスの中は狭いので、数字より小さく出す */
+.cal-cell .cal-value.pm { font-size: 13px; letter-spacing: -0.5px; }
+
+/* 一覧・タイムラインの枠。数字と並ぶので詰めて出す */
+td.pm-slot { font-size: 12px; white-space: nowrap; letter-spacing: -0.5px; }

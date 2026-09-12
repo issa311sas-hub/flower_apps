@@ -15,7 +15,7 @@ import { computeNextGuests } from '../core/nextGuests.js';
 import { fetchBookings } from '../integrations/beds24.js';
 import { listStaff, toAssignStaff } from '../db/staff.js';
 import { applyFetchedBookings, listActiveBookings } from '../db/bookings.js';
-import { getCapacityMap } from '../db/availability.js';
+import { getAvailabilityMaps } from '../db/availability.js';
 import { loadExisting, saveAssignments } from '../db/assignments.js';
 import { getSettings, setSetting } from '../db/settings.js';
 import { parseItemList } from '../db/reports.js';
@@ -81,7 +81,7 @@ export async function runDaily(env, options = {}) {
     const existing = await loadExisting(db);
 
     // 割り当ては延期先（+1/+2日）の枠も見るため、前後に余裕を持たせて取得する
-    const capacity = await getCapacityMap(db, {
+    const { capacity, checkinLimits } = await getAvailabilityMaps(db, {
       from: addDays(today, -3),
       to: addDays(today, fetchDays + 3)
     });
@@ -106,6 +106,8 @@ export async function runDaily(env, options = {}) {
       existing: forgetExcluded(existing, excludedIds),
       staff: toAssignStaff(staff),
       capacity,
+      // 「13:30」の日の上限。入っている日だけが対象で、無ければこれまでと同じ
+      checkinLimits,
       params: {
         maxDeferDays: settings.max_defer_days ?? 2,
         outsourceWindowDays: settings.outsource_window_days ?? 14

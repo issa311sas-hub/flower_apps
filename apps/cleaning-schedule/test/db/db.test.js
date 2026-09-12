@@ -181,9 +181,9 @@ describe('出勤可能件数', () => {
     ]);
     expect(saved).toBe(3);
     expect(await listForStaff(db, hosoda.id, { from: '2026-09-01', to: '2026-09-30' })).toEqual({
-      '2026-09-10': 3,
-      '2026-09-11': 0,
-      '2026-09-12': 2
+      '2026-09-10': { capacity: 3, checkinLimit: null },
+      '2026-09-11': { capacity: 0, checkinLimit: null },
+      '2026-09-12': { capacity: 2, checkinLimit: null }
     });
   });
 
