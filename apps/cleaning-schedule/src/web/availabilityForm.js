@@ -1,0 +1,210 @@
+/**
+ * 出勤入力のフォーム（本人用と管理者の代理入力で共有する）
+ *
+ * スタッフ本人は `/me/availability`、管理者は `/admin/availability/:staffId` から
+ * **まったく同じ入力欄**を使う。違うのは「誰の分を書くか」と送信先だけ。
+ *
+ * ここに置いてあるのは画面の組み立てと受け取りの解釈だけで、
+ * 誰の分を書いてよいかの判断（認可）は一切しない。それは呼ぶ側の責任。
+ * 本人用の `staff.js` は「リクエストから staff_id を受け取らない」という
+ * 決まりを持っているので、その決まりを壊さないよう分けてある。
+ */
+
+import { dayNameOf } from '../core/dates.js';
+import { calendarGrid, cellClasses, weekendClass } from './calendar.js';
+
+export const CAPACITY_CHOICES = [0, 1, 2, 3, 4, 5];
+
+/** 「消す」＝未入力に戻す。0件（出勤できない）とは意味が違う */
+export const CLEAR_VALUE = -1;
+
+/**
+ * 「13:30」の枠。13:30〜18:00 しか出られない日。
+ *
+ * 合計2件こなせるが、**当日チェックインのある部屋は1件まで**
+ * （16:00 の入室に間に合わせられるのが1件だけのため）。
+ * 入室の無い部屋は 18:00 完了でよいので、2件とも入室無しなら2件こなせる。
+ *
+ * 数字と混ざらないよう、送信される値は文字列にしてある。
+ */
+export const PM_VALUE = 'pm1330';
+export const PM_LABEL = '13:30';
+const PM_CAPACITY = 2;
+const PM_CHECKIN_LIMIT = 1;
+
+/** 保存されている値（{capacity, checkinLimit}）を、画面で選ばれている値に変える */
+export function selectionFor(entry) {
+  if (entry === undefined || entry === null) return undefined;
+  if (entry.checkinLimit !== null && entry.checkinLimit !== undefined) return PM_VALUE;
+  return entry.capacity;
+}
+
+/** マスに出す文字 */
+function displayValue(value) {
+  if (value === undefined) return '';
+  return value === PM_VALUE ? PM_LABEL : String(value);
+}
+
+/**
+ * 1日分のラジオボタン。
+ *
+ * カレンダーでも一覧でも**まったく同じ入力欄**を使う。
+ * 送信されるのは `cap_YYYY-MM-DD` だけなので、保存処理は1つで済む。
+ */
+export function radiosFor(date, value, isPast, { hidden = false } = {}) {
+  const choices = hidden
+    ? [...CAPACITY_CHOICES, PM_VALUE, CLEAR_VALUE]
+    : [...CAPACITY_CHOICES, PM_VALUE];
+
+  return choices
+    .map((n) => {
+      const id = `d${date}-${n}`;
+      const label = n === CLEAR_VALUE ? '消す' : n === PM_VALUE ? PM_LABEL : String(n);
+      return `<input type="radio" id="${id}" name="cap_${date}" value="${n}"${
+        value === n ? ' checked' : ''
+      }${isPast ? ' disabled' : ''}>${hidden ? '' : `<label for="${id}">${label}</label>`}`;
+    })
+    .join('');
+}
+
+function dayClass(date, value, today) {
+  return {
+    dowClass: weekendClass(date),
+    isPast: date < today,
+    isUnset: value === undefined && date >= today
+  };
+}
+
+/**
+ * カレンダー入力（既定）。
+ *
+ * マスを押すと、下のピッカーで件数を選ぶ。ピッカーはマスの中の
+ * ラジオボタンを選ぶだけなので、保存の仕組みは一覧入力と同一。
+ * ピッカーの操作には JavaScript が要るため、動かない端末向けに
+ * 一覧入力への案内を出す（一覧入力は JS なしで完全に動く）。
+ */
+function calendarView({ days, current, today }) {
+  const grid = calendarGrid(days, (date) => {
+    const value = selectionFor(current[date]);
+    const { dowClass, isPast, isUnset } = dayClass(date, value, today);
+
+    return `<div class="${cellClasses(date, today, [isUnset ? 'unset' : ''])}" data-day="${date}"${
+      isPast ? ' data-past="1"' : ''
+    }${dowClass ? ' data-weekend="1"' : ''}>
+        <span class="cal-day">${Number(date.slice(8, 10))}</span>
+        <span class="cal-value${value === PM_VALUE ? ' pm' : ''}">${displayValue(value)}</span>
+        <span class="cal-radios">${radiosFor(date, value, isPast, { hidden: true })}</span>
+      </div>`;
+  });
+
+  return `<noscript>
+      <div class="banner error">
+        <strong>この端末ではカレンダーから入力できません。</strong>
+        <p class="small">「一覧入力」に切り替えてください。同じ内容を入力できます。</p>
+      </div>
+    </noscript>
+
+    ${grid}
+
+    <div class="cal-picker" id="cal-picker" hidden>
+      <p class="cal-picker-date small"></p>
+      <div class="pills">
+        ${[...CAPACITY_CHOICES, PM_VALUE, CLEAR_VALUE]
+          .map(
+            (n) =>
+              `<button type="button" class="pick${n === PM_VALUE ? ' pm' : ''}" data-value="${n}">${
+                n === CLEAR_VALUE ? '消す' : n === PM_VALUE ? PM_LABEL : n
+              }</button>`
+          )
+          .join('')}
+      </div>
+    </div>
+
+    <p class="small muted">マスを押すと件数を選べます。「消す」で未入力に戻せます。</p>`;
+}
+
+/** 一覧入力（1日1行）。JavaScript が無くても動く */
+function listView({ days, current, today }) {
+  const rows = days
+    .map((date) => {
+      const value = selectionFor(current[date]);
+      const { dowClass, isPast, isUnset } = dayClass(date, value, today);
+
+      return `<div class="avail-row${isPast ? ' past' : ''}${isUnset ? ' unset' : ''}"
+                   data-day="${date}"${isPast ? ' data-past="1"' : ''}${dowClass ? ' data-weekend="1"' : ''}>
+                <div class="avail-date ${dowClass}">${Number(date.slice(8, 10))}<span class="small">(${dayNameOf(date)})</span></div>
+                <div class="pills">${radiosFor(date, value, isPast)}</div>
+              </div>`;
+    })
+    .join('');
+
+  return `<div class="avail-list">${rows}</div>`;
+}
+
+/**
+ * 入力フォームまるごと（HTML文字列）。
+ *
+ * @param {string} action 送信先。本人用と代理入力で変わる唯一の箇所
+ */
+export function availabilityForm({ days, current, today, month, view, action }) {
+  const ctx = { days, current, today };
+
+  return `<form method="post" action="${action}">
+      <input type="hidden" name="month" value="${month}">
+      <input type="hidden" name="view" value="${view}">
+
+      <div class="presets small">
+        まとめて入力:
+        <button type="button" class="bulk" data-days="weekday" data-value="3">平日すべて3件</button>
+        <button type="button" class="bulk" data-days="all" data-value="0">すべて0件</button>
+      </div>
+
+      ${view === 'calendar' ? calendarView(ctx) : listView(ctx)}
+
+      <p class="sticky-save"><button type="submit" class="primary">この月をまとめて保存</button></p>
+    </form>`;
+}
+
+/**
+ * 送信されたフォームを解釈する。**誰の分かは見ない**（呼ぶ側が決める）。
+ *
+ * @returns {{month: string, view: string, entries: Array<{date: string, capacity: number}>, clears: string[]}}
+ */
+export function parseCapacityForm(form, today) {
+  const entries = [];
+  const clears = [];
+
+  for (const [key, value] of Object.entries(form)) {
+    if (!key.startsWith('cap_')) continue;
+    const date = key.slice(4);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    // 過去の日付は変更させない（画面上も無効にしてあるが、送信されても無視する）
+    if (date < today) continue;
+
+    const raw = String(Array.isArray(value) ? value[0] : value);
+
+    // 「13:30」は合計2件・当日チェックインありは1件まで
+    if (raw === PM_VALUE) {
+      entries.push({ date, capacity: PM_CAPACITY, checkinLimit: PM_CHECKIN_LIMIT });
+      continue;
+    }
+
+    const capacity = Number(raw);
+
+    // 「消す」＝未入力に戻す。0件（出勤できない）とは意味が違うので別扱いにする
+    if (capacity === CLEAR_VALUE) {
+      clears.push(date);
+      continue;
+    }
+    if (!Number.isInteger(capacity) || capacity < 0 || capacity > 9) continue;
+    // 数字の入力は上限なし。前に 13:30 だった日を数字に変えたら、上限も消える
+    entries.push({ date, capacity, checkinLimit: null });
+  }
+
+  return {
+    month: String(form.month ?? '').slice(0, 7),
+    view: String(form.view ?? '') === 'list' ? 'list' : 'calendar',
+    entries,
+    clears
+  };
+}

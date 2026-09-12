@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="清掃予定管理">
+  <rect width="64" height="64" rx="12" fill="#1f6feb"/>
+  <!-- ほうき（清掃）のかたち -->
+  <path d="M40 12 L46 18 L30 34 L24 28 Z" fill="#ffffff"/>
+  <path d="M24 28 L30 34 L20 52 L12 44 Z" fill="#ffd43b"/>
+  <path d="M12 44 L20 52" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/>
+</svg>

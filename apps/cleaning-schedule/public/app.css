@@ -1,0 +1,666 @@
+/* 清掃予定管理システム
+ *
+ * 利用者はスタッフ3名と経営者のみ。端末は古いスマホを含む。
+ * CSSフレームワークは使わず、必要なものだけ手で書く。
+ *
+ * 守っていること:
+ *   - タップできるものは高さ48px以上（指で押せる大きさ）
+ *   - 入力欄は font-size:16px 以上（iOSが勝手に拡大するのを防ぐ）
+ *   - 端末のダークモード設定に追従する
+ *   - 文字と背景のコントラストを十分に取る（屋外でも読める）
+ */
+
+:root {
+  --bg: #ffffff;
+  --surface: #f6f7f9;
+  --border: #d8dce3;
+  --text: #1a1d21;
+  --text-muted: #5c6570;
+  --accent: #1f6feb;
+  --accent-text: #ffffff;
+  --danger: #c92a2a;
+  --warn-bg: #fff4e6;
+  --warn-border: #ffa94d;
+  --ok: #2b8a3e;
+
+  --staff-1: #e8f0fa;
+  --staff-2: #faf0e8;
+  --staff-3: #e8fae8;
+  --outsource: #f0e8fa;
+  --unassigned: #fbeae6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181c;
+    --surface: #1f2329;
+    --border: #343a42;
+    --text: #e8eaed;
+    --text-muted: #9aa4b0;
+    --accent: #4c8ef7;
+    --danger: #ff6b6b;
+    --warn-bg: #3a2a15;
+    --warn-border: #b26b1f;
+    --ok: #51cf66;
+
+    --staff-1: #23303f;
+    --staff-2: #3a2f24;
+    --staff-3: #22352a;
+    --outsource: #2f2740;
+    --unassigned: #3d2523;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Kaku Gothic ProN',
+               'Yu Gothic', Meiryo, sans-serif;
+  font-size: 16px;
+  line-height: 1.7;
+  -webkit-text-size-adjust: 100%;
+}
+
+.wrap {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+header.bar {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+header.bar h1 {
+  font-size: 17px;
+  margin: 0;
+}
+
+h2 { font-size: 19px; margin: 24px 0 8px; }
+p  { margin: 8px 0; }
+
+.muted { color: var(--text-muted); }
+.small { font-size: 14px; }
+
+/* --- カード（1件の清掃予定） --- */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  margin: 10px 0;
+}
+
+.card .unit {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.card .note {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+/* --- 日付の見出し --- */
+.day {
+  margin: 22px 0 6px;
+  font-weight: 700;
+  border-bottom: 2px solid var(--border);
+  padding-bottom: 4px;
+}
+.day .sat { color: #1c7ed6; }
+.day .sun { color: var(--danger); }
+
+/* --- ボタン・入力 --- */
+button, .btn {
+  min-height: 48px;
+  padding: 12px 18px;
+  font-size: 16px;
+  font-family: inherit;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+
+button.primary, .btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 700;
+}
+
+button:disabled { opacity: 0.5; cursor: default; }
+
+input, select {
+  min-height: 48px;
+  padding: 10px 12px;
+  font-size: 16px;   /* これ未満だと iOS が自動でズームする */
+  font-family: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: 100%;
+}
+
+label { display: block; margin: 14px 0 4px; font-weight: 700; }
+
+/* --- 件数の選択（0〜9をタップで選ぶ） --- */
+.pills { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.pills input[type="radio"] { position: absolute; opacity: 0; width: 0; height: 0; }
+
+.pills label {
+  margin: 0;
+  min-width: 48px;
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pills input[type="radio"]:checked + label {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+/* --- コピーできる値（鍵の生成画面など） --- */
+.copy-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+  margin-bottom: 18px;
+}
+
+.copy-row input {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+}
+
+.copy-row button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* --- 警告・状態表示 --- */
+.banner {
+  border: 1px solid var(--warn-border);
+  background: var(--warn-bg);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 12px 0;
+}
+.banner.error { border-color: var(--danger); }
+
+.badge {
+  display: inline-block;
+  font-size: 13px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+.badge.today { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.badge.done  { color: var(--ok); border-color: var(--ok); }
+
+/* --- ナビゲーション --- */
+.tabs {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  overflow-x: auto;
+}
+
+.tabs a,
+.tabs button {
+  padding: 12px 14px;
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--text);
+  text-decoration: none;
+  border: none;
+  background: none;
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+.tabs a:hover { text-decoration: underline; }
+
+form.inline { display: inline; }
+
+button.link {
+  border: none;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+  padding: 8px;
+  min-height: 40px;
+}
+
+.banner.ok {
+  border-color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+
+/* --- 出勤入力 --- */
+.avail-list {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.avail-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.avail-row:last-child { border-bottom: none; }
+
+/* 未入力の日は目立たせる（入力漏れがそのまま外注コストになるため） */
+.avail-row.unset { background: var(--unassigned); }
+.avail-row.past { opacity: 0.4; }
+
+.avail-date {
+  flex: 0 0 64px;
+  font-weight: 700;
+  font-size: 17px;
+}
+
+.avail-date .small { font-weight: 400; margin-left: 2px; }
+
+.presets {
+  margin: 12px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.presets button {
+  min-height: 40px;
+  padding: 8px 12px;
+  font-size: 14px;
+}
+
+/* 保存ボタンは常に見える位置に置く（月末までスクロールしてから探させない） */
+.sticky-save {
+  position: sticky;
+  bottom: 0;
+  padding: 12px 0;
+  background: linear-gradient(to top, var(--bg) 70%, transparent);
+}
+
+.sticky-save button { width: 100%; }
+
+/* --- 表（管理画面・タイムライン） --- */
+.scroll-x { overflow-x: auto; }
+
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { border: 1px solid var(--border); padding: 6px 8px; text-align: left; white-space: nowrap; }
+th { background: var(--surface); }
+
+tr.staff-1 td { background: var(--staff-1); }
+tr.staff-2 td { background: var(--staff-2); }
+tr.staff-3 td { background: var(--staff-3); }
+tr.outsource td { background: var(--outsource); }
+tr.unassigned td { background: var(--unassigned); }
+
+/* タイムラインは横に長いので、左端のユニット列を固定する */
+.timeline th.unit-col,
+.timeline td.unit-col {
+  position: sticky;
+  left: 0;
+  background: var(--surface);
+  z-index: 1;
+}
+
+/* --- セットアップの進み具合 --- */
+.checklist {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.checklist li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.checklist li:last-child { border-bottom: none; }
+.checklist li.todo { background: var(--warn-bg); }
+
+.checklist .mark {
+  flex: 0 0 32px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.checklist li.done .mark { color: var(--ok); }
+.checklist li.todo .mark { font-size: 13px; color: var(--text-muted); }
+
+/* --- 絞り込みフォーム（管理画面） --- */
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+  margin: 12px 0;
+}
+
+.filters > div { flex: 1 1 140px; }
+.filters label { margin: 0 0 2px; font-size: 14px; }
+.filters button { width: 100%; }
+
+/* --- 画面への入り口を並べる --- */
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.links .btn {
+  flex: 1 1 200px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  text-decoration: none;
+  color: var(--text);
+}
+
+.badge.error { color: var(--danger); border-color: var(--danger); }
+
+/* --- チェックボックス（設定画面） --- */
+label.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 400;
+  margin-top: 20px;
+}
+
+label.checkbox input[type="checkbox"] {
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  flex: 0 0 auto;
+}
+
+/* --- タイムライン --- */
+.timeline td, .timeline th { text-align: center; padding: 4px 6px; }
+.timeline td a { color: inherit; text-decoration: none; font-weight: 700; }
+.timeline th.sat, .timeline td.sat { background: color-mix(in srgb, #1c7ed6 8%, transparent); }
+.timeline th.sun, .timeline td.sun { background: color-mix(in srgb, #c92a2a 8%, transparent); }
+
+.timeline td.cell-staff-1 { background: var(--staff-1); }
+.timeline td.cell-staff-2 { background: var(--staff-2); }
+.timeline td.cell-staff-3 { background: var(--staff-3); }
+.timeline td.cell-outsource { background: var(--outsource); }
+.timeline td.cell-unassigned { background: var(--unassigned); font-weight: 700; }
+
+.timeline .done-mark { color: var(--ok); font-size: 12px; }
+.timeline .manual-mark { font-size: 11px; color: var(--text-muted); }
+
+/* 出勤枠の未入力。ここが「-」の日に外注が出ていたら、原因は入力漏れ */
+.timeline td.unset { color: var(--danger); font-weight: 700; }
+
+.timeline tr.section th, .timeline tr.section td {
+  border-top: 3px solid var(--border);
+  background: var(--surface);
+}
+
+/* --- 出勤入力の状況（管理画面） --- */
+.availability th a { color: inherit; }
+.availability td { text-align: center; }
+
+/* 未入力。「0件」の入力とは意味が違うので必ず見分けが付くようにする */
+.availability td.unset { color: var(--danger); font-weight: 700; }
+
+/* 枠が足りない日＝その日は外注か未割当になる */
+.availability tr.short td, .availability tr.short th { background: var(--unassigned); }
+.availability td.minus { color: var(--danger); font-weight: 700; }
+
+.availability tr.past { opacity: 0.45; }
+
+/* --- 出勤入力: カレンダー --- */
+.views { margin: 4px 0 12px; }
+
+.calendar {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  margin: 12px 0;
+}
+
+.cal-head {
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 4px 0;
+  color: var(--text-muted);
+}
+.cal-head.sat { color: #1c7ed6; }
+.cal-head.sun { color: var(--danger); }
+
+.cal-blank { min-height: 56px; }
+
+.cal-cell {
+  position: relative;
+  min-height: 56px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.cal-cell .cal-day {
+  position: absolute;
+  top: 2px;
+  left: 5px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.cal-cell.sat .cal-day { color: #1c7ed6; }
+.cal-cell.sun .cal-day { color: var(--danger); }
+
+.cal-cell .cal-value {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* マスの中のラジオは見せない。押すのはピッカーのボタン */
+.cal-radios input[type="radio"] { position: absolute; opacity: 0; width: 0; height: 0; }
+
+/* 未入力の未来日。入力漏れがそのまま外注費になるので目立たせる */
+.cal-cell.unset { background: var(--unassigned); }
+.cal-cell.past { opacity: 0.4; cursor: default; }
+.cal-cell.today { border-color: var(--accent); border-width: 2px; }
+.cal-cell.open { outline: 3px solid var(--accent); outline-offset: -3px; }
+
+.cal-picker {
+  border: 2px solid var(--accent);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 10px 12px;
+  margin: 12px 0;
+}
+
+.cal-picker .cal-picker-date { margin: 0 0 8px; font-weight: 700; }
+
+.cal-picker .pick {
+  min-width: 48px;
+  min-height: 48px;
+  border-radius: 999px;
+  font-weight: 700;
+}
+
+/* --- 完了報告 --- */
+textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: 10px 12px;
+  font-size: 16px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+/* 使用状況のように、選択肢の文字が長いものは縦に積む */
+.pills.stacked { flex-direction: column; align-items: stretch; }
+.pills.stacked label { justify-content: flex-start; padding: 0 14px; border-radius: 8px; }
+
+.answer-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.answer-row .answer-label { flex: 1 1 120px; font-weight: 700; }
+.answer-row .pills { flex: 0 1 auto; }
+.answer-row .pills label { padding: 0 12px; min-width: 0; }
+
+/* 金額は右寄せで桁を読みやすく */
+td.yen, th.yen { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* --- 予定のカレンダー（見るだけ） --- */
+.calendar.readonly .cal-cell {
+  cursor: default;
+  justify-content: flex-start;
+  padding: 16px 2px 2px;
+  gap: 2px;
+}
+
+.calendar.readonly .cal-cell.has-jobs { background: var(--staff-1); }
+.calendar.readonly .cal-cell.past { opacity: 0.45; }
+
+.cal-jobs {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  width: 100%;
+}
+
+.cal-job {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-align: center;
+  border-radius: 4px;
+  background: var(--bg);
+  padding: 1px 2px;
+}
+
+.cal-job.done { color: var(--ok); }
+
+/* --- 割り当てのカレンダー（管理者） ---
+ *
+ * 1日に複数の清掃が入るので、色はマスではなく**1件ずつ**に付ける。
+ * 色の意味はタイムライン・一覧とそろえてある（同じ色が同じ意味）。
+ */
+.calendar.assignments .cal-cell {
+  min-height: 84px;
+  align-items: stretch;
+}
+
+.calendar.assignments .cal-job {
+  display: block;
+  font-size: 12px;
+  text-decoration: none;
+  color: var(--text);
+  padding: 2px 3px;
+  border: 1px solid transparent;
+}
+.calendar.assignments .cal-job:hover { border-color: var(--accent); }
+.calendar.assignments .cal-job .who { font-weight: 400; opacity: 0.85; }
+
+.calendar.assignments .job-staff-1 { background: var(--staff-1); }
+.calendar.assignments .job-staff-2 { background: var(--staff-2); }
+.calendar.assignments .job-staff-3 { background: var(--staff-3); }
+.calendar.assignments .job-outsource { background: var(--outsource); }
+
+/* 未割当はそのまま外注費か穴になる。ここだけは見落とさせない */
+.calendar.assignments .job-unassigned {
+  background: var(--unassigned);
+  font-weight: 700;
+}
+
+.calendar.assignments .done-mark { color: var(--ok); font-size: 11px; }
+.calendar.assignments .manual-mark { font-size: 10px; color: var(--text-muted); }
+
+/* 予定が入っている日だけを塗る指定は、担当者ごとの色と喧嘩するので打ち消す */
+.calendar.assignments .cal-cell.has-jobs { background: var(--bg); }
+
+/* --- 対象外（レビュー用のダミー予約） ---
+ *
+ * 消さずに薄く出す。消えると「なぜこの日は清掃が無いのか」が分からなくなる。
+ * 未割当（赤系）と取り違えないよう、灰色で「手を打つ必要はない」と分かる見た目にする。
+ */
+tr.excluded td { background: var(--surface); color: var(--text-muted); }
+.timeline td.cell-excluded { background: var(--surface); color: var(--text-muted); }
+.calendar.assignments .job-excluded {
+  background: var(--surface);
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+/* --- 「13:30」の出勤枠 ---
+ *
+ * 13:30〜18:00 しか出られない日。合計2件だが、当日チェックインのある部屋は1件まで。
+ * 数字のボタンより文字が長いので、丸のまま横に広がるようにする。
+ */
+.pills label[for$="pm1330"],
+.cal-picker .pick.pm {
+  font-size: 15px;
+  padding: 0 14px;
+  white-space: nowrap;
+}
+
+/* マスの中は狭いので、数字より小さく出す */
+.cal-cell .cal-value.pm { font-size: 13px; letter-spacing: -0.5px; }
+
+/* 一覧・タイムラインの枠。数字と並ぶので詰めて出す */
+td.pm-slot { font-size: 12px; white-space: nowrap; letter-spacing: -0.5px; }
