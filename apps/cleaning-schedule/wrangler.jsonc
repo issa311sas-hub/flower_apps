@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cleaning-schedule",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-01",
+
+  // 静的ファイル（CSS・アイコン等）。Pages と同等の配信で、リクエスト数は課金対象外。
+  "assets": { "directory": "./public", "binding": "ASSETS" },
+
+  // D1（Cloudflare ダッシュボードで作成したもの）。
+  // database_id は D1 の画面に表示される値。秘密情報ではない（アクセスには別途アカウント認証が要る）。
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "cleaning-schedule",
+      "database_id": "ee9bed69-e8f2-44ec-8f90-04f2c402bbe0",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // ★cron は UTC で指定する。日本時間ではない。
+  //   "0 21 * * *" = 翌日 06:00 JST … Beds24取得 → 割り当て → 通知
+  //   "0 9  * * *" = 当日 18:00 JST … トークン更新・稼働監視・セッション掃除
+  "triggers": { "crons": ["0 21 * * *", "0 9 * * *"] },
+
+  "observability": { "enabled": true }
+}

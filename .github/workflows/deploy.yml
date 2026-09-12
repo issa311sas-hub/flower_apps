@@ -1,0 +1,33 @@
+name: Test cleaning-schedule
+
+# デプロイは Cloudflare 側の Git 連携（Workers Builds）が行う。
+# ここではテストだけを走らせ、GitHub 上で結果が見えるようにする。
+#
+# Cloudflare 側にも Build command として `npm test` を設定しているため、
+# テストが落ちた変更は本番にデプロイされない。
+
+on:
+  push:
+    paths: ['apps/cleaning-schedule/**', '.github/workflows/deploy.yml']
+  pull_request:
+    paths: ['apps/cleaning-schedule/**']
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: apps/cleaning-schedule
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # データ層のテストが node:sqlite を使うため 22 以上が必要
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/cleaning-schedule/package-lock.json
+      - run: npm ci
+      # 旧 GAS 版との新旧一致テストを含む
+      - run: npm test

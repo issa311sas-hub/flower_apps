@@ -1,0 +1,3 @@
+# アーカイブの sjis/ は生成物なので保管しない。
+# 過去の版を取り込みたいときは tools/make_import_bas.py で作り直す。
+archive/*/*/sjis/
